@@ -66,12 +66,7 @@ impl Runner for CodexRunner {
                 }
             }
             TaskMode::Implement | TaskMode::Verify => {
-                cmd.arg("--full-auto");
-                if let Some(sandbox) = config.sandbox.as_deref() {
-                    if sandbox != "workspace-write" {
-                        cmd.arg("-s").arg(sandbox);
-                    }
-                }
+                cmd.arg("--dangerously-bypass-approvals-and-sandbox");
             }
         }
 

@@ -166,9 +166,10 @@ cargo run -- run plan.json
     - `prompt`: 実行プロンプト（必須）
     - `output_last_message`: 最終メッセージを保存するパス（research モードのみ）
     - `verify_after`: 実装後に build→lint→test を実行（implement モード）
-    - `sandbox`: サンドボックスモード（`workspace-write`, `danger-full-access` など）
-    - `ask_for_approval`: 承認モード（`never`, `on-request` など）
+    - `sandbox`: サンドボックスモード（research モードのみ有効。`workspace-write`, `danger-full-access` など）
+    - `ask_for_approval`: 承認モード（現在未使用）
     - `json`: JSONL形式でイベントを出力（デフォルト: `true`、TUI で進捗を見る場合に推奨）
+    - **注意**: implement/verify モードでは `--dangerously-bypass-approvals-and-sandbox` が自動的に使用されます（完全自動実行のため）
   - `shell`: シェル実行設定（`command`）
 
 バリデーション概要:
