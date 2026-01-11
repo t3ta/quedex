@@ -56,25 +56,24 @@ impl Runner for CodexRunner {
                     .as_ref()
                     .context("output_last_message missing for research task")?;
                 cmd.arg("--output-last-message").arg(output);
+                if let Some(sandbox) = config.sandbox.as_deref() {
+                    cmd.arg("-s").arg(sandbox);
+                }
             }
             TaskMode::Implement | TaskMode::Verify => {
                 cmd.arg("--full-auto");
+                if let Some(sandbox) = config.sandbox.as_deref() {
+                    if sandbox != "workspace-write" {
+                        cmd.arg("-s").arg(sandbox);
+                    }
+                }
             }
-        }
-
-        let approval = config.ask_for_approval.as_deref().unwrap_or("never");
-        cmd.arg("--ask-for-approval").arg(approval);
-
-        if matches!(task.mode, TaskMode::Implement | TaskMode::Verify) {
-            let sandbox = config.sandbox.as_deref().unwrap_or("workspace-write");
-            cmd.arg("--sandbox").arg(sandbox);
-        } else if let Some(sandbox) = config.sandbox.as_deref() {
-            cmd.arg("--sandbox").arg(sandbox);
         }
 
         let child = cmd
             .current_dir(&ctx.cwd)
             .envs(&ctx.env)
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr))
             .spawn()

@@ -369,7 +369,14 @@ fn load_plan(plan_arg: &str) -> Result<(Plan, PathBuf)> {
         .with_context(|| format!("read plan file {}", path.display()))?;
     let format = plan_format_from_path(&path);
     let plan = parse_plan_with_fallback(&contents, format)?;
-    let base_dir = path
+    let abs_path = if path.is_absolute() {
+        path
+    } else {
+        env::current_dir()
+            .context("resolve current dir")?
+            .join(&path)
+    };
+    let base_dir = abs_path
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
@@ -864,7 +871,7 @@ impl TaskRunner for PlanTaskRunner {
             let child = match runner.spawn(task, &ctx) {
                 Ok(child) => child,
                 Err(err) => {
-                    eprintln!("task {} spawn error: {err}", task.id);
+                    eprintln!("task {} spawn error: {err:#}", task.id);
                     let _ = state.task_finished(&task.id, TaskStatus::Failed, Some(1));
                     return TaskResult::failed(1);
                 }

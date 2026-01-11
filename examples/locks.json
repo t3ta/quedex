@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "description": "Locking example: tasks with the same lock cannot run concurrently.",
+  "run": {
+    "name": "locks-example",
+    "max_concurrency": 3,
+    "fail_fast": true
+  },
+  "tasks": [
+    {
+      "id": "db-migrate",
+      "title": "DB migrate",
+      "mode": "implement",
+      "locks": ["db"],
+      "kind": "shell",
+      "shell": {
+        "command": "bash -lc 'echo \"migrate\"; sleep 1'"
+      }
+    },
+    {
+      "id": "db-seed",
+      "title": "DB seed",
+      "mode": "implement",
+      "locks": ["db"],
+      "kind": "shell",
+      "shell": {
+        "command": "bash -lc 'echo \"seed\"; sleep 1'"
+      }
+    },
+    {
+      "id": "generate-docs",
+      "title": "Generate docs",
+      "mode": "implement",
+      "kind": "shell",
+      "shell": {
+        "command": "bash -lc 'echo \"docs\"; sleep 1'"
+      }
+    }
+  ]
+}

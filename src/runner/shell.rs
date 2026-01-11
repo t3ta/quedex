@@ -39,7 +39,7 @@ impl Runner for ShellRunner {
             .open_log(&task.id, LogStream::Stderr)
             .context("open stderr log")?;
 
-        let child = Command::new("bash")
+        let child = Command::new("/bin/bash")
             .arg("-lc")
             .arg(&config.command)
             .current_dir(&ctx.cwd)

@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "description": "Dependency example: tasks run in a fixed order using deps.",
+  "run": {
+    "name": "dependency-example",
+    "max_concurrency": 2,
+    "fail_fast": true
+  },
+  "tasks": [
+    {
+      "id": "step-1",
+      "title": "Step 1",
+      "mode": "implement",
+      "kind": "shell",
+      "shell": {
+        "command": "bash -lc 'echo \"step 1\"'"
+      }
+    },
+    {
+      "id": "step-2",
+      "title": "Step 2",
+      "mode": "implement",
+      "deps": ["step-1"],
+      "kind": "shell",
+      "shell": {
+        "command": "bash -lc 'echo \"step 2\"'"
+      }
+    },
+    {
+      "id": "step-3",
+      "title": "Step 3",
+      "mode": "implement",
+      "deps": ["step-2"],
+      "kind": "shell",
+      "shell": {
+        "command": "bash -lc 'echo \"step 3\"'"
+      }
+    }
+  ]
+}

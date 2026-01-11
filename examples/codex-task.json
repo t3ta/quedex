@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "description": "Codex CLI example: ask Codex to summarize README.md.",
+  "run": {
+    "name": "codex-example",
+    "max_concurrency": 1,
+    "fail_fast": true
+  },
+  "tasks": [
+    {
+      "id": "summarize-readme",
+      "title": "Summarize README",
+      "mode": "research",
+      "kind": "codex",
+      "codex": {
+        "prompt": "Summarize README.md in 5 bullets.",
+        "output_last_message": "artifacts/readme_summary.md",
+        "sandbox": "workspace-write",
+        "ask_for_approval": "never"
+      }
+    }
+  ]
+}

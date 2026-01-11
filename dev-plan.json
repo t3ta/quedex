@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "run": {
+    "name": "quedex-development",
+    "max_concurrency": 2,
+    "fail_fast": true
+  },
+  "tasks": [
+    {
+      "id": "readme",
+      "mode": "implement",
+      "codex": {
+        "prompt": "README.md を作成してください。\n\n## 含めるべき内容\n1. プロジェクト概要: quedex とは何か、何ができるか\n2. 特徴: DAG ベース、Codex CLI 統合、並列実行、ロック管理など\n3. インストール方法: cargo install または cargo build\n4. クイックスタート: 簡単な plan.json の例と実行方法\n5. コマンド一覧: run, start, status, logs, cancel, graph\n6. Plan スキーマ: JSON 形式の説明\n7. 使用例: 実践的なユースケース\n8. ライセンス情報\n\nOVERVIEW.md を参考にして、わかりやすく書いてください。",
+        "ask_for_approval": "on-request"
+      }
+    },
+    {
+      "id": "examples",
+      "mode": "implement",
+      "codex": {
+        "prompt": "examples/ ディレクトリを作成し、以下のサンプル plan を追加してください。\n\n1. examples/hello.json: 最も簡単な shell タスクの例（echo を使った Hello World）\n2. examples/parallel.json: 並列実行の例（複数の独立したタスク）\n3. examples/dependencies.json: 依存関係の例（タスクの順序制御）\n4. examples/locks.json: ロック管理の例（排他制御）\n5. examples/codex-task.json: Codex CLI を使ったタスクの例\n\n各ファイルにはコメント（description フィールド）を追加して、何をしているか説明してください。",
+        "ask_for_approval": "on-request"
+      },
+      "deps": ["readme"]
+    },
+    {
+      "id": "ci",
+      "mode": "implement",
+      "codex": {
+        "prompt": ".github/workflows/ci.yml を作成してください。\n\n## CI の内容\n1. Rust の最新安定版を使用\n2. cargo build でビルド\n3. cargo clippy -- -D warnings でリント\n4. cargo test でテスト実行\n5. PR と main ブランチへの push でトリガー\n6. キャッシュを使って高速化\n\nGitHub Actions のベストプラクティスに従ってください。",
+        "ask_for_approval": "on-request"
+      }
+    }
+  ]
+}
