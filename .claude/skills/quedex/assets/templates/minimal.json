@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "run": {
+    "name": "my-project",
+    "cwd": ".",
+    "max_concurrency": 2
+  },
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "タスクの説明",
+      "mode": "implement",
+      "deps": [],
+      "locks": [],
+      "kind": "codex",
+      "codex": {
+        "prompt": "ここにタスクの指示を記述",
+        "json": true
+      }
+    }
+  ]
+}

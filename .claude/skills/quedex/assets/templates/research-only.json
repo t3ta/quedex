@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "run": {
+    "name": "codebase-research",
+    "cwd": ".",
+    "max_concurrency": 3
+  },
+  "tasks": [
+    {
+      "id": "research-architecture",
+      "title": "調査: アーキテクチャ",
+      "mode": "research",
+      "deps": [],
+      "locks": [],
+      "kind": "codex",
+      "codex": {
+        "prompt": "このプロジェクトのアーキテクチャを調査して、主要なモジュールとその役割を説明して",
+        "output_last_message": "artifacts/architecture.md",
+        "sandbox": "workspace-write",
+        "json": true
+      }
+    },
+    {
+      "id": "research-dependencies",
+      "title": "調査: 依存関係",
+      "mode": "research",
+      "deps": [],
+      "locks": [],
+      "kind": "codex",
+      "codex": {
+        "prompt": "このプロジェクトの依存関係を調査して、使用しているライブラリとその目的を説明して",
+        "output_last_message": "artifacts/dependencies.md",
+        "sandbox": "workspace-write",
+        "json": true
+      }
+    },
+    {
+      "id": "research-patterns",
+      "title": "調査: コーディングパターン",
+      "mode": "research",
+      "deps": [],
+      "locks": [],
+      "kind": "codex",
+      "codex": {
+        "prompt": "このプロジェクトのコーディングパターンやベストプラクティスを調査して文書化して",
+        "output_last_message": "artifacts/patterns.md",
+        "sandbox": "workspace-write",
+        "json": true
+      }
+    }
+  ]
+}
