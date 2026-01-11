@@ -116,6 +116,7 @@ async fn handle_run(
         return Ok(3);
     }
 
+    #[allow(clippy::collapsible_if)]
     if plan
         .tasks
         .iter()
@@ -304,6 +305,7 @@ async fn handle_start(
         eprintln!("plan validation error: {err}");
         return Ok(3);
     }
+    #[allow(clippy::collapsible_if)]
     if plan
         .tasks
         .iter()
@@ -917,6 +919,7 @@ fn reconcile_state(state_handle: &StateHandle, report: &ScheduleReport) -> Resul
     let now = Utc::now();
     state_handle.update(|state| {
         for (task_id, record) in &report.tasks {
+            #[allow(clippy::collapsible_if)]
             if let Some(task_state) = state.tasks.get_mut(task_id) {
                 if task_state.status != record.status {
                     task_state.status = record.status;
@@ -1193,6 +1196,7 @@ fn map_exit_status(status: std::process::ExitStatus, canceled: bool) -> TaskResu
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
+        #[allow(clippy::collapsible_if)]
         if let Some(signal) = status.signal() {
             if signal == 2 || signal == 15 {
                 return TaskResult::canceled();
