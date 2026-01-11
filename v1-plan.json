@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "description": "quedex v1 implementation: retry command, TUI, and state recovery",
+  "run": {
+    "name": "quedex-v1",
+    "max_concurrency": 2,
+    "fail_fast": true,
+    "default_timeout_sec": 3600
+  },
+  "tasks": [
+    {
+      "id": "retry-command",
+      "title": "retry コマンド実装",
+      "mode": "implement",
+      "deps": [],
+      "locks": ["workspace"],
+      "kind": "codex",
+      "codex": {
+        "prompt": "quedex の retry コマンドを実装してください。\n\n要件：\n1. `quedex retry <run_id> <task_id>` コマンドの追加\n2. 失敗/キャンセルされたタスクを再実行できる\n3. 依存関係が満たされている場合のみ実行可能\n4. タスクの状態を Pending に戻してスケジューラに再投入\n5. src/cli.rs に Retry コマンドを追加\n6. src/main.rs に retry ロジックを実装\n7. 既存のコードスタイルに従う\n\nOVERVIEW.md のセクション 4.1（タスク状態）と 4.3（リトライ）を参考にしてください。",
+        "sandbox": "workspace-write",
+        "ask_for_approval": "on-request"
+      }
+    },
+    {
+      "id": "tui-module",
+      "title": "TUI モジュール実装",
+      "mode": "implement",
+      "deps": [],
+      "locks": ["workspace"],
+      "kind": "codex",
+      "codex": {
+        "prompt": "quedex の TUI (Terminal UI) を実装してください。\n\n要件：\n1. ratatui クレートを使用\n2. src/tui/ ディレクトリを作成（mod.rs, app.rs, ui.rs, input.rs）\n3. OVERVIEW.md のセクション 8（TUI 仕様）に従って実装：\n   - 左側: タスク一覧（id/title/status/duration/deps残）\n   - 右側: 選択タスクのログ tail（stdout/stderr切替可）\n   - 下部: 全体統計（done/total, running数, fail数, locks状態）\n4. キーバインド実装：\n   - ↑↓: タスク選択\n   - Enter: ログフォーカス\n   - t: stdout/stderr切替\n   - r: retry\n   - c: cancel task\n   - C: cancel run\n   - g: graph表示\n   - q: quit\n5. state.json とログファイルを watch して自動更新\n6. Cargo.toml に ratatui, crossterm 依存を追加\n\n既存のコードスタイルに従い、store モジュールを活用してください。",
+        "sandbox": "workspace-write",
+        "ask_for_approval": "on-request"
+      }
+    },
+    {
+      "id": "tui-command",
+      "title": "TUI コマンド追加",
+      "mode": "implement",
+      "deps": ["tui-module"],
+      "locks": ["workspace"],
+      "kind": "codex",
+      "codex": {
+        "prompt": "quedex の tui コマンドを実装してください。\n\n要件：\n1. src/cli.rs に Tui コマンドを追加（run_id をオプション引数で受け取る）\n2. src/main.rs に tui コマンドのハンドラを実装\n3. tui モジュールの app.rs を呼び出してTUIを起動\n4. run_id が指定されていない場合は最新の run を表示\n\n既存のコードスタイルに従ってください。",
+        "sandbox": "workspace-write",
+        "ask_for_approval": "on-request"
+      }
+    },
+    {
+      "id": "state-recovery",
+      "title": "state復元強化",
+      "mode": "implement",
+      "deps": ["retry-command"],
+      "locks": ["workspace"],
+      "kind": "codex",
+      "codex": {
+        "prompt": "quedex の state 復元機能を強化してください。\n\n要件：\n1. quedex が途中で落ちた場合の復元機能\n2. Running 状態で残っているタスクを検出\n3. プロセスが実際に動いているか確認（PID チェック）\n4. プロセスが死んでいたら Failed に遷移\n5. 復元時のオプション：\n   - --resume: 途中から再開\n   - --clean-start: 状態をクリアして最初から\n6. src/store/ に recovery.rs を追加\n7. src/main.rs の run/start コマンドで復元処理を呼び出す\n\nOVERVIEW.md のセクション 7（永続化）を参考にしてください。",
+        "sandbox": "workspace-write",
+        "ask_for_approval": "on-request"
+      }
+    },
+    {
+      "id": "integration-test",
+      "title": "v1機能の統合テスト",
+      "mode": "verify",
+      "deps": ["retry-command", "tui-command", "state-recovery"],
+      "locks": ["workspace"],
+      "kind": "codex",
+      "codex": {
+        "prompt": "quedex v1 機能の統合テストを実装してください。\n\n要件：\n1. tests/v1_integration.rs を作成\n2. retry コマンドのテスト\n3. TUI 起動のテスト（headless モードで）\n4. state 復元のテスト\n5. cargo test を実行して全テストが通ることを確認\n6. エラーがあれば修正\n\n既存のテストコードのスタイルに従ってください。",
+        "sandbox": "workspace-write",
+        "ask_for_approval": "on-request"
+      }
+    },
+    {
+      "id": "build-and-test",
+      "title": "ビルド・lint・テスト",
+      "mode": "verify",
+      "deps": ["integration-test"],
+      "locks": ["workspace"],
+      "kind": "shell",
+      "shell": {
+        "command": "cargo build --release && cargo clippy --all-targets --all-features -- -D warnings && cargo test"
+      }
+    },
+    {
+      "id": "update-readme",
+      "title": "README更新",
+      "mode": "implement",
+      "deps": ["build-and-test"],
+      "locks": ["workspace"],
+      "kind": "codex",
+      "codex": {
+        "prompt": "README.md を更新して v1 の新機能を追加してください。\n\n要件：\n1. retry コマンドのドキュメント追加\n2. tui コマンドのドキュメント追加\n3. state 復元機能のドキュメント追加\n4. 使用例を追加\n5. TUI のスクリーンショット用のテキスト図を追加（ASCII art）\n\n既存の README のスタイルに従ってください。",
+        "sandbox": "workspace-write",
+        "ask_for_approval": "on-request"
+      }
+    }
+  ]
+}

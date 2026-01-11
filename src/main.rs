@@ -15,14 +15,18 @@ use chrono::Utc;
 use clap::Parser;
 use uuid::Uuid;
 
-use cli::{Cli, Commands, GlobalOptions};
+use cli::{Cli, Commands, GlobalOptions, RecoveryOptions};
 use quedex::plan::{Plan, PlanFormat, Task};
 use quedex::runner::codex::CodexRunner;
 use quedex::runner::shell::ShellRunner;
 use quedex::runner::{ChildHandle, RunContext, Runner};
-use quedex::scheduler::{ScheduleReport, Scheduler, SchedulerOptions, TaskResult, TaskRunner, TaskSpec};
+use quedex::scheduler::{
+    ScheduleReport, Scheduler, SchedulerOptions, TaskRecord, TaskResult, TaskRunner, TaskSpec,
+};
 use quedex::store::fs::FsStore;
+use quedex::store::recovery::recover_running_tasks;
 use quedex::store::{Event, LogStream, RunStatus, State, TaskState, TaskStatus, Store};
+use quedex::tui;
 
 #[tokio::main]
 async fn main() {
@@ -41,17 +45,24 @@ async fn dispatch(cli: Cli) -> Result<i32> {
     match cli.command {
         Commands::Run {
             plan,
+            recovery,
             run_id,
             base_dir,
-        } => handle_run(&cli.global, &plan, run_id, base_dir).await,
-        Commands::Start { plan } => handle_start(&cli.global, &plan).await,
+        } => handle_run(&cli.global, &plan, recovery, run_id, base_dir).await,
+        Commands::Start {
+            plan,
+            recovery,
+            run_id,
+        } => handle_start(&cli.global, &plan, recovery, run_id).await,
         Commands::Status { run_id, json } => handle_status(&cli.global, run_id, json),
+        Commands::Tui { run_id } => handle_tui(&cli.global, run_id),
         Commands::Logs {
             run_id,
             task_id,
             follow,
             stderr,
         } => handle_logs(&cli.global, &run_id, &task_id, follow, stderr),
+        Commands::Retry { run_id, task_id } => handle_retry(&cli.global, &run_id, &task_id).await,
         Commands::Cancel { run_id, task_id } => handle_cancel(&cli.global, &run_id, task_id),
         Commands::Graph {
             target,
@@ -64,13 +75,42 @@ async fn dispatch(cli: Cli) -> Result<i32> {
 async fn handle_run(
     global: &GlobalOptions,
     plan_arg: &str,
+    recovery: RecoveryOptions,
     run_id: Option<String>,
     base_dir: Option<PathBuf>,
 ) -> Result<i32> {
-    let (plan, mut plan_base_dir) = load_plan(plan_arg)?;
+    let (mut plan, mut plan_base_dir) = load_plan(plan_arg)?;
     if let Some(base_dir) = base_dir {
         plan_base_dir = base_dir;
     }
+    let store_root = resolve_store_path(global.store.as_ref())?;
+    if recovery.resume && run_id.is_none() {
+        return Err(anyhow!("--resume requires --run-id"));
+    }
+
+    let run_id = run_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let run_dir = run_dir(&store_root, &run_id);
+    if recovery.clean_start && run_dir.exists() {
+        fs::remove_dir_all(&run_dir)
+            .with_context(|| format!("clean start remove {}", run_dir.display()))?;
+    }
+
+    let state_path = run_dir.join("state.json");
+    let snapshot_path = plan_snapshot_path(&store_root, &run_id);
+    if recovery.resume {
+        if !state_path.exists() {
+            return Err(anyhow!("run {} has no state to resume", run_id));
+        }
+        if snapshot_path.exists() {
+            plan = load_plan_snapshot(&store_root, &run_id)?;
+        }
+    } else if state_path.exists() {
+        return Err(anyhow!(
+            "run {} already exists (use --resume or --clean-start)",
+            run_id
+        ));
+    }
+
     if let Err(err) = plan.validate() {
         eprintln!("plan validation error: {err}");
         return Ok(3);
@@ -87,13 +127,11 @@ async fn handle_run(
         }
     }
 
-    let store_root = resolve_store_path(global.store.as_ref())?;
-    let run_id = run_id.unwrap_or_else(|| Uuid::new_v4().to_string());
-    let _ = write_plan_snapshot(&store_root, &run_id, &plan)?;
+    if !recovery.resume || !snapshot_path.exists() {
+        let _ = write_plan_snapshot(&store_root, &run_id, &plan)?;
+    }
 
     let store = Arc::new(FsStore::new(&store_root, &run_id)?);
-    write_run_pid(&store_root, &run_id)?;
-
     let cwd = resolve_run_cwd(&plan, plan_base_dir)?;
     let ctx = RunContext {
         cwd,
@@ -101,40 +139,70 @@ async fn handle_run(
         store: store.clone(),
     };
 
-    let now = Utc::now();
-    let mut tasks_state = HashMap::new();
-    for task in &plan.tasks {
-        tasks_state.insert(
-            task.id.clone(),
-            TaskState {
-                status: TaskStatus::Pending,
-                exit_code: None,
-                stderr_tail: None,
-                started_at: None,
-                completed_at: None,
-                pid: None,
-            },
-        );
-    }
+    let (mut state, initial_states) = if recovery.resume {
+        let report = recover_running_tasks(store.as_ref())?;
+        if !report.alive_tasks.is_empty() {
+            return Err(anyhow!(
+                "run {} still has running tasks: {}",
+                run_id,
+                report.alive_tasks.join(", ")
+            ));
+        }
+        let mut state = report.state;
+        let initial_states = build_initial_records(&state);
+        if !has_pending_tasks(&initial_states) {
+            let (run_status, exit_code) = finalize_run_status(&state);
+            let now = Utc::now();
+            state.status = run_status;
+            state.completed_at = Some(now);
+            store.write_state(state)?;
+            remove_run_pid(&store_root, &run_id);
+            return Ok(exit_code);
+        }
+        if state.status != RunStatus::Running || state.completed_at.is_some() {
+            state.status = RunStatus::Running;
+            state.completed_at = None;
+            store.write_state(state.clone())?;
+        }
+        (state, Some(initial_states))
+    } else {
+        let now = Utc::now();
+        let mut tasks_state = HashMap::new();
+        for task in &plan.tasks {
+            tasks_state.insert(
+                task.id.clone(),
+                TaskState {
+                    status: TaskStatus::Pending,
+                    exit_code: None,
+                    stderr_tail: None,
+                    started_at: None,
+                    completed_at: None,
+                    pid: None,
+                },
+            );
+        }
 
-    let mut state = State {
-        run_id: run_id.clone(),
-        run_name: plan
-            .run
-            .name
-            .clone()
-            .unwrap_or_else(|| run_id.clone()),
-        status: RunStatus::Running,
-        tasks: tasks_state,
-        started_at: now,
-        completed_at: None,
+        let state = State {
+            run_id: run_id.clone(),
+            run_name: plan
+                .run
+                .name
+                .clone()
+                .unwrap_or_else(|| run_id.clone()),
+            status: RunStatus::Running,
+            tasks: tasks_state,
+            started_at: now,
+            completed_at: None,
+        };
+        store.write_state(state.clone())?;
+        store.append_event(Event::RunStarted {
+            run_id: run_id.clone(),
+            timestamp: now,
+        })?;
+        (state, None)
     };
 
-    store.write_state(state.clone())?;
-    store.append_event(Event::RunStarted {
-        run_id: run_id.clone(),
-        timestamp: now,
-    })?;
+    write_run_pid(&store_root, &run_id)?;
 
     let state_handle = StateHandle::new(store.clone(), state.clone());
     let cancel = CancelHandle::new();
@@ -169,14 +237,26 @@ async fn handle_run(
         state_handle.clone(),
         cancel.clone(),
     );
-    let scheduler = Scheduler::new(
-        task_specs,
-        SchedulerOptions {
-            max_concurrency,
-            fail_fast,
-        },
-        runner,
-    );
+    let scheduler = if let Some(initial_states) = initial_states {
+        Scheduler::new_with_initial_state(
+            task_specs,
+            SchedulerOptions {
+                max_concurrency,
+                fail_fast,
+            },
+            runner,
+            initial_states,
+        )
+    } else {
+        Scheduler::new(
+            task_specs,
+            SchedulerOptions {
+                max_concurrency,
+                fail_fast,
+            },
+            runner,
+        )
+    };
 
     let report = scheduler.run().await;
     reconcile_state(&state_handle, &report)?;
@@ -189,8 +269,37 @@ async fn handle_run(
     Ok(exit_code)
 }
 
-async fn handle_start(global: &GlobalOptions, plan_arg: &str) -> Result<i32> {
-    let (plan, base_dir) = load_plan(plan_arg)?;
+async fn handle_start(
+    global: &GlobalOptions,
+    plan_arg: &str,
+    recovery: RecoveryOptions,
+    run_id: Option<String>,
+) -> Result<i32> {
+    if recovery.resume && run_id.is_none() {
+        return Err(anyhow!("--resume requires --run-id"));
+    }
+    let (mut plan, base_dir) = load_plan(plan_arg)?;
+
+    let store_root = resolve_store_path(global.store.as_ref())?;
+    let run_id = run_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let snapshot_path = plan_snapshot_path(&store_root, &run_id);
+
+    if recovery.resume {
+        if !snapshot_path.exists() {
+            return Err(anyhow!("run {} has no plan snapshot to resume", run_id));
+        }
+        plan = load_plan_snapshot(&store_root, &run_id)?;
+        let store = FsStore::new(&store_root, &run_id)?;
+        let report = recover_running_tasks(&store)?;
+        if !report.alive_tasks.is_empty() {
+            return Err(anyhow!(
+                "run {} still has running tasks: {}",
+                run_id,
+                report.alive_tasks.join(", ")
+            ));
+        }
+    }
+
     if let Err(err) = plan.validate() {
         eprintln!("plan validation error: {err}");
         return Ok(3);
@@ -206,9 +315,11 @@ async fn handle_start(global: &GlobalOptions, plan_arg: &str) -> Result<i32> {
         }
     }
 
-    let store_root = resolve_store_path(global.store.as_ref())?;
-    let run_id = Uuid::new_v4().to_string();
-    let plan_path = write_plan_snapshot(&store_root, &run_id, &plan)?;
+    let plan_path = if recovery.resume {
+        snapshot_path
+    } else {
+        write_plan_snapshot(&store_root, &run_id, &plan)?
+    };
 
     let exe = env::current_exe().context("resolve current executable")?;
     let mut cmd = std::process::Command::new(exe);
@@ -218,6 +329,12 @@ async fn handle_start(global: &GlobalOptions, plan_arg: &str) -> Result<i32> {
         .arg(&run_id)
         .arg("--base-dir")
         .arg(&base_dir);
+    if recovery.resume {
+        cmd.arg("--resume");
+    }
+    if recovery.clean_start {
+        cmd.arg("--clean-start");
+    }
     if let Some(store_path) = global.store.as_ref() {
         cmd.arg("--store").arg(store_path);
     }
@@ -261,6 +378,11 @@ fn handle_status(global: &GlobalOptions, run_id: Option<String>, json: bool) -> 
     Ok(0)
 }
 
+fn handle_tui(global: &GlobalOptions, run_id: Option<String>) -> Result<i32> {
+    let store_root = resolve_store_path(global.store.as_ref())?;
+    tui::run(store_root, run_id)
+}
+
 fn handle_logs(
     global: &GlobalOptions,
     run_id: &str,
@@ -275,6 +397,116 @@ fn handle_logs(
     }
     stream_log(&path, follow)?;
     Ok(0)
+}
+
+async fn handle_retry(global: &GlobalOptions, run_id: &str, task_id: &str) -> Result<i32> {
+    let store_root = resolve_store_path(global.store.as_ref())?;
+    let plan = load_plan_snapshot(&store_root, run_id)?;
+    let task = plan
+        .tasks
+        .iter()
+        .find(|task| task.id == task_id)
+        .cloned()
+        .ok_or_else(|| anyhow!("task {} not found in run {}", task_id, run_id))?;
+
+    if matches!(task.kind.as_deref(), Some("codex")) || task.codex.is_some() {
+        check_codex_available()?;
+    }
+
+    let mut state = read_state(&store_root, run_id)?;
+    if state.status == RunStatus::Running {
+        return Err(anyhow!("run {} is still running", run_id));
+    }
+    let Some(task_state) = state.tasks.get(task_id) else {
+        return Err(anyhow!("task {} not found in state for run {}", task_id, run_id));
+    };
+    if !matches!(task_state.status, TaskStatus::Failed | TaskStatus::Canceled) {
+        return Err(anyhow!(
+            "task {} must be Failed or Canceled to retry (current: {:?})",
+            task_id,
+            task_state.status
+        ));
+    }
+    for dep in &task.deps {
+        let Some(dep_state) = state.tasks.get(dep) else {
+            return Err(anyhow!("task {} dependency {} not found in state", task_id, dep));
+        };
+        if dep_state.status != TaskStatus::Succeeded {
+            return Err(anyhow!(
+                "task {} dependency {} not satisfied (current: {:?})",
+                task_id,
+                dep,
+                dep_state.status
+            ));
+        }
+    }
+
+    let Some(task_state) = state.tasks.get_mut(task_id) else {
+        return Err(anyhow!("task {} not found in state for run {}", task_id, run_id));
+    };
+    task_state.status = TaskStatus::Pending;
+    task_state.exit_code = None;
+    task_state.stderr_tail = None;
+    task_state.started_at = None;
+    task_state.completed_at = None;
+    task_state.pid = None;
+    state.status = RunStatus::Running;
+    state.completed_at = None;
+
+    let store = Arc::new(FsStore::new(&store_root, run_id)?);
+    store.write_state(state.clone())?;
+    write_run_pid(&store_root, run_id)?;
+
+    let base_dir = env::current_dir().context("resolve current dir for retry")?;
+    let cwd = resolve_run_cwd(&plan, base_dir)?;
+    let ctx = RunContext {
+        cwd,
+        env: plan.run.env.clone(),
+        store: store.clone(),
+    };
+
+    let state_handle = StateHandle::new(store.clone(), state);
+    let cancel = CancelHandle::new();
+    spawn_cancel_listener(cancel.clone());
+
+    let mut tasks_map = HashMap::new();
+    tasks_map.insert(task.id.clone(), task.clone());
+    let task_specs = vec![TaskSpec {
+        id: task.id.clone(),
+        deps: Vec::new(),
+        locks: task.locks.clone(),
+    }];
+
+    let max_concurrency = plan
+        .run
+        .max_concurrency
+        .or(global.max_concurrency)
+        .unwrap_or(1);
+    let fail_fast = plan.run.fail_fast.unwrap_or(global.effective_fail_fast());
+
+    let runner = PlanTaskRunner::new(
+        Arc::new(tasks_map),
+        ctx,
+        state_handle.clone(),
+        cancel,
+    );
+    let scheduler = Scheduler::new(
+        task_specs,
+        SchedulerOptions {
+            max_concurrency,
+            fail_fast,
+        },
+        runner,
+    );
+
+    let report = scheduler.run().await;
+    reconcile_state(&state_handle, &report)?;
+
+    let state = state_handle.snapshot();
+    let (run_status, exit_code) = finalize_run_status(&state);
+    state_handle.update_run_status(run_status)?;
+    remove_run_pid(&store_root, run_id);
+    Ok(exit_code)
 }
 
 fn handle_cancel(global: &GlobalOptions, run_id: &str, task_id: Option<String>) -> Result<i32> {
@@ -589,6 +821,13 @@ fn plan_snapshot_path(store_root: &Path, run_id: &str) -> PathBuf {
     run_dir(store_root, run_id).join("plan.json")
 }
 
+fn load_plan_snapshot(store_root: &Path, run_id: &str) -> Result<Plan> {
+    let plan_path = plan_snapshot_path(store_root, run_id);
+    let contents = fs::read_to_string(&plan_path)
+        .with_context(|| format!("read plan snapshot {}", plan_path.display()))?;
+    Plan::parse_str(&contents, PlanFormat::Json)
+}
+
 fn finalize_run_status(state: &State) -> (RunStatus, i32) {
     let mut has_failed = false;
     let mut has_skipped = false;
@@ -679,6 +918,31 @@ fn reconcile_state(state_handle: &StateHandle, report: &ScheduleReport) -> Resul
         }
     })?;
     Ok(())
+}
+
+fn build_initial_records(state: &State) -> HashMap<String, TaskRecord> {
+    state
+        .tasks
+        .iter()
+        .map(|(task_id, task_state)| {
+            (
+                task_id.clone(),
+                TaskRecord {
+                    status: task_state.status,
+                    exit_code: task_state.exit_code,
+                },
+            )
+        })
+        .collect()
+}
+
+fn has_pending_tasks(records: &HashMap<String, TaskRecord>) -> bool {
+    records.values().any(|record| {
+        matches!(
+            record.status,
+            TaskStatus::Pending | TaskStatus::Ready | TaskStatus::Running
+        )
+    })
 }
 
 #[derive(Clone)]

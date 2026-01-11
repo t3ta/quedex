@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub mod fs;
+pub mod recovery;
 
 #[derive(Debug, Clone, Copy)]
 pub enum LogStream {

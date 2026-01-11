@@ -72,6 +72,7 @@ pub struct Scheduler<R> {
     tasks: HashMap<TaskId, TaskSpec>,
     options: SchedulerOptions,
     runner: R,
+    initial_states: Option<HashMap<TaskId, TaskRecord>>,
 }
 
 impl<R> Scheduler<R>
@@ -87,6 +88,25 @@ where
             tasks: map,
             options,
             runner,
+            initial_states: None,
+        }
+    }
+
+    pub fn new_with_initial_state(
+        tasks: Vec<TaskSpec>,
+        options: SchedulerOptions,
+        runner: R,
+        initial_states: HashMap<TaskId, TaskRecord>,
+    ) -> Self {
+        let mut map = HashMap::with_capacity(tasks.len());
+        for task in tasks {
+            map.insert(task.id.clone(), task);
+        }
+        Self {
+            tasks: map,
+            options,
+            runner,
+            initial_states: Some(initial_states),
         }
     }
 
@@ -96,20 +116,25 @@ where
         let lock_table = Arc::new(Mutex::new(init_lock_table(&self.tasks)));
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        let mut states = HashMap::with_capacity(self.tasks.len());
+        let mut states = self.initial_states.unwrap_or_default();
+        states.retain(|task_id, _| self.tasks.contains_key(task_id));
         for task_id in self.tasks.keys() {
-            states.insert(
-                task_id.clone(),
-                TaskRecord {
-                    status: TaskStatus::Pending,
-                    exit_code: None,
-                },
-            );
+            states.entry(task_id.clone()).or_insert(TaskRecord {
+                status: TaskStatus::Pending,
+                exit_code: None,
+            });
         }
 
         let mut ready_queue = VecDeque::new();
         let mut running = 0usize;
-        let mut fail_fast_triggered = false;
+        let mut fail_fast_triggered = self.options.fail_fast
+            && states
+                .values()
+                .any(|record| record.status == TaskStatus::Failed);
+
+        if fail_fast_triggered {
+            apply_fail_fast(&mut states, &mut ready_queue);
+        }
 
         loop {
             refresh_ready(

@@ -38,6 +38,8 @@ impl GlobalOptions {
 pub enum Commands {
     Run {
         plan: String,
+        #[command(flatten)]
+        recovery: RecoveryOptions,
         #[arg(long, hide = true)]
         run_id: Option<String>,
         #[arg(long, hide = true)]
@@ -45,11 +47,18 @@ pub enum Commands {
     },
     Start {
         plan: String,
+        #[command(flatten)]
+        recovery: RecoveryOptions,
+        #[arg(long, hide = true)]
+        run_id: Option<String>,
     },
     Status {
         run_id: Option<String>,
         #[arg(long)]
         json: bool,
+    },
+    Tui {
+        run_id: Option<String>,
     },
     Logs {
         run_id: String,
@@ -58,6 +67,10 @@ pub enum Commands {
         follow: bool,
         #[arg(long)]
         stderr: bool,
+    },
+    Retry {
+        run_id: String,
+        task_id: String,
     },
     Cancel {
         run_id: String,
@@ -70,4 +83,12 @@ pub enum Commands {
         #[arg(long, conflicts_with = "mermaid")]
         ascii: bool,
     },
+}
+
+#[derive(Debug, Args, Clone, Copy)]
+pub struct RecoveryOptions {
+    #[arg(long, action = ArgAction::SetTrue)]
+    pub resume: bool,
+    #[arg(long, action = ArgAction::SetTrue, conflicts_with = "resume")]
+    pub clean_start: bool,
 }
