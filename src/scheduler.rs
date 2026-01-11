@@ -279,6 +279,7 @@ fn release_locks(lock_table: &Arc<Mutex<LockTable>>, task_id: &TaskId, locks: &[
         .lock()
         .expect("lock table mutex poisoned");
     for lock in locks {
+        #[allow(clippy::collapsible_if)]
         if let Some(holder) = table.get(lock) {
             if holder.as_ref() == Some(task_id) {
                 table.insert(lock.clone(), None);

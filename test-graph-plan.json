@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "description": "Test branching dependency graph visualization",
+  "run": {
+    "name": "graph-test",
+    "max_concurrency": 3,
+    "fail_fast": false
+  },
+  "tasks": [
+    {
+      "id": "A",
+      "title": "Root task A",
+      "mode": "implement",
+      "kind": "shell",
+      "shell": {
+        "command": "echo 'Task A' && sleep 1"
+      }
+    },
+    {
+      "id": "B",
+      "title": "Task B depends on A",
+      "mode": "implement",
+      "deps": ["A"],
+      "kind": "shell",
+      "shell": {
+        "command": "echo 'Task B' && sleep 2"
+      }
+    },
+    {
+      "id": "C",
+      "title": "Task C depends on A",
+      "mode": "implement",
+      "deps": ["A"],
+      "kind": "shell",
+      "shell": {
+        "command": "echo 'Task C' && sleep 1"
+      }
+    },
+    {
+      "id": "D",
+      "title": "Task D depends on B and C",
+      "mode": "implement",
+      "deps": ["B", "C"],
+      "kind": "shell",
+      "shell": {
+        "command": "echo 'Task D' && sleep 1"
+      }
+    },
+    {
+      "id": "E",
+      "title": "Independent task E",
+      "mode": "implement",
+      "kind": "shell",
+      "shell": {
+        "command": "echo 'Task E' && sleep 3"
+      }
+    }
+  ]
+}

@@ -72,6 +72,7 @@ fn run_loop(
         terminal.draw(|frame| ui::draw(frame, app))?;
 
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
+        #[allow(clippy::collapsible_if)]
         if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
                 if let Some(action) = handle_key(key) {
@@ -81,6 +82,7 @@ fn run_loop(
         }
 
         let mut dirty = false;
+        #[allow(clippy::collapsible_if)]
         if let Some(handle) = watcher.as_ref() {
             if handle.drain(app) {
                 dirty = true;
