@@ -191,14 +191,14 @@ fn draw_graph(frame: &mut Frame, app: &mut App) {
     frame.render_widget(paragraph, layout[2]);
 }
 
-fn build_dependency_graph(app: &App) -> Vec<Line> {
+fn build_dependency_graph(app: &App) -> Vec<Line<'_>> {
     // 1. タスクの子を特定（このタスクに依存しているタスク）
     let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
     for task in &app.tasks {
         for dep in &task.deps {
             children
                 .entry(dep.as_str())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(&task.id);
         }
     }

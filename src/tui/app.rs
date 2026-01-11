@@ -31,6 +31,7 @@ pub struct Stats {
 pub struct App {
     pub store_root: PathBuf,
     pub run_id: String,
+    #[allow(dead_code)]
     pub plan: Plan,
     pub state: State,
     pub tasks: Vec<TaskInfo>,
