@@ -1,5 +1,6 @@
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Table};
+use std::collections::HashMap;
 
 use crate::store::{LogStream, TaskStatus};
 
@@ -135,25 +136,155 @@ fn draw_summary(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_graph(frame: &mut Frame, app: &mut App) {
-    let mut lines = Vec::new();
-    for task in &app.plan.tasks {
-        if task.deps.is_empty() {
-            lines.push(task.id.clone());
-        }
+    let stats = app.stats();
+
+    // レイアウト: 上部にGauge + 統計、下部にグラフ
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // プログレスバー
+            Constraint::Length(3), // 統計情報
+            Constraint::Min(10),   // グラフ
+        ])
+        .split(frame.size());
+
+    // プログレスバーの描画
+    let progress = if stats.total > 0 {
+        (stats.done as f64 / stats.total as f64 * 100.0) as u16
+    } else {
+        0
+    };
+    let gauge = Gauge::default()
+        .block(Block::default().borders(Borders::ALL).title("全体進捗"))
+        .gauge_style(Style::default().fg(Color::Cyan))
+        .percent(progress)
+        .label(format!("{}/{} ({}%)", stats.done, stats.total, progress));
+    frame.render_widget(gauge, layout[0]);
+
+    // 統計情報の描画
+    let locks = app.active_locks();
+    let locks_text = if locks.is_empty() {
+        "none".to_string()
+    } else {
+        locks.join(", ")
+    };
+    let stats_text = format!(
+        "実行中: {} | 失敗: {} | ロック: {}",
+        stats.running, stats.failed, locks_text
+    );
+    let stats_paragraph = Paragraph::new(stats_text)
+        .block(Block::default().borders(Borders::ALL).title("統計"));
+    frame.render_widget(stats_paragraph, layout[1]);
+
+    // 依存関係グラフの生成
+    let graph_lines = build_dependency_graph(app);
+
+    // グラフの描画
+    let text = Text::from(graph_lines);
+    let paragraph = Paragraph::new(text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("依存関係グラフ (press g to return)"),
+        )
+        .scroll((0, 0));
+    frame.render_widget(paragraph, layout[2]);
+}
+
+fn build_dependency_graph(app: &App) -> Vec<Line> {
+    // 1. タスクの子を特定（このタスクに依存しているタスク）
+    let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
+    for task in &app.tasks {
         for dep in &task.deps {
-            lines.push(format!("{dep} -> {}", task.id));
+            children
+                .entry(dep.as_str())
+                .or_insert_with(Vec::new)
+                .push(&task.id);
         }
-    }
-    if lines.is_empty() {
-        lines.push("no graph data".to_string());
     }
 
-    let text = Text::from(lines.join("\n"));
-    let block = Block::default()
-        .title("Graph (press g to return)")
-        .borders(Borders::ALL);
-    let paragraph = Paragraph::new(text).block(block);
-    frame.render_widget(paragraph, frame.size());
+    // 2. ルートタスク（依存元がないタスク）を特定
+    let roots: Vec<_> = app
+        .tasks
+        .iter()
+        .filter(|task| task.deps.is_empty())
+        .collect();
+
+    if roots.is_empty() {
+        return vec![Line::from("no tasks found")];
+    }
+
+    // 3. 再帰的にツリーを走査
+    let mut lines = Vec::new();
+    let now = chrono::Utc::now();
+    for (i, root) in roots.iter().enumerate() {
+        if i > 0 {
+            lines.push(Line::from("")); // ルート間に空行を挿入
+        }
+        render_task_tree(root, &children, app, "", true, &mut lines, now);
+    }
+
+    lines
+}
+
+fn render_task_tree<'a>(
+    task: &'a super::app::TaskInfo,
+    children: &HashMap<&str, Vec<&str>>,
+    app: &'a App,
+    prefix: &str,
+    is_last: bool,
+    lines: &mut Vec<Line<'a>>,
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    let status = app.task_status(&task.id);
+    let duration = app.task_duration(&task.id, now);
+
+    // タスク行の生成
+    let connector = if prefix.is_empty() {
+        ""
+    } else if is_last {
+        "└─ "
+    } else {
+        "├─ "
+    };
+    let line_text = format!(
+        "{}{}{} {} [{:?}] {}",
+        prefix, connector, "*", task.id, status, duration
+    );
+
+    // 色付けを適用
+    let styled_line = Line::from(line_text).style(status_style(status));
+    lines.push(styled_line);
+
+    // 子タスクの描画
+    if let Some(child_ids) = children.get(task.id.as_str()) {
+        let child_count = child_ids.len();
+        for (i, child_id) in child_ids.iter().enumerate() {
+            // 親とのつながりを示す縦線を追加
+            if i < child_count {
+                let vertical_line = format!("{}│", prefix);
+                lines.push(Line::from(vertical_line));
+            }
+
+            if let Some(child_task) = app.tasks.iter().find(|t| t.id == *child_id) {
+                let is_last_child = i == child_count - 1;
+                let new_prefix = if is_last {
+                    format!("{}   ", prefix)
+                } else {
+                    format!("{}│  ", prefix)
+                };
+                render_task_tree(
+                    child_task,
+                    children,
+                    app,
+                    &new_prefix,
+                    is_last_child,
+                    lines,
+                    now,
+                );
+            }
+        }
+    }
 }
 
 fn status_style(status: TaskStatus) -> Style {

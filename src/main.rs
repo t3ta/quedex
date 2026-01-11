@@ -380,6 +380,23 @@ fn handle_status(global: &GlobalOptions, run_id: Option<String>, json: bool) -> 
 
 fn handle_tui(global: &GlobalOptions, run_id: Option<String>) -> Result<i32> {
     let store_root = resolve_store_path(global.store.as_ref())?;
+
+    // run_idが指定されていない場合、一覧を表示
+    if run_id.is_none() {
+        let mut states = list_states(&store_root)?;
+        if states.is_empty() {
+            println!("no runs found");
+            return Ok(0);
+        }
+        states.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        println!("Available runs:");
+        println!();
+        print_states_table(&states);
+        println!();
+        println!("Usage: quedex tui <run_id>");
+        return Ok(0);
+    }
+
     tui::run(store_root, run_id)
 }
 
