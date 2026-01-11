@@ -50,8 +50,8 @@ impl Runner for CodexRunner {
         let mut cmd = Command::new("codex");
         cmd.arg("exec").arg(prompt);
 
-        if config.verbose {
-            cmd.arg("--verbose");
+        if config.json {
+            cmd.arg("--json");
         }
 
         match task.mode {

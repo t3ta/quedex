@@ -67,7 +67,7 @@ fn plan_rejects_empty_codex_prompt() {
             verify_after: false,
             sandbox: None,
             ask_for_approval: None,
-            verbose: true,
+            json: true,
         }),
         shell: None,
     };

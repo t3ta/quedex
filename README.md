@@ -168,7 +168,7 @@ cargo run -- run plan.json
     - `verify_after`: 実装後に build→lint→test を実行（implement モード）
     - `sandbox`: サンドボックスモード（`workspace-write`, `danger-full-access` など）
     - `ask_for_approval`: 承認モード（`never`, `on-request` など）
-    - `verbose`: 詳細ログ出力（デフォルト: `true`、TUI で進捗を見る場合に推奨）
+    - `json`: JSONL形式でイベントを出力（デフォルト: `true`、TUI で進捗を見る場合に推奨）
   - `shell`: シェル実行設定（`command`）
 
 バリデーション概要:

@@ -49,11 +49,11 @@ pub struct CodexConfig {
     pub sandbox: Option<String>,
     #[serde(default)]
     pub ask_for_approval: Option<String>,
-    #[serde(default = "default_verbose")]
-    pub verbose: bool,
+    #[serde(default = "default_json")]
+    pub json: bool,
 }
 
-fn default_verbose() -> bool {
+fn default_json() -> bool {
     true
 }
 
