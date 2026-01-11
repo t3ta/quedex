@@ -49,6 +49,11 @@ impl Runner for CodexRunner {
 
         let mut cmd = Command::new("codex");
         cmd.arg("exec").arg(prompt);
+
+        if config.verbose {
+            cmd.arg("--verbose");
+        }
+
         match task.mode {
             TaskMode::Research => {
                 let output = config

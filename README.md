@@ -162,7 +162,13 @@ cargo run -- run plan.json
   - `locks`: 排他リソース名
   - `timeout_sec`: タスク個別タイムアウト
   - `kind`: `codex | shell`
-  - `codex`: Codex 実行設定（`prompt`, `full_auto`, `output_last_message`, `sandbox`, `ask_for_approval` など）
+  - `codex`: Codex 実行設定
+    - `prompt`: 実行プロンプト（必須）
+    - `output_last_message`: 最終メッセージを保存するパス（research モードのみ）
+    - `verify_after`: 実装後に build→lint→test を実行（implement モード）
+    - `sandbox`: サンドボックスモード（`workspace-write`, `danger-full-access` など）
+    - `ask_for_approval`: 承認モード（`never`, `on-request` など）
+    - `verbose`: 詳細ログ出力（デフォルト: `true`、TUI で進捗を見る場合に推奨）
   - `shell`: シェル実行設定（`command`）
 
 バリデーション概要:

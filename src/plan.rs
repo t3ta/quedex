@@ -49,6 +49,12 @@ pub struct CodexConfig {
     pub sandbox: Option<String>,
     #[serde(default)]
     pub ask_for_approval: Option<String>,
+    #[serde(default = "default_verbose")]
+    pub verbose: bool,
+}
+
+fn default_verbose() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
