@@ -559,10 +559,10 @@ fn handle_cancel(global: &GlobalOptions, run_id: &str, task_id: Option<String>) 
 
     let state = read_state(&store_root, run_id)?;
     for task_state in state.tasks.values() {
-        if let Some(pid) = task_state.pid
-            && let Err(err) = terminate_pid(pid)
-        {
-            eprintln!("Warning: failed to terminate pid {}: {}", pid, err);
+        if let Some(pid) = task_state.pid {
+            if let Err(err) = terminate_pid(pid) {
+                eprintln!("Warning: failed to terminate pid {}: {}", pid, err);
+            }
         }
     }
     Ok(0)
@@ -1256,10 +1256,10 @@ impl TaskRunner for PlanTaskRunner {
                         eprintln!("{}", timeout_msg.trim());
                         
                         // Kill the process on timeout
-                        if let Ok(active) = cancel.active.lock()
-                            && let Some(child_handle) = active.get(&task_id)
-                        {
-                            let _ = child_handle.kill();
+                        if let Ok(active) = cancel.active.lock() {
+                            if let Some(child_handle) = active.get(&task_id) {
+                                let _ = child_handle.kill();
+                            }
                         }
                         cancel.unregister(&task_id);
                         let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(124));

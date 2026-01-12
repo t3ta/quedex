@@ -289,7 +289,7 @@ fn format_log_line(line: &str) -> Vec<String> {
 fn format_json_log(json: &serde_json::Value) -> Vec<String> {
     let obj = match json.as_object() {
         Some(obj) => obj,
-        None => return vec![json.to_string()],
+        None => return format_json_value_lines(json, ""),
     };
 
     let event_type = obj
@@ -298,38 +298,135 @@ fn format_json_log(json: &serde_json::Value) -> Vec<String> {
         .unwrap_or("unknown");
 
     match event_type {
-        "tool_use" => {
-            let name = obj
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            vec![format!("🔧 Tool: {}", name)]
+        "tool_use" => format_tool_use(json, obj),
+        "tool_result" => format_tool_result(json, obj),
+        "text" => format_text(json, obj),
+        "thinking" => format_thinking(json, obj),
+        "error" => format_error(json, obj),
+        _ => format_json_value_lines(json, ""),
+    }
+}
+
+fn format_tool_use(
+    json: &serde_json::Value,
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<String> {
+    let name = obj
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let input = obj
+        .get("input")
+        .or_else(|| obj.get("parameters"))
+        .or_else(|| obj.get("args"))
+        .or_else(|| obj.get("arguments"));
+
+    let mut lines = vec![format!("🔧 Tool: {}", name)];
+    match input {
+        Some(input) => {
+            lines.push("  input:".to_string());
+            lines.extend(format_json_value_lines(input, "    "));
         }
-        "tool_result" => {
-            let name = obj
-                .get("tool_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            vec![format!("✓ Tool result: {}", name)]
+        None => {
+            lines.push("  input: (missing)".to_string());
+            lines.extend(format_json_value_lines(json, "  "));
         }
-        "text" => {
-            let text = obj.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            text.lines().map(|line| line.to_string()).collect()
+    }
+    lines
+}
+
+fn format_tool_result(
+    json: &serde_json::Value,
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<String> {
+    let name = obj
+        .get("tool_name")
+        .or_else(|| obj.get("name"))
+        .or_else(|| obj.get("tool"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let output = obj
+        .get("output")
+        .or_else(|| obj.get("result"))
+        .or_else(|| obj.get("content"))
+        .or_else(|| obj.get("data"));
+
+    let mut lines = vec![format!("✓ Tool result: {}", name)];
+    match output {
+        Some(output) => {
+            lines.push("  output:".to_string());
+            lines.extend(format_json_value_lines(output, "    "));
         }
-        "thinking" => {
-            vec!["💭 [thinking...]".to_string()]
+        None => {
+            lines.push("  output: (missing)".to_string());
+            lines.extend(format_json_value_lines(json, "  "));
         }
-        "error" => {
-            let message = obj
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
-            vec![format!("❌ Error: {}", message)]
+    }
+    lines
+}
+
+fn format_text(
+    json: &serde_json::Value,
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<String> {
+    if let Some(text) = obj.get("text").and_then(|v| v.as_str()) {
+        return text.lines().map(|line| line.to_string()).collect();
+    }
+    if let Some(content) = obj.get("content") {
+        return format_json_value_lines(content, "");
+    }
+    format_json_value_lines(json, "")
+}
+
+fn format_thinking(
+    json: &serde_json::Value,
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<String> {
+    let thinking = obj
+        .get("thinking")
+        .or_else(|| obj.get("text"))
+        .or_else(|| obj.get("content"))
+        .or_else(|| obj.get("message"));
+
+    let mut lines = vec!["💭 Thinking:".to_string()];
+    match thinking {
+        Some(thinking) => lines.extend(format_json_value_lines(thinking, "  ")),
+        None => {
+            lines.push("  (missing)".to_string());
+            lines.extend(format_json_value_lines(json, "  "));
         }
-        _ => {
-            // その他のイベントは簡易表示
-            vec![format!("• {}: {}", event_type, json)]
+    }
+    lines
+}
+
+fn format_error(
+    json: &serde_json::Value,
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(message) = obj.get("message").and_then(|v| v.as_str()) {
+        lines.push(format!("❌ Error: {}", message));
+    } else {
+        lines.push("❌ Error".to_string());
+    }
+    lines.extend(format_json_value_lines(json, "  "));
+    lines
+}
+
+fn format_json_value_lines(value: &serde_json::Value, indent: &str) -> Vec<String> {
+    match value {
+        serde_json::Value::String(text) => text
+            .lines()
+            .map(|line| format!("{indent}{line}"))
+            .collect(),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            let pretty = serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string());
+            pretty
+                .lines()
+                .map(|line| format!("{indent}{line}"))
+                .collect()
         }
+        _ => vec![format!("{indent}{value}")],
     }
 }
 
