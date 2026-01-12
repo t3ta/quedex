@@ -43,7 +43,7 @@ pub struct CodexConfig {
     pub prompt: String,
     #[serde(default)]
     pub output_last_message: Option<PathBuf>,
-    #[serde(default)]
+    #[serde(default = "default_verify_after")]
     pub verify_after: bool,
     #[serde(default)]
     pub sandbox: Option<String>,
@@ -54,6 +54,10 @@ pub struct CodexConfig {
 }
 
 fn default_json() -> bool {
+    true
+}
+
+fn default_verify_after() -> bool {
     true
 }
 
