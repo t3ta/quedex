@@ -130,7 +130,9 @@ fn apply_action(app: &mut App, action: Action) -> Result<()> {
             refresh_logs = true;
         }
         Action::Retry => {
-            app.set_status("retry not implemented yet".to_string());
+            if let Err(err) = retry_task(app) {
+                app.set_status(format!("retry error: {err:#}"));
+            }
         }
         Action::CancelTask => {
             if let Err(err) = cancel_task(app) {
@@ -149,6 +151,39 @@ fn apply_action(app: &mut App, action: Action) -> Result<()> {
         app.sync_log_path();
         app.refresh_logs()?;
     }
+    Ok(())
+}
+
+fn retry_task(app: &mut App) -> Result<()> {
+    let Some(task_id) = app.selected_task_id() else {
+        return Err(anyhow!("no task selected"));
+    };
+    let Some(task_state) = app.state.tasks.get(task_id) else {
+        return Err(anyhow!("task {} not found in state", task_id));
+    };
+
+    use crate::store::TaskStatus;
+    if !matches!(task_state.status, TaskStatus::Failed | TaskStatus::Canceled) {
+        return Err(anyhow!(
+            "task {} must be Failed or Canceled to retry (current: {:?})",
+            task_id,
+            task_state.status
+        ));
+    }
+
+    // quedex retryコマンドをバックグラウンドで実行
+    let run_id = app.run_id.clone();
+    let task_id_str = task_id.to_string();
+    let task_id_display = task_id_str.clone();
+    std::thread::spawn(move || {
+        let _ = std::process::Command::new("quedex")
+            .arg("retry")
+            .arg(&run_id)
+            .arg(&task_id_str)
+            .output();
+    });
+
+    app.set_status(format!("retrying task {}...", task_id_display));
     Ok(())
 }
 
