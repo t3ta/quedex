@@ -268,7 +268,7 @@ fn read_log_tail(path: &Path, max_lines: usize) -> Result<Vec<String>> {
     let text = String::from_utf8_lossy(&bytes);
     let mut lines = text
         .lines()
-        .flat_map(|line| format_log_line(line))
+        .flat_map(format_log_line)
         .collect::<Vec<_>>();
     if lines.len() > max_lines {
         lines = lines.split_off(lines.len() - max_lines);
