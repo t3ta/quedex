@@ -266,11 +266,71 @@ fn read_log_tail(path: &Path, max_lines: usize) -> Result<Vec<String>> {
     }
     let bytes = fs::read(path).with_context(|| format!("read log {}", path.display()))?;
     let text = String::from_utf8_lossy(&bytes);
-    let mut lines = text.lines().map(|line| line.to_string()).collect::<Vec<_>>();
+    let mut lines = text
+        .lines()
+        .flat_map(format_log_line)
+        .collect::<Vec<_>>();
     if lines.len() > max_lines {
         lines = lines.split_off(lines.len() - max_lines);
     }
     Ok(lines)
+}
+
+fn format_log_line(line: &str) -> Vec<String> {
+    // JSON形式の行かどうかを判定し、パースして読みやすく表示
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+        format_json_log(&json)
+    } else {
+        // JSON以外はそのまま表示
+        vec![line.to_string()]
+    }
+}
+
+fn format_json_log(json: &serde_json::Value) -> Vec<String> {
+    let obj = match json.as_object() {
+        Some(obj) => obj,
+        None => return vec![json.to_string()],
+    };
+
+    let event_type = obj
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
+    match event_type {
+        "tool_use" => {
+            let name = obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            vec![format!("🔧 Tool: {}", name)]
+        }
+        "tool_result" => {
+            let name = obj
+                .get("tool_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            vec![format!("✓ Tool result: {}", name)]
+        }
+        "text" => {
+            let text = obj.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            text.lines().map(|line| line.to_string()).collect()
+        }
+        "thinking" => {
+            vec!["💭 [thinking...]".to_string()]
+        }
+        "error" => {
+            let message = obj
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            vec![format!("❌ Error: {}", message)]
+        }
+        _ => {
+            // その他のイベントは簡易表示
+            vec![format!("• {}: {}", event_type, json)]
+        }
+    }
 }
 
 fn run_dir(store_root: &Path, run_id: &str) -> PathBuf {
