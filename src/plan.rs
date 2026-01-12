@@ -109,6 +109,13 @@ impl Plan {
             if task.id.trim().is_empty() {
                 bail!("task id is empty");
             }
+            // Validate task ID contains only safe characters
+            if !task.id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                bail!(
+                    "task id '{}' contains invalid characters (only alphanumeric, underscore, and hyphen are allowed)",
+                    task.id
+                );
+            }
             if !seen.insert(task.id.clone()) {
                 bail!("duplicate task id {}", task.id);
             }
