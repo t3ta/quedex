@@ -149,9 +149,9 @@ where
                 if rotations >= ready_queue.len() {
                     break;
                 }
-                let task_id = ready_queue
-                    .pop_front()
-                    .expect("ready queue empty after check");
+                let Some(task_id) = ready_queue.pop_front() else {
+                    break;
+                };
                 if fail_fast_triggered {
                     if let Some(record) = states.get_mut(&task_id) {
                         record.status = TaskStatus::Skipped;
@@ -249,6 +249,21 @@ fn init_lock_table(tasks: &HashMap<TaskId, TaskSpec>) -> LockTable {
     table
 }
 
+/// Attempts to acquire all required locks for a task.
+///
+/// # Arguments
+/// * `lock_table` - Shared lock table mapping lock names to holding tasks
+/// * `task_id` - The task requesting the locks
+/// * `locks` - List of lock names to acquire
+///
+/// # Returns
+/// `true` if all locks were acquired, `false` if any lock is held by another task
+///
+/// # Behavior
+/// - If the task requires no locks, returns true immediately
+/// - Checks if all locks are available (not held by another task)
+/// - If any lock is held, returns false without acquiring any locks
+/// - If all locks are available, acquires all of them atomically
 fn try_acquire_locks(
     lock_table: &Arc<Mutex<LockTable>>,
     task_id: &TaskId,
@@ -257,9 +272,13 @@ fn try_acquire_locks(
     if locks.is_empty() {
         return true;
     }
-    let mut table = lock_table
-        .lock()
-        .expect("lock table mutex poisoned");
+    let mut table = match lock_table.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            eprintln!("Warning: lock table mutex poisoned, attempting recovery");
+            poisoned.into_inner()
+        }
+    };
     for lock in locks {
         if let Some(Some(_)) = table.get(lock) {
             return false;
@@ -271,13 +290,29 @@ fn try_acquire_locks(
     true
 }
 
+/// Releases all locks held by a task.
+///
+/// # Arguments
+/// * `lock_table` - Shared lock table mapping lock names to holding tasks
+/// * `task_id` - The task releasing the locks
+/// * `locks` - List of lock names to release
+///
+/// # Behavior
+/// - If the task has no locks, returns immediately
+/// - For each lock, checks if it's held by this task
+/// - Only releases locks that are currently held by this task
+/// - Ignores locks held by other tasks or already released locks
 fn release_locks(lock_table: &Arc<Mutex<LockTable>>, task_id: &TaskId, locks: &[String]) {
     if locks.is_empty() {
         return;
     }
-    let mut table = lock_table
-        .lock()
-        .expect("lock table mutex poisoned");
+    let mut table = match lock_table.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            eprintln!("Warning: lock table mutex poisoned, attempting recovery");
+            poisoned.into_inner()
+        }
+    };
     for lock in locks {
         #[allow(clippy::collapsible_if)]
         if let Some(holder) = table.get(lock) {
@@ -288,6 +323,19 @@ fn release_locks(lock_table: &Arc<Mutex<LockTable>>, task_id: &TaskId, locks: &[
     }
 }
 
+/// Refreshes the ready queue by checking which pending tasks have satisfied dependencies.
+///
+/// # Arguments
+/// * `tasks` - All defined tasks in the plan
+/// * `states` - Current execution state of all tasks
+/// * `ready_queue` - Queue of tasks ready to execute (modified in place)
+/// * `fail_fast_triggered` - Whether fail-fast mode is active
+///
+/// # Behavior
+/// - If fail_fast is active, returns immediately without queuing tasks
+/// - For each pending task, checks if all dependencies succeeded
+/// - If a dependency failed, marks the task as Skipped
+/// - If all dependencies are satisfied, marks task as Ready and adds to queue
 fn refresh_ready(
     tasks: &HashMap<TaskId, TaskSpec>,
     states: &mut HashMap<TaskId, TaskRecord>,

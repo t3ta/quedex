@@ -231,12 +231,14 @@ async fn handle_run(
         .or(global.max_concurrency)
         .unwrap_or(1);
     let fail_fast = plan.run.fail_fast.unwrap_or(global.effective_fail_fast());
+    let default_timeout_sec = plan.run.default_timeout_sec;
 
     let runner = PlanTaskRunner::new(
         Arc::new(tasks_map),
         ctx,
         state_handle.clone(),
         cancel.clone(),
+        default_timeout_sec,
     );
     let scheduler = if let Some(initial_states) = initial_states {
         Scheduler::new_with_initial_state(
@@ -502,12 +504,14 @@ async fn handle_retry(global: &GlobalOptions, run_id: &str, task_id: &str) -> Re
         .or(global.max_concurrency)
         .unwrap_or(1);
     let fail_fast = plan.run.fail_fast.unwrap_or(global.effective_fail_fast());
+    let default_timeout_sec = plan.run.default_timeout_sec;
 
     let runner = PlanTaskRunner::new(
         Arc::new(tasks_map),
         ctx,
         state_handle.clone(),
         cancel,
+        default_timeout_sec,
     );
     let scheduler = Scheduler::new(
         task_specs,
@@ -556,7 +560,9 @@ fn handle_cancel(global: &GlobalOptions, run_id: &str, task_id: Option<String>) 
     let state = read_state(&store_root, run_id)?;
     for task_state in state.tasks.values() {
         if let Some(pid) = task_state.pid {
-            let _ = terminate_pid(pid);
+            if let Err(err) = terminate_pid(pid) {
+                eprintln!("Warning: failed to terminate pid {}: {}", pid, err);
+            }
         }
     }
     Ok(0)
@@ -795,13 +801,25 @@ fn stream_log(path: &Path, follow: bool) -> Result<()> {
 fn terminate_pid(pid: u32) -> Result<()> {
     #[cfg(unix)]
     {
+        // First try SIGTERM for graceful shutdown
         let status = std::process::Command::new("kill")
             .arg("-TERM")
             .arg(pid.to_string())
             .status()
             .context("spawn kill command")?;
+
         if !status.success() {
-            return Err(anyhow!("failed to terminate pid {}", pid));
+            eprintln!("Warning: SIGTERM failed for pid {}, trying SIGKILL", pid);
+            // If SIGTERM fails, escalate to SIGKILL
+            let kill_status = std::process::Command::new("kill")
+                .arg("-KILL")
+                .arg(pid.to_string())
+                .status()
+                .context("spawn kill -KILL command")?;
+
+            if !kill_status.success() {
+                return Err(anyhow!("failed to kill pid {} even with SIGKILL", pid));
+            }
         }
         Ok(())
     }
@@ -965,6 +983,11 @@ fn has_pending_tasks(records: &HashMap<String, TaskRecord>) -> bool {
     })
 }
 
+/// Handle for managing shared state across tasks.
+///
+/// Provides thread-safe access to the run state and automatically
+/// persists changes to the store. All state modifications should go
+/// through this handle to ensure consistency.
 #[derive(Clone)]
 struct StateHandle {
     store: Arc<dyn Store>,
@@ -980,10 +1003,13 @@ impl StateHandle {
     }
 
     fn snapshot(&self) -> State {
-        self.state
-            .lock()
-            .expect("state lock poisoned")
-            .clone()
+        match self.state.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => {
+                eprintln!("Warning: state lock poisoned, attempting recovery");
+                poisoned.into_inner().clone()
+            }
+        }
     }
 
     fn update<F>(&self, update_fn: F) -> Result<()>
@@ -991,7 +1017,13 @@ impl StateHandle {
         F: FnOnce(&mut State),
     {
         let snapshot = {
-            let mut state = self.state.lock().expect("state lock poisoned");
+            let mut state = match self.state.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    eprintln!("Warning: state lock poisoned, attempting recovery");
+                    poisoned.into_inner()
+                }
+            };
             update_fn(&mut state);
             state.clone()
         };
@@ -1057,6 +1089,12 @@ impl StateHandle {
     }
 }
 
+/// Handle for coordinating task cancellation across the system.
+///
+/// Tracks running tasks and provides a mechanism to cancel them all
+/// when a termination signal is received (SIGTERM/SIGINT) or when
+/// a timeout occurs. Tasks register their child handles here so they
+/// can be killed on cancellation.
 #[derive(Clone)]
 struct CancelHandle {
     canceled: Arc<AtomicBool>,
@@ -1073,7 +1111,13 @@ impl CancelHandle {
 
     fn trigger(&self) {
         self.canceled.store(true, Ordering::SeqCst);
-        let children = self.active.lock().expect("active lock poisoned");
+        let children = match self.active.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("Warning: active lock poisoned, attempting recovery");
+                poisoned.into_inner()
+            }
+        };
         for child in children.values() {
             let _ = child.kill();
         }
@@ -1084,20 +1128,35 @@ impl CancelHandle {
     }
 
     fn register(&self, task_id: &str, child: ChildHandle) {
-        self.active
-            .lock()
-            .expect("active lock poisoned")
-            .insert(task_id.to_string(), child);
+        match self.active.lock() {
+            Ok(mut guard) => {
+                guard.insert(task_id.to_string(), child);
+            }
+            Err(poisoned) => {
+                eprintln!("Warning: active lock poisoned, attempting recovery");
+                poisoned.into_inner().insert(task_id.to_string(), child);
+            }
+        }
     }
 
     fn unregister(&self, task_id: &str) {
-        self.active
-            .lock()
-            .expect("active lock poisoned")
-            .remove(task_id);
+        match self.active.lock() {
+            Ok(mut guard) => {
+                guard.remove(task_id);
+            }
+            Err(poisoned) => {
+                eprintln!("Warning: active lock poisoned, attempting recovery");
+                poisoned.into_inner().remove(task_id);
+            }
+        }
     }
 }
 
+/// Task runner implementation for executing plan tasks.
+///
+/// Executes tasks using either the Codex runner (for LLM-assisted tasks)
+/// or the Shell runner (for command execution). Handles task lifecycle
+/// including spawn, execution, timeout enforcement, and state updates.
 struct PlanTaskRunner {
     tasks: Arc<HashMap<String, Task>>,
     ctx: RunContext,
@@ -1105,6 +1164,7 @@ struct PlanTaskRunner {
     cancel: CancelHandle,
     codex: CodexRunner,
     shell: ShellRunner,
+    default_timeout_sec: Option<u64>,
 }
 
 impl PlanTaskRunner {
@@ -1113,6 +1173,7 @@ impl PlanTaskRunner {
         ctx: RunContext,
         state: StateHandle,
         cancel: CancelHandle,
+        default_timeout_sec: Option<u64>,
     ) -> Self {
         Self {
             tasks,
@@ -1121,6 +1182,7 @@ impl PlanTaskRunner {
             cancel,
             codex: CodexRunner::new(),
             shell: ShellRunner::new(),
+            default_timeout_sec,
         }
     }
 }
@@ -1135,6 +1197,7 @@ impl TaskRunner for PlanTaskRunner {
         let cancel = self.cancel.clone();
         let codex = self.codex;
         let shell = self.shell;
+        let default_timeout_sec = self.default_timeout_sec;
 
         Box::pin(async move {
             let Some(task) = tasks.get(&task_spec.id) else {
@@ -1165,7 +1228,30 @@ impl TaskRunner for PlanTaskRunner {
             let _ = state.task_started(&task.id, child.pid);
 
             let task_id = task.id.clone();
-            let wait_result = tokio::task::spawn_blocking(move || child.wait()).await;
+            let timeout_sec = task.timeout_sec.or(default_timeout_sec);
+
+            let wait_future = tokio::task::spawn_blocking(move || child.wait());
+            let wait_result = if let Some(timeout_secs) = timeout_sec {
+                let timeout_duration = Duration::from_secs(timeout_secs);
+                match tokio::time::timeout(timeout_duration, wait_future).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        eprintln!("task {} timed out after {} seconds", task_id, timeout_secs);
+                        // Kill the process on timeout
+                        if let Ok(active) = cancel.active.lock() {
+                            if let Some(child_handle) = active.get(&task_id) {
+                                let _ = child_handle.kill();
+                            }
+                        }
+                        cancel.unregister(&task_id);
+                        let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(124));
+                        return TaskResult::failed(124);
+                    }
+                }
+            } else {
+                wait_future.await
+            };
+
             cancel.unregister(&task_id);
 
             let status = match wait_result {
