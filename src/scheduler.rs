@@ -274,9 +274,9 @@ fn try_acquire_locks(
     }
     let mut table = match lock_table.lock() {
         Ok(guard) => guard,
-        Err(poisoned) => {
-            eprintln!("Warning: lock table mutex poisoned, attempting recovery");
-            poisoned.into_inner()
+        Err(_) => {
+            eprintln!("Error: lock table mutex poisoned, refusing to acquire locks (cannot safely proceed)");
+            return false;
         }
     };
     for lock in locks {
@@ -308,9 +308,9 @@ fn release_locks(lock_table: &Arc<Mutex<LockTable>>, task_id: &TaskId, locks: &[
     }
     let mut table = match lock_table.lock() {
         Ok(guard) => guard,
-        Err(poisoned) => {
-            eprintln!("Warning: lock table mutex poisoned, attempting recovery");
-            poisoned.into_inner()
+        Err(_) => {
+            eprintln!("Error: lock table mutex poisoned, skipping lock release (locks may remain held)");
+            return;
         }
     };
     for lock in locks {

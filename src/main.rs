@@ -559,10 +559,10 @@ fn handle_cancel(global: &GlobalOptions, run_id: &str, task_id: Option<String>) 
 
     let state = read_state(&store_root, run_id)?;
     for task_state in state.tasks.values() {
-        if let Some(pid) = task_state.pid {
-            if let Err(err) = terminate_pid(pid) {
-                eprintln!("Warning: failed to terminate pid {}: {}", pid, err);
-            }
+        if let Some(pid) = task_state.pid
+            && let Err(err) = terminate_pid(pid)
+        {
+            eprintln!("Warning: failed to terminate pid {}: {}", pid, err);
         }
     }
     Ok(0)
@@ -810,7 +810,21 @@ fn terminate_pid(pid: u32) -> Result<()> {
 
         if !status.success() {
             eprintln!("Warning: SIGTERM failed for pid {}, trying SIGKILL", pid);
-            // If SIGTERM fails, escalate to SIGKILL
+        }
+        
+        // Give the process time to gracefully shut down before escalating to SIGKILL
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        
+        // Check if process still exists and escalate to SIGKILL if needed
+        let check_status = std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .status()
+            .context("check if process exists")?;
+        
+        if check_status.success() {
+            // Process still exists, escalate to SIGKILL
+            eprintln!("Warning: pid {} still running after SIGTERM, escalating to SIGKILL", pid);
             let kill_status = std::process::Command::new("kill")
                 .arg("-KILL")
                 .arg(pid.to_string())
@@ -1006,7 +1020,7 @@ impl StateHandle {
         match self.state.lock() {
             Ok(guard) => guard.clone(),
             Err(poisoned) => {
-                eprintln!("Warning: state lock poisoned, attempting recovery");
+                eprintln!("Error: state lock poisoned - returning potentially corrupted state (data may be inconsistent)");
                 poisoned.into_inner().clone()
             }
         }
@@ -1020,7 +1034,7 @@ impl StateHandle {
             let mut state = match self.state.lock() {
                 Ok(guard) => guard,
                 Err(poisoned) => {
-                    eprintln!("Warning: state lock poisoned, attempting recovery");
+                    eprintln!("Error: state lock poisoned - updating potentially corrupted state (data may be inconsistent)");
                     poisoned.into_inner()
                 }
             };
@@ -1113,9 +1127,9 @@ impl CancelHandle {
         self.canceled.store(true, Ordering::SeqCst);
         let children = match self.active.lock() {
             Ok(guard) => guard,
-            Err(poisoned) => {
-                eprintln!("Warning: active lock poisoned, attempting recovery");
-                poisoned.into_inner()
+            Err(_) => {
+                eprintln!("Error: active lock poisoned - cannot safely kill child processes (some processes may not be terminated)");
+                return;
             }
         };
         for child in children.values() {
@@ -1132,9 +1146,8 @@ impl CancelHandle {
             Ok(mut guard) => {
                 guard.insert(task_id.to_string(), child);
             }
-            Err(poisoned) => {
-                eprintln!("Warning: active lock poisoned, attempting recovery");
-                poisoned.into_inner().insert(task_id.to_string(), child);
+            Err(_) => {
+                eprintln!("Error: active lock poisoned - cannot register task {} (cancellation may not work correctly)", task_id);
             }
         }
     }
@@ -1144,9 +1157,8 @@ impl CancelHandle {
             Ok(mut guard) => {
                 guard.remove(task_id);
             }
-            Err(poisoned) => {
-                eprintln!("Warning: active lock poisoned, attempting recovery");
-                poisoned.into_inner().remove(task_id);
+            Err(_) => {
+                eprintln!("Error: active lock poisoned - cannot unregister task {} (may cause issues with future cancellations)", task_id);
             }
         }
     }
@@ -1236,12 +1248,18 @@ impl TaskRunner for PlanTaskRunner {
                 match tokio::time::timeout(timeout_duration, wait_future).await {
                     Ok(result) => result,
                     Err(_) => {
-                        eprintln!("task {} timed out after {} seconds", task_id, timeout_secs);
+                        // Write timeout message to task's stderr log file
+                        let timeout_msg = format!("task {} timed out after {} seconds\n", task_id, timeout_secs);
+                        if let Ok(mut stderr_log) = ctx.store.open_log(&task_id, LogStream::Stderr) {
+                            let _ = stderr_log.write_all(timeout_msg.as_bytes());
+                        }
+                        eprintln!("{}", timeout_msg.trim());
+                        
                         // Kill the process on timeout
-                        if let Ok(active) = cancel.active.lock() {
-                            if let Some(child_handle) = active.get(&task_id) {
-                                let _ = child_handle.kill();
-                            }
+                        if let Ok(active) = cancel.active.lock()
+                            && let Some(child_handle) = active.get(&task_id)
+                        {
+                            let _ = child_handle.kill();
                         }
                         cancel.unregister(&task_id);
                         let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(124));
