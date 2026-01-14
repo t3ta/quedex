@@ -1,5 +1,5 @@
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Table, Wrap};
 use std::collections::HashMap;
 
 use crate::store::{LogStream, TaskStatus};
@@ -101,10 +101,12 @@ fn draw_logs(frame: &mut Frame, app: &mut App, area: Rect) {
     let offset = app.log_offset.min(max_scroll);
     let scroll = max_scroll.saturating_sub(offset);
 
-    let text = Text::from(lines.join("\n"));
+    let text_lines: Vec<Line> = lines.iter().map(|s| Line::from(s.as_str())).collect();
+    let text = Text::from(text_lines);
     let paragraph = Paragraph::new(text)
         .block(Block::default().borders(Borders::ALL).title(title))
-        .scroll((scroll as u16, 0));
+        .scroll((scroll as u16, 0))
+        .wrap(Wrap { trim: false });
 
     frame.render_widget(paragraph, area);
 }
