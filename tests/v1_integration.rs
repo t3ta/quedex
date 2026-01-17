@@ -39,6 +39,39 @@ fn quedex_bin() -> &'static str {
     env!("CARGO_BIN_EXE_quedex")
 }
 
+fn write_state_for_run(store_root: &Path, run_id: &str, status: RunStatus) -> Result<()> {
+    let store = FsStore::new(store_root, run_id)?;
+    let now = Utc::now();
+    let (task_status, exit_code, completed_at) = match status {
+        RunStatus::Completed => (TaskStatus::Succeeded, Some(0), Some(now)),
+        RunStatus::Failed => (TaskStatus::Failed, Some(1), Some(now)),
+        RunStatus::Canceled => (TaskStatus::Canceled, None, Some(now)),
+        RunStatus::Running => (TaskStatus::Running, None, None),
+    };
+    let mut tasks = HashMap::new();
+    tasks.insert(
+        "task".to_string(),
+        TaskState {
+            status: task_status,
+            exit_code,
+            stderr_tail: None,
+            started_at: Some(now),
+            completed_at,
+            pid: None,
+        },
+    );
+    let state = State {
+        run_id: run_id.to_string(),
+        run_name: run_id.to_string(),
+        status,
+        tasks,
+        started_at: now,
+        completed_at,
+    };
+    store.write_state(state)?;
+    Ok(())
+}
+
 #[test]
 fn retry_command_reexecutes_failed_task() -> Result<()> {
     let temp = TempDir::new("quedex-retry")?;
@@ -93,6 +126,69 @@ fn retry_command_reexecutes_failed_task() -> Result<()> {
     let state = store.read_state()?;
     assert_eq!(state.status, RunStatus::Completed);
     assert_eq!(state.tasks["retry-task"].status, TaskStatus::Succeeded);
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn clean_all_removes_finished_runs_and_skips_running() -> Result<()> {
+    let temp = TempDir::new("quedex-clean")?;
+    let store_root = temp.path().join("store");
+    fs::create_dir_all(&store_root)?;
+
+    write_state_for_run(&store_root, "completed-run", RunStatus::Completed)?;
+    write_state_for_run(&store_root, "failed-run", RunStatus::Failed)?;
+
+    // Create a running run with both run.pid and state.json
+    let running_run = "running-run";
+    write_state_for_run(&store_root, running_run, RunStatus::Running)?;
+    let running_dir = run_dir(&store_root, running_run);
+    fs::write(running_dir.join("run.pid"), std::process::id().to_string())?;
+
+    let status = Command::new(quedex_bin())
+        .arg("--store")
+        .arg(&store_root)
+        .arg("clean")
+        .arg("--all")
+        .status()
+        .context("clean all")?;
+    assert!(status.success());
+
+    assert!(!run_dir(&store_root, "completed-run").exists());
+    assert!(!run_dir(&store_root, "failed-run").exists());
+    assert!(run_dir(&store_root, "running-run").exists());
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn clean_single_run_fails_when_running() -> Result<()> {
+    let temp = TempDir::new("quedex-clean-strict")?;
+    let store_root = temp.path().join("store");
+    fs::create_dir_all(&store_root)?;
+
+    // Create a running run with both run.pid and state.json
+    let running_run = "strict-test-run";
+    write_state_for_run(&store_root, running_run, RunStatus::Running)?;
+    let running_dir = run_dir(&store_root, running_run);
+    fs::write(running_dir.join("run.pid"), std::process::id().to_string())?;
+
+    // Attempt to clean the specific running run (should fail with strict=true)
+    let status = Command::new(quedex_bin())
+        .arg("--store")
+        .arg(&store_root)
+        .arg("clean")
+        .arg(running_run)
+        .status()
+        .context("clean running run")?;
+    
+    // Should fail because the run is still running
+    assert!(!status.success());
+    
+    // Run directory should still exist
+    assert!(running_dir.exists());
 
     Ok(())
 }

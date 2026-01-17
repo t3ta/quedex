@@ -49,6 +49,10 @@ LLM は「計画（plan）」まで。実行・監視・状態管理は quedex �
 * `quedex retry <run_id> <task_id>`
 
   * 失敗/キャンセル task を再実行（依存が満たされている場合）
+* `quedex clean [run_id] [--all]`
+
+  * run の状態・ログを削除（実行中は不可）
+  * `--all`: まとめて削除（実行中はスキップ）
 * `quedex graph <plan|run_id> [--mermaid|--ascii]`
 
   * DAG 表示
@@ -393,7 +397,7 @@ src/
 * scheduler（deps+locks+concurrency）
 * runner（codex/shell）
 * store（logs + state.json）
-* `run/start/status/logs/cancel/graph`
+* `run/start/status/logs/cancel/clean/graph`
 
 ### v1（使い勝手）
 
