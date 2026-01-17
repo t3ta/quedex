@@ -610,15 +610,54 @@ fn clean_run_dir(store_root: &Path, run_id: &str, strict: bool) -> Result<CleanR
     if !run_dir.exists() {
         return Err(anyhow!("run {} not found", run_id));
     }
-    if let Some(reason) = run_active_reason(store_root, run_id)? {
-        if strict {
-            return Err(anyhow!("run {} is still running ({})", run_id, reason));
+    
+    // Check if run is active
+    let active_check = run_active_reason(store_root, run_id);
+    match active_check {
+        Ok(Some(reason)) => {
+            if strict {
+                return Err(anyhow!("run {} is still running ({})", run_id, reason));
+            }
+            return Ok(CleanResult::SkippedRunning { reason });
         }
-        return Ok(CleanResult::SkippedRunning { reason });
+        Ok(None) => {
+            // Run is not active, proceed with removal
+        }
+        Err(err) => {
+            if strict {
+                return Err(err);
+            }
+            // In non-strict mode, treat unverifiable runs as potentially active
+            eprintln!(
+                "Warning: failed to verify run {} status: {err}",
+                run_id
+            );
+            return Ok(CleanResult::SkippedRunning {
+                reason: format!("could not verify status: {err}"),
+            });
+        }
     }
 
-    fs::remove_dir_all(&run_dir).with_context(|| format!("remove {}", run_dir.display()))?;
-    Ok(CleanResult::Removed)
+    // Remove the run directory
+    let remove_result =
+        fs::remove_dir_all(&run_dir).with_context(|| format!("remove {}", run_dir.display()));
+    match remove_result {
+        Ok(()) => Ok(CleanResult::Removed),
+        Err(err) => {
+            if strict {
+                Err(err)
+            } else {
+                eprintln!(
+                    "Warning: failed to clean run {} ({}): {err}",
+                    run_id,
+                    run_dir.display()
+                );
+                Ok(CleanResult::SkippedRunning {
+                    reason: format!("failed to remove directory: {err}"),
+                })
+            }
+        }
+    }
 }
 
 fn run_active_reason(store_root: &Path, run_id: &str) -> Result<Option<String>> {
@@ -651,7 +690,7 @@ fn run_active_reason(store_root: &Path, run_id: &str) -> Result<Option<String>> 
                     continue;
                 };
                 match pid_is_alive(pid) {
-                    Ok(true) => alive_tasks.push(format!("{task_id}(pid {pid})")),
+                    Ok(true) => alive_tasks.push(format!("{task_id} (pid {pid})")),
                     Ok(false) => {}
                     Err(err) => {
                         return Err(anyhow!(

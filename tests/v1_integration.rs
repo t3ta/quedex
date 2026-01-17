@@ -140,9 +140,10 @@ fn clean_all_removes_finished_runs_and_skips_running() -> Result<()> {
     write_state_for_run(&store_root, "completed-run", RunStatus::Completed)?;
     write_state_for_run(&store_root, "failed-run", RunStatus::Failed)?;
 
+    // Create a running run with both run.pid and state.json
     let running_run = "running-run";
+    write_state_for_run(&store_root, running_run, RunStatus::Running)?;
     let running_dir = run_dir(&store_root, running_run);
-    fs::create_dir_all(&running_dir)?;
     fs::write(running_dir.join("run.pid"), std::process::id().to_string())?;
 
     let status = Command::new(quedex_bin())
@@ -157,6 +158,37 @@ fn clean_all_removes_finished_runs_and_skips_running() -> Result<()> {
     assert!(!run_dir(&store_root, "completed-run").exists());
     assert!(!run_dir(&store_root, "failed-run").exists());
     assert!(run_dir(&store_root, "running-run").exists());
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn clean_single_run_fails_when_running() -> Result<()> {
+    let temp = TempDir::new("quedex-clean-strict")?;
+    let store_root = temp.path().join("store");
+    fs::create_dir_all(&store_root)?;
+
+    // Create a running run with both run.pid and state.json
+    let running_run = "strict-test-run";
+    write_state_for_run(&store_root, running_run, RunStatus::Running)?;
+    let running_dir = run_dir(&store_root, running_run);
+    fs::write(running_dir.join("run.pid"), std::process::id().to_string())?;
+
+    // Attempt to clean the specific running run (should fail with strict=true)
+    let status = Command::new(quedex_bin())
+        .arg("--store")
+        .arg(&store_root)
+        .arg("clean")
+        .arg(running_run)
+        .status()
+        .context("clean running run")?;
+    
+    // Should fail because the run is still running
+    assert!(!status.success());
+    
+    // Run directory should still exist
+    assert!(running_dir.exists());
 
     Ok(())
 }
