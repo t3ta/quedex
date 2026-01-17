@@ -64,6 +64,7 @@ async fn dispatch(cli: Cli) -> Result<i32> {
         } => handle_logs(&cli.global, &run_id, &task_id, follow, stderr),
         Commands::Retry { run_id, task_id } => handle_retry(&cli.global, &run_id, &task_id).await,
         Commands::Cancel { run_id, task_id } => handle_cancel(&cli.global, &run_id, task_id),
+        Commands::Clean { run_id, all } => handle_clean(&cli.global, run_id, all),
         Commands::Graph {
             target,
             mermaid,
@@ -569,6 +570,110 @@ fn handle_cancel(global: &GlobalOptions, run_id: &str, task_id: Option<String>) 
     Ok(0)
 }
 
+enum CleanResult {
+    Removed,
+    SkippedRunning { reason: String },
+}
+
+fn handle_clean(global: &GlobalOptions, run_id: Option<String>, all: bool) -> Result<i32> {
+    let store_root = resolve_store_path(global.store.as_ref())?;
+    if let Some(run_id) = run_id {
+        if all {
+            return Err(anyhow!("--all cannot be used with run_id"));
+        }
+        clean_run_dir(&store_root, &run_id, true)?;
+        return Ok(0);
+    }
+
+    if !all {
+        return Err(anyhow!("clean requires run_id or --all"));
+    }
+
+    let run_ids = list_run_ids(&store_root)?;
+    let mut skipped = Vec::new();
+    for run_id in run_ids {
+        match clean_run_dir(&store_root, &run_id, false)? {
+            CleanResult::Removed => {}
+            CleanResult::SkippedRunning { reason } => {
+                skipped.push(format!("{run_id} ({reason})"));
+            }
+        }
+    }
+    if !skipped.is_empty() {
+        eprintln!("Warning: skipped running runs: {}", skipped.join(", "));
+    }
+    Ok(0)
+}
+
+fn clean_run_dir(store_root: &Path, run_id: &str, strict: bool) -> Result<CleanResult> {
+    let run_dir = run_dir(store_root, run_id);
+    if !run_dir.exists() {
+        return Err(anyhow!("run {} not found", run_id));
+    }
+    if let Some(reason) = run_active_reason(store_root, run_id)? {
+        if strict {
+            return Err(anyhow!("run {} is still running ({})", run_id, reason));
+        }
+        return Ok(CleanResult::SkippedRunning { reason });
+    }
+
+    fs::remove_dir_all(&run_dir).with_context(|| format!("remove {}", run_dir.display()))?;
+    Ok(CleanResult::Removed)
+}
+
+fn run_active_reason(store_root: &Path, run_id: &str) -> Result<Option<String>> {
+    let pid_path = run_pid_path(store_root, run_id);
+    if pid_path.exists() {
+        let pid = read_pid(&pid_path)?;
+        match pid_is_alive(pid) {
+            Ok(true) => return Ok(Some(format!("pid {pid}"))),
+            Ok(false) => {}
+            Err(err) => {
+                return Err(anyhow!(
+                    "cannot verify run {} pid {}: {err}",
+                    run_id,
+                    pid
+                ));
+            }
+        }
+    }
+
+    let state_path = run_dir(store_root, run_id).join("state.json");
+    if state_path.exists() {
+        let state = read_state(store_root, run_id)?;
+        if state.status == RunStatus::Running {
+            let mut alive_tasks = Vec::new();
+            for (task_id, task_state) in &state.tasks {
+                if task_state.status != TaskStatus::Running {
+                    continue;
+                }
+                let Some(pid) = task_state.pid else {
+                    continue;
+                };
+                match pid_is_alive(pid) {
+                    Ok(true) => alive_tasks.push(format!("{task_id}(pid {pid})")),
+                    Ok(false) => {}
+                    Err(err) => {
+                        return Err(anyhow!(
+                            "cannot verify task {} pid {}: {err}",
+                            task_id,
+                            pid
+                        ));
+                    }
+                }
+            }
+            if !alive_tasks.is_empty() {
+                return Ok(Some(format!(
+                    "running tasks: {}",
+                    alive_tasks.join(", ")
+                )));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 fn handle_graph(
     global: &GlobalOptions,
     target: &str,
@@ -721,6 +826,23 @@ fn list_states(store_root: &Path) -> Result<Vec<State>> {
     Ok(states)
 }
 
+fn list_run_ids(store_root: &Path) -> Result<Vec<String>> {
+    let runs_dir = store_root.join("runs");
+    if !runs_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut run_ids = Vec::new();
+    for entry in fs::read_dir(&runs_dir).context("read runs directory")? {
+        let entry = entry.context("read runs entry")?;
+        if !entry.file_type().context("read run entry type")?.is_dir() {
+            continue;
+        }
+        let run_id = entry.file_name().to_string_lossy().to_string();
+        run_ids.push(run_id);
+    }
+    Ok(run_ids)
+}
+
 fn print_states_table(states: &[State]) {
     println!("{:<36} {:<10} {:<20} name", "run_id", "status", "started_at");
     for state in states {
@@ -843,6 +965,30 @@ fn terminate_pid(pid: u32) -> Result<()> {
         let _ = pid;
         Err(anyhow!("cancel not supported on this platform"))
     }
+}
+
+fn read_pid(path: &Path) -> Result<u32> {
+    let pid = fs::read_to_string(path)
+        .with_context(|| format!("read {}", path.display()))?
+        .trim()
+        .parse::<u32>()
+        .context("parse pid")?;
+    Ok(pid)
+}
+
+#[cfg(unix)]
+fn pid_is_alive(pid: u32) -> Result<bool> {
+    let status = std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .status()
+        .context("spawn kill -0 for pid check")?;
+    Ok(status.success())
+}
+
+#[cfg(not(unix))]
+fn pid_is_alive(_pid: u32) -> Result<bool> {
+    Err(anyhow!("pid checks are not supported on this platform"))
 }
 
 fn run_dir(store_root: &Path, run_id: &str) -> PathBuf {

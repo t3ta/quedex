@@ -76,6 +76,11 @@ pub enum Commands {
         run_id: String,
         task_id: Option<String>,
     },
+    Clean {
+        run_id: Option<String>,
+        #[arg(long, action = ArgAction::SetTrue)]
+        all: bool,
+    },
     Graph {
         target: String,
         #[arg(long, conflicts_with = "ascii")]

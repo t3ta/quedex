@@ -102,6 +102,8 @@ cargo run -- run plan.json
 - `quedex status [run_id] [--json]`: 実行中/直近の run、または指定 run の状態
 - `quedex logs <run_id> <task_id> [-f] [--stderr]`: ログ閲覧
 - `quedex cancel <run_id> [task_id]`: run 全体または単一 task をキャンセル
+- `quedex clean [run_id] [--all]`: run の状態・ログを削除（実行中は不可）
+  - `--all`: まとめて削除（実行中はスキップ）
 - `quedex graph <plan|run_id> [--mermaid|--ascii]`: DAG 表示
 
 ### v1 新機能
