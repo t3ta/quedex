@@ -24,6 +24,7 @@ fn shell_task(id: &str, command: &str) -> Task {
         shell: Some(ShellConfig {
             command: command.to_string(),
         }),
+        claude_code: None,
     }
 }
 

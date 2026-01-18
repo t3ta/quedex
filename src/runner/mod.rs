@@ -8,6 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use crate::plan::Task;
 use crate::store::Store;
 
+pub mod claude_code;
 pub mod codex;
 pub mod shell;
 
