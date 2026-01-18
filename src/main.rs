@@ -959,11 +959,12 @@ fn print_run_selection_ui(runs: &[RunInfo], selected: usize) {
         for (idx, run) in &active_runs {
             let marker = if *idx == selected { ">" } else { " " };
             let reason = run.active_reason.as_deref().unwrap_or("");
+            let short_id: String = run.state.run_id.chars().take(8).collect();
             println!(
                 "{} [{:?}] {}  {}  ({})",
                 marker,
                 run.state.status,
-                &run.state.run_id[..8],
+                short_id,
                 run.state.run_name,
                 reason
             );
@@ -975,11 +976,12 @@ fn print_run_selection_ui(runs: &[RunInfo], selected: usize) {
         println!("Recent:");
         for (idx, run) in &inactive_runs {
             let marker = if *idx == selected { ">" } else { " " };
+            let short_id: String = run.state.run_id.chars().take(8).collect();
             println!(
                 "{} [{:?}] {}  {}",
                 marker,
                 run.state.status,
-                &run.state.run_id[..8],
+                short_id,
                 run.state.run_name
             );
         }
