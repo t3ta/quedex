@@ -53,6 +53,7 @@ impl Runner for ClaudeCodeRunner {
         }
 
         // For research mode, save the last message to file
+        #[allow(clippy::collapsible_if)]
         if task.mode == TaskMode::Research {
             if let Some(output_path) = config.output_last_message.as_ref() {
                 cmd.arg("--output-file").arg(output_path);
