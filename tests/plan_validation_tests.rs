@@ -1,4 +1,4 @@
-use quedex::plan::{CodexConfig, Plan, RunConfig, ShellConfig, Task, TaskMode};
+use quedex::plan::{ClaudeCodeConfig, CodexConfig, Plan, RunConfig, ShellConfig, Task, TaskMode};
 
 fn shell_task(id: &str, deps: Vec<&str>) -> Task {
     Task {
@@ -13,6 +13,7 @@ fn shell_task(id: &str, deps: Vec<&str>) -> Task {
         shell: Some(ShellConfig {
             command: "echo ok".to_string(),
         }),
+        claude_code: None,
     }
 }
 
@@ -70,8 +71,104 @@ fn plan_rejects_empty_codex_prompt() {
             json: true,
         }),
         shell: None,
+        claude_code: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "codex.prompt is empty");
+}
+
+#[test]
+fn plan_rejects_empty_claude_code_prompt() {
+    let task = Task {
+        id: "claude".to_string(),
+        title: None,
+        mode: TaskMode::Implement,
+        deps: vec![],
+        locks: vec![],
+        timeout_sec: None,
+        kind: None,
+        codex: None,
+        shell: None,
+        claude_code: Some(ClaudeCodeConfig {
+            prompt: " ".to_string(),
+            model: None,
+            output_last_message: None,
+            json: true,
+        }),
+    };
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "claude_code.prompt is empty");
+}
+
+#[test]
+fn plan_rejects_multiple_runner_configs() {
+    let task = Task {
+        id: "multi".to_string(),
+        title: None,
+        mode: TaskMode::Implement,
+        deps: vec![],
+        locks: vec![],
+        timeout_sec: None,
+        kind: None,
+        codex: None,
+        shell: Some(ShellConfig {
+            command: "echo ok".to_string(),
+        }),
+        claude_code: Some(ClaudeCodeConfig {
+            prompt: "test".to_string(),
+            model: None,
+            output_last_message: None,
+            json: true,
+        }),
+    };
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "multiple runner configs");
+}
+
+#[test]
+fn plan_accepts_valid_claude_code_task() {
+    let task = Task {
+        id: "claude".to_string(),
+        title: None,
+        mode: TaskMode::Implement,
+        deps: vec![],
+        locks: vec![],
+        timeout_sec: None,
+        kind: Some("claude_code".to_string()),
+        codex: None,
+        shell: None,
+        claude_code: Some(ClaudeCodeConfig {
+            prompt: "implement feature".to_string(),
+            model: Some("sonnet".to_string()),
+            output_last_message: None,
+            json: true,
+        }),
+    };
+
+    let plan = plan_with_tasks(vec![task]);
+    assert!(plan.validate().is_ok());
+}
+
+#[test]
+fn plan_rejects_kind_mismatch_claude_code() {
+    let task = Task {
+        id: "mismatch".to_string(),
+        title: None,
+        mode: TaskMode::Implement,
+        deps: vec![],
+        locks: vec![],
+        timeout_sec: None,
+        kind: Some("claude_code".to_string()),
+        codex: None,
+        shell: Some(ShellConfig {
+            command: "echo ok".to_string(),
+        }),
+        claude_code: None,
+    };
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "kind=claude_code without claude_code config");
 }

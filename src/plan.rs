@@ -67,6 +67,17 @@ pub struct ShellConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeCodeConfig {
+    pub prompt: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub output_last_message: Option<PathBuf>,
+    #[serde(default = "default_json")]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
     #[serde(default)]
@@ -84,6 +95,8 @@ pub struct Task {
     pub codex: Option<CodexConfig>,
     #[serde(default)]
     pub shell: Option<ShellConfig>,
+    #[serde(default)]
+    pub claude_code: Option<ClaudeCodeConfig>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -123,10 +136,21 @@ impl Plan {
             if !seen.insert(task.id.clone()) {
                 bail!("duplicate task id {}", task.id);
             }
-            if task.codex.is_some() && task.shell.is_some() {
-                bail!("task {} has both codex and shell configs", task.id);
+            let runner_count = [
+                task.codex.is_some(),
+                task.shell.is_some(),
+                task.claude_code.is_some(),
+            ]
+            .iter()
+            .filter(|&&x| x)
+            .count();
+            if runner_count > 1 {
+                bail!(
+                    "task {} has multiple runner configs (only one of codex, shell, claude_code allowed)",
+                    task.id
+                );
             }
-            if task.codex.is_none() && task.shell.is_none() {
+            if runner_count == 0 {
                 bail!("task {} missing runner config", task.id);
             }
             if let Some(kind) = task.kind.as_deref() {
@@ -141,6 +165,11 @@ impl Plan {
                             bail!("task {} kind=shell without shell config", task.id);
                         }
                     }
+                    "claude_code" => {
+                        if task.claude_code.is_none() {
+                            bail!("task {} kind=claude_code without claude_code config", task.id);
+                        }
+                    }
                     _ => bail!("task {} has unknown kind {}", task.id, kind),
                 }
             }
@@ -151,6 +180,17 @@ impl Plan {
                 if codex.output_last_message.is_some() && task.mode != TaskMode::Research {
                     bail!(
                         "task {} output_last_message only allowed for research mode",
+                        task.id
+                    );
+                }
+            }
+            if let Some(claude_code) = task.claude_code.as_ref() {
+                if claude_code.prompt.trim().is_empty() {
+                    bail!("task {} claude_code.prompt is empty", task.id);
+                }
+                if claude_code.output_last_message.is_some() && task.mode != TaskMode::Research {
+                    bail!(
+                        "task {} claude_code.output_last_message only allowed for research mode",
                         task.id
                     );
                 }

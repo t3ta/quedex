@@ -22,6 +22,7 @@ fn shell_task(id: &str, command: String, deps: Vec<&str>) -> Task {
         kind: None,
         codex: None,
         shell: Some(ShellConfig { command }),
+        claude_code: None,
     }
 }
 

@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use cli::{Cli, Commands, GlobalOptions, RecoveryOptions};
 use quedex::plan::{Plan, PlanFormat, Task};
+use quedex::runner::claude_code::ClaudeCodeRunner;
 use quedex::runner::codex::CodexRunner;
 use quedex::runner::shell::ShellRunner;
 use quedex::runner::{ChildHandle, RunContext, Runner};
@@ -124,6 +125,16 @@ async fn handle_run(
         .any(|task| matches!(task.kind.as_deref(), Some("codex")) || task.codex.is_some())
     {
         if let Err(err) = check_codex_available() {
+            eprintln!("environment error: {err}");
+            return Ok(4);
+        }
+    }
+
+    #[allow(clippy::collapsible_if)]
+    if plan.tasks.iter().any(|task| {
+        matches!(task.kind.as_deref(), Some("claude_code")) || task.claude_code.is_some()
+    }) {
+        if let Err(err) = check_claude_code_available() {
             eprintln!("environment error: {err}");
             return Ok(4);
         }
@@ -319,6 +330,15 @@ async fn handle_start(
             return Ok(4);
         }
     }
+    #[allow(clippy::collapsible_if)]
+    if plan.tasks.iter().any(|task| {
+        matches!(task.kind.as_deref(), Some("claude_code")) || task.claude_code.is_some()
+    }) {
+        if let Err(err) = check_claude_code_available() {
+            eprintln!("environment error: {err}");
+            return Ok(4);
+        }
+    }
 
     let plan_path = if recovery.resume {
         snapshot_path
@@ -433,6 +453,9 @@ async fn handle_retry(global: &GlobalOptions, run_id: &str, task_id: &str) -> Re
 
     if matches!(task.kind.as_deref(), Some("codex")) || task.codex.is_some() {
         check_codex_available()?;
+    }
+    if matches!(task.kind.as_deref(), Some("claude_code")) || task.claude_code.is_some() {
+        check_claude_code_available()?;
     }
 
     let mut state = read_state(&store_root, run_id)?;
@@ -825,6 +848,18 @@ fn check_codex_available() -> Result<()> {
     match status {
         Ok(_) => Ok(()),
         Err(err) => Err(anyhow!(err).context("codex not found")),
+    }
+}
+
+fn check_claude_code_available() -> Result<()> {
+    let status = std::process::Command::new("claude")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    match status {
+        Ok(_) => Ok(()),
+        Err(err) => Err(anyhow!(err).context("claude not found")),
     }
 }
 
@@ -1352,15 +1387,17 @@ impl CancelHandle {
 
 /// Task runner implementation for executing plan tasks.
 ///
-/// Executes tasks using either the Codex runner (for LLM-assisted tasks)
-/// or the Shell runner (for command execution). Handles task lifecycle
-/// including spawn, execution, timeout enforcement, and state updates.
+/// Executes tasks using either the Codex runner (for LLM-assisted tasks),
+/// the Claude Code runner (for Claude CLI tasks), or the Shell runner
+/// (for command execution). Handles task lifecycle including spawn,
+/// execution, timeout enforcement, and state updates.
 struct PlanTaskRunner {
     tasks: Arc<HashMap<String, Task>>,
     ctx: RunContext,
     state: StateHandle,
     cancel: CancelHandle,
     codex: CodexRunner,
+    claude_code: ClaudeCodeRunner,
     shell: ShellRunner,
     default_timeout_sec: Option<u64>,
 }
@@ -1379,6 +1416,7 @@ impl PlanTaskRunner {
             state,
             cancel,
             codex: CodexRunner::new(),
+            claude_code: ClaudeCodeRunner::new(),
             shell: ShellRunner::new(),
             default_timeout_sec,
         }
@@ -1394,6 +1432,7 @@ impl TaskRunner for PlanTaskRunner {
         let state = self.state.clone();
         let cancel = self.cancel.clone();
         let codex = self.codex;
+        let claude_code = self.claude_code;
         let shell = self.shell;
         let default_timeout_sec = self.default_timeout_sec;
 
@@ -1409,6 +1448,8 @@ impl TaskRunner for PlanTaskRunner {
 
             let runner: &dyn Runner = if task.codex.is_some() {
                 &codex
+            } else if task.claude_code.is_some() {
+                &claude_code
             } else {
                 &shell
             };
