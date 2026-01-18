@@ -13,6 +13,8 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use clap::Parser;
+use crossterm::event::{self, Event as CrosstermEvent, KeyCode};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use uuid::Uuid;
 
 use cli::{Cli, Commands, GlobalOptions, RecoveryOptions};
@@ -406,23 +408,36 @@ fn handle_status(global: &GlobalOptions, run_id: Option<String>, json: bool) -> 
 fn handle_tui(global: &GlobalOptions, run_id: Option<String>) -> Result<i32> {
     let store_root = resolve_store_path(global.store.as_ref())?;
 
-    // run_idが指定されていない場合、一覧を表示
-    if run_id.is_none() {
-        let mut states = list_states(&store_root)?;
-        if states.is_empty() {
-            println!("no runs found");
-            return Ok(0);
-        }
-        states.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-        println!("Available runs:");
-        println!();
-        print_states_table(&states);
-        println!();
-        println!("Usage: quedex tui <run_id>");
+    // run_idが指定されている場合は従来通りTUI起動
+    if run_id.is_some() {
+        return tui::run(store_root, run_id);
+    }
+
+    // run_idが指定されていない場合、インタラクティブ選択
+    let runs = list_runs_with_activity(&store_root)?;
+
+    if runs.is_empty() {
+        println!("no runs found");
         return Ok(0);
     }
 
-    tui::run(store_root, run_id)
+    // アクティブなrunを抽出
+    let active_runs: Vec<_> = runs.iter().filter(|r| r.is_active).collect();
+
+    // アクティブなrunが1件のみの場合は自動選択
+    if active_runs.len() == 1 {
+        let run_id = active_runs[0].state.run_id.clone();
+        return tui::run(store_root, Some(run_id));
+    }
+
+    // 複数のrunがある場合はインタラクティブ選択UI
+    match select_run_interactive(&runs)? {
+        Some(selected_run_id) => tui::run(store_root, Some(selected_run_id)),
+        None => {
+            println!("canceled");
+            Ok(0)
+        }
+    }
 }
 
 fn handle_logs(
@@ -898,6 +913,127 @@ fn list_states(store_root: &Path) -> Result<Vec<State>> {
         }
     }
     Ok(states)
+}
+
+struct RunInfo {
+    state: State,
+    is_active: bool,
+    active_reason: Option<String>,
+}
+
+fn list_runs_with_activity(store_root: &Path) -> Result<Vec<RunInfo>> {
+    let states = list_states(store_root)?;
+    let mut runs: Vec<RunInfo> = states
+        .into_iter()
+        .map(|state| {
+            let active_reason = run_active_reason(store_root, &state.run_id).ok().flatten();
+            let is_active = active_reason.is_some();
+            RunInfo {
+                state,
+                is_active,
+                active_reason,
+            }
+        })
+        .collect();
+    // Sort: active runs first (by started_at desc), then inactive runs (by started_at desc)
+    runs.sort_by(|a, b| {
+        match (a.is_active, b.is_active) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => b.state.started_at.cmp(&a.state.started_at),
+        }
+    });
+    Ok(runs)
+}
+
+fn print_run_selection_ui(runs: &[RunInfo], selected: usize) {
+    // Clear screen and move cursor to top
+    print!("\x1B[2J\x1B[H");
+    println!("Select a run to monitor:\n");
+
+    let active_runs: Vec<_> = runs.iter().enumerate().filter(|(_, r)| r.is_active).collect();
+    let inactive_runs: Vec<_> = runs.iter().enumerate().filter(|(_, r)| !r.is_active).collect();
+
+    if !active_runs.is_empty() {
+        println!("Running:");
+        for (idx, run) in &active_runs {
+            let marker = if *idx == selected { ">" } else { " " };
+            let reason = run.active_reason.as_deref().unwrap_or("");
+            let short_id: String = run.state.run_id.chars().take(8).collect();
+            println!(
+                "{} [{:?}] {}  {}  ({})",
+                marker,
+                run.state.status,
+                short_id,
+                run.state.run_name,
+                reason
+            );
+        }
+        println!();
+    }
+
+    if !inactive_runs.is_empty() {
+        println!("Recent:");
+        for (idx, run) in &inactive_runs {
+            let marker = if *idx == selected { ">" } else { " " };
+            let short_id: String = run.state.run_id.chars().take(8).collect();
+            println!(
+                "{} [{:?}] {}  {}",
+                marker,
+                run.state.status,
+                short_id,
+                run.state.run_name
+            );
+        }
+        println!();
+    }
+
+    println!("[↑↓] Select  [Enter] Open TUI  [q] Cancel");
+}
+
+fn select_run_interactive(runs: &[RunInfo]) -> Result<Option<String>> {
+    if runs.is_empty() {
+        return Ok(None);
+    }
+
+    enable_raw_mode().context("enable raw mode")?;
+    let result = (|| {
+        let mut selected = 0usize;
+
+        loop {
+            print_run_selection_ui(runs, selected);
+            io::stdout().flush()?;
+
+            #[allow(clippy::collapsible_if)]
+            if event::poll(Duration::from_millis(100))? {
+                if let CrosstermEvent::Key(key) = event::read()? {
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            selected = selected.saturating_sub(1);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if selected < runs.len() - 1 {
+                                selected += 1;
+                            }
+                        }
+                        KeyCode::Enter => {
+                            return Ok(Some(runs[selected].state.run_id.clone()));
+                        }
+                        KeyCode::Char('q') | KeyCode::Esc => {
+                            return Ok(None);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    })();
+
+    disable_raw_mode().context("disable raw mode")?;
+    // Clear screen after exiting selection
+    print!("\x1B[2J\x1B[H");
+    io::stdout().flush()?;
+    result
 }
 
 fn list_run_ids(store_root: &Path) -> Result<Vec<String>> {
