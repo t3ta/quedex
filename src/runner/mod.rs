@@ -10,7 +10,6 @@ use crate::store::Store;
 
 pub mod claude_code;
 pub mod codex;
-pub mod shell;
 
 pub trait Runner {
     fn spawn(&self, task: &Task, ctx: &RunContext) -> Result<ChildHandle>;

@@ -1,6 +1,6 @@
-use quedex::plan::{ClaudeCodeConfig, CodexConfig, Plan, RunConfig, ShellConfig, Task, TaskMode};
+use quedex::plan::{ClaudeCodeConfig, CodexConfig, Plan, RunConfig, Task, TaskMode};
 
-fn shell_task(id: &str, deps: Vec<&str>) -> Task {
+fn codex_task(id: &str, deps: Vec<&str>) -> Task {
     Task {
         id: id.to_string(),
         title: None,
@@ -9,9 +9,13 @@ fn shell_task(id: &str, deps: Vec<&str>) -> Task {
         locks: vec![],
         timeout_sec: None,
         kind: None,
-        codex: None,
-        shell: Some(ShellConfig {
-            command: "echo ok".to_string(),
+        codex: Some(CodexConfig {
+            prompt: "test prompt".to_string(),
+            output_last_message: None,
+            verify_after: false,
+            sandbox: None,
+            ask_for_approval: None,
+            json: true,
         }),
         claude_code: None,
     }
@@ -33,21 +37,21 @@ fn assert_validation_error(plan: Plan, expected: &str) {
 
 #[test]
 fn plan_rejects_duplicate_ids() {
-    let tasks = vec![shell_task("dup", vec![]), shell_task("dup", vec![])];
+    let tasks = vec![codex_task("dup", vec![]), codex_task("dup", vec![])];
     let plan = plan_with_tasks(tasks);
     assert_validation_error(plan, "duplicate task id");
 }
 
 #[test]
 fn plan_rejects_missing_deps() {
-    let tasks = vec![shell_task("A", vec!["B"])];
+    let tasks = vec![codex_task("A", vec!["B"])];
     let plan = plan_with_tasks(tasks);
     assert_validation_error(plan, "missing dep");
 }
 
 #[test]
 fn plan_rejects_dependency_cycles() {
-    let tasks = vec![shell_task("A", vec!["B"]), shell_task("B", vec!["A"])];
+    let tasks = vec![codex_task("A", vec!["B"]), codex_task("B", vec!["A"])];
     let plan = plan_with_tasks(tasks);
     assert_validation_error(plan, "dependency cycle");
 }
@@ -70,7 +74,6 @@ fn plan_rejects_empty_codex_prompt() {
             ask_for_approval: None,
             json: true,
         }),
-        shell: None,
         claude_code: None,
     };
 
@@ -89,7 +92,6 @@ fn plan_rejects_empty_claude_code_prompt() {
         timeout_sec: None,
         kind: None,
         codex: None,
-        shell: None,
         claude_code: Some(ClaudeCodeConfig {
             prompt: " ".to_string(),
             model: None,
@@ -112,9 +114,13 @@ fn plan_rejects_multiple_runner_configs() {
         locks: vec![],
         timeout_sec: None,
         kind: None,
-        codex: None,
-        shell: Some(ShellConfig {
-            command: "echo ok".to_string(),
+        codex: Some(CodexConfig {
+            prompt: "test".to_string(),
+            output_last_message: None,
+            verify_after: false,
+            sandbox: None,
+            ask_for_approval: None,
+            json: true,
         }),
         claude_code: Some(ClaudeCodeConfig {
             prompt: "test".to_string(),
@@ -139,7 +145,6 @@ fn plan_accepts_valid_claude_code_task() {
         timeout_sec: None,
         kind: Some("claude_code".to_string()),
         codex: None,
-        shell: None,
         claude_code: Some(ClaudeCodeConfig {
             prompt: "implement feature".to_string(),
             model: Some("sonnet".to_string()),
@@ -162,9 +167,13 @@ fn plan_rejects_kind_mismatch_claude_code() {
         locks: vec![],
         timeout_sec: None,
         kind: Some("claude_code".to_string()),
-        codex: None,
-        shell: Some(ShellConfig {
-            command: "echo ok".to_string(),
+        codex: Some(CodexConfig {
+            prompt: "test".to_string(),
+            output_last_message: None,
+            verify_after: false,
+            sandbox: None,
+            ask_for_approval: None,
+            json: true,
         }),
         claude_code: None,
     };
