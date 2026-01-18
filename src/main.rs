@@ -1002,6 +1002,7 @@ fn select_run_interactive(runs: &[RunInfo]) -> Result<Option<String>> {
             print_run_selection_ui(runs, selected);
             io::stdout().flush()?;
 
+            #[allow(clippy::collapsible_if)]
             if event::poll(Duration::from_millis(100))? {
                 if let CrosstermEvent::Key(key) = event::read()? {
                     match key.code {
