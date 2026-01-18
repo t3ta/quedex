@@ -4,7 +4,7 @@ Codex CLI を中心に、LLM が生成した DAG 形式の plan を依存解決�
 
 ## プロジェクト概要
 
-quedex は機械可読な plan (DAG) を受け取り、依存関係と排他制御を守りながらタスクを実行します。タスクは research / implement / verify を明示し、Codex CLI もしくは任意のシェルコマンドをバックエンドとして動かせます。
+quedex は機械可読な plan (DAG) を受け取り、依存関係と排他制御を守りながらタスクを実行します。タスクは research / implement / verify を明示し、Codex CLI または Claude Code をバックエンドとして動かせます。
 
 ## 特徴
 
@@ -163,7 +163,7 @@ cargo run -- run plan.json
   - `deps`: 依存タスク ID
   - `locks`: 排他リソース名
   - `timeout_sec`: タスク個別タイムアウト
-  - `kind`: `codex | shell`
+  - `kind`: `codex | claude_code`
   - `codex`: Codex 実行設定
     - `prompt`: 実行プロンプト（必須）
     - `output_last_message`: 最終メッセージを保存するパス（research モードのみ）
@@ -172,7 +172,11 @@ cargo run -- run plan.json
     - `ask_for_approval`: 承認モード（現在未使用）
     - `json`: JSONL形式でイベントを出力（デフォルト: `true`、TUI で進捗を見る場合に推奨）
     - **注意**: implement/verify モードでは `--dangerously-bypass-approvals-and-sandbox` が自動的に使用されます（完全自動実行のため）
-  - `shell`: シェル実行設定（`command`）
+  - `claude_code`: Claude Code 実行設定
+    - `prompt`: 実行プロンプト（必須）
+    - `model`: 使用するモデル（オプション、例: `sonnet`）
+    - `output_last_message`: 最終メッセージを保存するパス（research モードのみ）
+    - `json`: JSONL形式でイベントを出力（デフォルト: `true`）
 
 バリデーション概要:
 
@@ -186,7 +190,7 @@ cargo run -- run plan.json
 
 - 複数タスクの調査 → 実装 → 検証を DAG で分解して並列化
 - DB マイグレーションは `locks: ["db-migrate"]` で排他実行
-- Codex とシェルを混在させ、実装後に `shell` でテストを実行
+- Codex と Claude Code を混在させて実行
 - 長時間タスクを `start` でバックグラウンド実行し、`status`/`logs` で追跡
 
 ### v1 機能の活用

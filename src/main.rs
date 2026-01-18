@@ -21,7 +21,6 @@ use cli::{Cli, Commands, GlobalOptions, RecoveryOptions};
 use quedex::plan::{Plan, PlanFormat, Task};
 use quedex::runner::claude_code::ClaudeCodeRunner;
 use quedex::runner::codex::CodexRunner;
-use quedex::runner::shell::ShellRunner;
 use quedex::runner::{ChildHandle, RunContext, Runner};
 use quedex::scheduler::{
     ScheduleReport, Scheduler, SchedulerOptions, TaskRecord, TaskResult, TaskRunner, TaskSpec,
@@ -1523,10 +1522,9 @@ impl CancelHandle {
 
 /// Task runner implementation for executing plan tasks.
 ///
-/// Executes tasks using either the Codex runner (for LLM-assisted tasks),
-/// the Claude Code runner (for Claude CLI tasks), or the Shell runner
-/// (for command execution). Handles task lifecycle including spawn,
-/// execution, timeout enforcement, and state updates.
+/// Executes tasks using either the Codex runner (for LLM-assisted tasks)
+/// or the Claude Code runner (for Claude CLI tasks). Handles task lifecycle
+/// including spawn, execution, timeout enforcement, and state updates.
 struct PlanTaskRunner {
     tasks: Arc<HashMap<String, Task>>,
     ctx: RunContext,
@@ -1534,7 +1532,6 @@ struct PlanTaskRunner {
     cancel: CancelHandle,
     codex: CodexRunner,
     claude_code: ClaudeCodeRunner,
-    shell: ShellRunner,
     default_timeout_sec: Option<u64>,
 }
 
@@ -1553,7 +1550,6 @@ impl PlanTaskRunner {
             cancel,
             codex: CodexRunner::new(),
             claude_code: ClaudeCodeRunner::new(),
-            shell: ShellRunner::new(),
             default_timeout_sec,
         }
     }
@@ -1569,7 +1565,6 @@ impl TaskRunner for PlanTaskRunner {
         let cancel = self.cancel.clone();
         let codex = self.codex;
         let claude_code = self.claude_code;
-        let shell = self.shell;
         let default_timeout_sec = self.default_timeout_sec;
 
         Box::pin(async move {
@@ -1584,10 +1579,8 @@ impl TaskRunner for PlanTaskRunner {
 
             let runner: &dyn Runner = if task.codex.is_some() {
                 &codex
-            } else if task.claude_code.is_some() {
-                &claude_code
             } else {
-                &shell
+                &claude_code
             };
 
             let child = match runner.spawn(task, &ctx) {

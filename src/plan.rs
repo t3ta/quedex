@@ -62,11 +62,6 @@ fn default_verify_after() -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellConfig {
-    pub command: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaudeCodeConfig {
     pub prompt: String,
     #[serde(default)]
@@ -93,8 +88,6 @@ pub struct Task {
     pub kind: Option<String>,
     #[serde(default)]
     pub codex: Option<CodexConfig>,
-    #[serde(default)]
-    pub shell: Option<ShellConfig>,
     #[serde(default)]
     pub claude_code: Option<ClaudeCodeConfig>,
 }
@@ -136,17 +129,13 @@ impl Plan {
             if !seen.insert(task.id.clone()) {
                 bail!("duplicate task id {}", task.id);
             }
-            let runner_count = [
-                task.codex.is_some(),
-                task.shell.is_some(),
-                task.claude_code.is_some(),
-            ]
-            .iter()
-            .filter(|&&x| x)
-            .count();
+            let runner_count = [task.codex.is_some(), task.claude_code.is_some()]
+                .iter()
+                .filter(|&&x| x)
+                .count();
             if runner_count > 1 {
                 bail!(
-                    "task {} has multiple runner configs (only one of codex, shell, claude_code allowed)",
+                    "task {} has multiple runner configs (only one of codex or claude_code allowed)",
                     task.id
                 );
             }
@@ -158,11 +147,6 @@ impl Plan {
                     "codex" => {
                         if task.codex.is_none() {
                             bail!("task {} kind=codex without codex config", task.id);
-                        }
-                    }
-                    "shell" => {
-                        if task.shell.is_none() {
-                            bail!("task {} kind=shell without shell config", task.id);
                         }
                     }
                     "claude_code" => {
