@@ -131,7 +131,7 @@ fn assert_status(report: &ScheduleReport, task_id: &str, expected: TaskStatus) {
     let record = report
         .tasks
         .get(task_id)
-        .unwrap_or_else(|| panic!("missing task {}", task_id));
+        .unwrap_or_else(|| panic!("missing task {task_id}"));
     assert_eq!(record.status, expected);
 }
 

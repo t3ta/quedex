@@ -405,7 +405,7 @@ fn format_error(
 ) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(message) = obj.get("message").and_then(|v| v.as_str()) {
-        lines.push(format!("❌ Error: {}", message));
+        lines.push(format!("❌ Error: {message}"));
     } else {
         lines.push("❌ Error".to_string());
     }
