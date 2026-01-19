@@ -15,11 +15,23 @@ pub enum TaskMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorktreeRunConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub base_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub shallow_depth: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RunConfig {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
     pub cwd: Option<PathBuf>,
+    #[serde(default)]
+    pub worktree: Option<WorktreeRunConfig>,
     #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
@@ -91,6 +103,8 @@ pub struct Task {
     pub locks: Vec<String>,
     #[serde(default)]
     pub timeout_sec: Option<u64>,
+    #[serde(default)]
+    pub no_worktree: bool,
     #[serde(default)]
     pub kind: Option<String>,
     #[serde(default)]

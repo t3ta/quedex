@@ -30,6 +30,10 @@ use quedex::store::fs::FsStore;
 use quedex::store::recovery::recover_running_tasks;
 use quedex::store::{Event, LogStream, RunStatus, State, TaskState, TaskStatus, Store};
 use quedex::tui;
+use quedex::worktree::{
+    manager::{TaskWorkdir, WorktreeManager},
+    WorktreeConfig,
+};
 
 #[tokio::main]
 async fn main() {
@@ -157,10 +161,25 @@ async fn handle_run(
 
     let store = Arc::new(FsStore::new(&store_root, &run_id)?);
     let cwd = resolve_run_cwd(&plan, plan_base_dir)?;
+    let worktree_manager = plan.run.worktree.as_ref().and_then(|wt_config| {
+        if wt_config.enabled {
+            Some(Arc::new(WorktreeManager::new(
+                cwd.clone(),
+                WorktreeConfig {
+                    enabled: true,
+                    base_dir: wt_config.base_dir.clone(),
+                    shallow_depth: wt_config.shallow_depth,
+                },
+            )))
+        } else {
+            None
+        }
+    });
     let ctx = RunContext {
         cwd,
         env: plan.run.env.clone(),
         store: store.clone(),
+        worktree_manager,
     };
 
     let (mut state, initial_states) = if recovery.resume {
@@ -541,10 +560,25 @@ async fn handle_retry(global: &GlobalOptions, run_id: &str, task_id: &str) -> Re
 
     let base_dir = env::current_dir().context("resolve current dir for retry")?;
     let cwd = resolve_run_cwd(&plan, base_dir)?;
+    let worktree_manager = plan.run.worktree.as_ref().and_then(|wt_config| {
+        if wt_config.enabled {
+            Some(Arc::new(WorktreeManager::new(
+                cwd.clone(),
+                WorktreeConfig {
+                    enabled: true,
+                    base_dir: wt_config.base_dir.clone(),
+                    shallow_depth: wt_config.shallow_depth,
+                },
+            )))
+        } else {
+            None
+        }
+    });
     let ctx = RunContext {
         cwd,
         env: plan.run.env.clone(),
         store: store.clone(),
+        worktree_manager,
     };
 
     let state_handle = StateHandle::new(store.clone(), state);
@@ -1605,81 +1639,114 @@ impl TaskRunner for PlanTaskRunner {
                 return TaskResult::failed(1);
             };
 
+            let task_id = task.id.clone();
             if cancel.is_canceled() {
-                let _ = state.task_finished(&task.id, TaskStatus::Canceled, None);
+                let _ = state.task_finished(&task_id, TaskStatus::Canceled, None);
                 return TaskResult::canceled();
             }
 
-            let runner: &dyn Runner = if task.codex.is_some() {
-                &codex
-            } else if task.claude_code.is_some() {
-                &claude_code
-            } else {
-                &opencode
-            };
-
-            let child = match runner.spawn(task, &ctx) {
-                Ok(child) => child,
-                Err(err) => {
-                    eprintln!("task {} spawn error: {err:#}", task.id);
-                    let _ = state.task_finished(&task.id, TaskStatus::Failed, Some(1));
-                    return TaskResult::failed(1);
-                }
-            };
-
-            cancel.register(&task.id, child.clone());
-            let _ = state.task_started(&task.id, child.pid);
-
-            let task_id = task.id.clone();
-            let timeout_sec = task.timeout_sec.or(default_timeout_sec);
-
-            let wait_future = tokio::task::spawn_blocking(move || child.wait());
-            let wait_result = if let Some(timeout_secs) = timeout_sec {
-                let timeout_duration = Duration::from_secs(timeout_secs);
-                match tokio::time::timeout(timeout_duration, wait_future).await {
-                    Ok(result) => result,
-                    Err(_) => {
-                        // Write timeout message to task's stderr log file
-                        let timeout_msg = format!("task {task_id} timed out after {timeout_secs} seconds\n");
-                        if let Ok(mut stderr_log) = ctx.store.open_log(&task_id, LogStream::Stderr) {
-                            let _ = stderr_log.write_all(timeout_msg.as_bytes());
-                        }
-                        eprintln!("{}", timeout_msg.trim());
-                        
-                        // Kill the process on timeout
-                        #[allow(clippy::collapsible_if)]
-                        if let Ok(active) = cancel.active.lock() {
-                            if let Some(child_handle) = active.get(&task_id) {
-                                let _ = child_handle.kill();
-                            }
-                        }
-                        cancel.unregister(&task_id);
-                        let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(124));
-                        return TaskResult::failed(124);
+            let workdir = if let Some(manager) = &ctx.worktree_manager {
+                match manager.acquire(&task_id, task.no_worktree) {
+                    Ok(workdir) => workdir,
+                    Err(err) => {
+                        eprintln!("task {task_id} worktree acquire error: {err:#}");
+                        let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
+                        return TaskResult::failed(1);
                     }
                 }
             } else {
-                wait_future.await
+                TaskWorkdir::Shared(ctx.cwd.clone())
             };
 
-            cancel.unregister(&task_id);
+            let mut task_ctx = ctx.clone();
+            task_ctx.cwd = workdir.path().to_path_buf();
 
-            let status = match wait_result {
-                Ok(Ok(status)) => status,
-                Ok(Err(err)) => {
-                    eprintln!("task {task_id} wait error: {err}");
-                    let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
-                    return TaskResult::failed(1);
-                }
-                Err(err) => {
-                    eprintln!("task {task_id} join error: {err}");
-                    let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
-                    return TaskResult::failed(1);
-                }
+            let result = 'result: {
+                let runner: &dyn Runner = if task.codex.is_some() {
+                    &codex
+                } else if task.claude_code.is_some() {
+                    &claude_code
+                } else {
+                    &opencode
+                };
+
+                let child = match runner.spawn(task, &task_ctx) {
+                    Ok(child) => child,
+                    Err(err) => {
+                        eprintln!("task {task_id} spawn error: {err:#}");
+                        let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
+                        break 'result TaskResult::failed(1);
+                    }
+                };
+
+                cancel.register(&task_id, child.clone());
+                let _ = state.task_started(&task_id, child.pid);
+
+                let timeout_sec = task.timeout_sec.or(default_timeout_sec);
+
+                let wait_future = tokio::task::spawn_blocking(move || child.wait());
+                let wait_result = if let Some(timeout_secs) = timeout_sec {
+                    let timeout_duration = Duration::from_secs(timeout_secs);
+                    match tokio::time::timeout(timeout_duration, wait_future).await {
+                        Ok(result) => result,
+                        Err(_) => {
+                            // Write timeout message to task's stderr log file
+                            let timeout_msg =
+                                format!("task {task_id} timed out after {timeout_secs} seconds\n");
+                            if let Ok(mut stderr_log) =
+                                task_ctx.store.open_log(&task_id, LogStream::Stderr)
+                            {
+                                let _ = stderr_log.write_all(timeout_msg.as_bytes());
+                            }
+                            eprintln!("{}", timeout_msg.trim());
+
+                            // Kill the process on timeout
+                            #[allow(clippy::collapsible_if)]
+                            if let Ok(active) = cancel.active.lock() {
+                                if let Some(child_handle) = active.get(&task_id) {
+                                    let _ = child_handle.kill();
+                                }
+                            }
+                            cancel.unregister(&task_id);
+                            let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(124));
+                            break 'result TaskResult::failed(124);
+                        }
+                    }
+                } else {
+                    wait_future.await
+                };
+
+                cancel.unregister(&task_id);
+
+                let status = match wait_result {
+                    Ok(Ok(status)) => status,
+                    Ok(Err(err)) => {
+                        eprintln!("task {task_id} wait error: {err}");
+                        let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
+                        break 'result TaskResult::failed(1);
+                    }
+                    Err(err) => {
+                        eprintln!("task {task_id} join error: {err}");
+                        let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
+                        break 'result TaskResult::failed(1);
+                    }
+                };
+
+                let result = map_exit_status(status, cancel.is_canceled());
+                let _ = state.task_finished(&task_id, result.status, result.exit_code);
+                break 'result result;
             };
 
-            let result = map_exit_status(status, cancel.is_canceled());
-            let _ = state.task_finished(&task_id, result.status, result.exit_code);
+            if let Some(manager) = &ctx.worktree_manager {
+                if result.status == TaskStatus::Succeeded {
+                    if let Err(err) = manager.release_success(&task_id, workdir) {
+                        eprintln!("task {task_id} worktree release error: {err:#}");
+                    }
+                } else {
+                    manager.release_failure(&task_id, workdir);
+                }
+            }
+
             result
         })
     }
