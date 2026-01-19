@@ -71,6 +71,15 @@ pub struct ClaudeCodeConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpencodeConfig {
+    pub prompt: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default = "default_json")]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
     #[serde(default)]
@@ -88,6 +97,8 @@ pub struct Task {
     pub codex: Option<CodexConfig>,
     #[serde(default)]
     pub claude_code: Option<ClaudeCodeConfig>,
+    #[serde(default)]
+    pub opencode: Option<OpencodeConfig>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -127,13 +138,13 @@ impl Plan {
             if !seen.insert(task.id.clone()) {
                 bail!("duplicate task id {}", task.id);
             }
-            let runner_count = [task.codex.is_some(), task.claude_code.is_some()]
+            let runner_count = [task.codex.is_some(), task.claude_code.is_some(), task.opencode.is_some()]
                 .iter()
                 .filter(|&&x| x)
                 .count();
             if runner_count > 1 {
                 bail!(
-                    "task {} has multiple runner configs (only one of codex or claude_code allowed)",
+                    "task {} has multiple runner configs (only one of codex, claude_code, or opencode allowed)",
                     task.id
                 );
             }
@@ -150,6 +161,11 @@ impl Plan {
                     "claude_code" => {
                         if task.claude_code.is_none() {
                             bail!("task {} kind=claude_code without claude_code config", task.id);
+                        }
+                    }
+                    "opencode" => {
+                        if task.opencode.is_none() {
+                            bail!("task {} kind=opencode without opencode config", task.id);
                         }
                     }
                     _ => bail!("task {} has unknown kind {}", task.id, kind),
@@ -170,6 +186,11 @@ impl Plan {
                 && claude_code.prompt.trim().is_empty()
             {
                 bail!("task {} claude_code.prompt is empty", task.id);
+            }
+            if let Some(opencode) = task.opencode.as_ref()
+                && opencode.prompt.trim().is_empty()
+            {
+                bail!("task {} opencode.prompt is empty", task.id);
             }
             for dep in &task.deps {
                 if dep == &task.id {

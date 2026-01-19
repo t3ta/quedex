@@ -1,4 +1,4 @@
-use quedex::plan::{ClaudeCodeConfig, CodexConfig, Plan, RunConfig, Task, TaskMode};
+use quedex::plan::{ClaudeCodeConfig, CodexConfig, OpencodeConfig, Plan, RunConfig, Task, TaskMode};
 
 fn codex_task(id: &str, deps: Vec<&str>) -> Task {
     Task {
@@ -18,6 +18,26 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
             json: true,
         }),
         claude_code: None,
+        opencode: None,
+    }
+}
+
+fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
+    Task {
+        id: id.to_string(),
+        title: None,
+        mode: TaskMode::Implement,
+        deps: deps.into_iter().map(|dep| dep.to_string()).collect(),
+        locks: vec![],
+        timeout_sec: None,
+        kind: None,
+        codex: None,
+        claude_code: None,
+        opencode: Some(OpencodeConfig {
+            prompt: "test prompt".to_string(),
+            model: None,
+            json: true,
+        }),
     }
 }
 
@@ -75,6 +95,7 @@ fn plan_rejects_empty_codex_prompt() {
             json: true,
         }),
         claude_code: None,
+        opencode: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -97,6 +118,7 @@ fn plan_rejects_empty_claude_code_prompt() {
             model: None,
             json: true,
         }),
+        opencode: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -126,6 +148,7 @@ fn plan_rejects_multiple_runner_configs() {
             model: None,
             json: true,
         }),
+        opencode: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -148,6 +171,7 @@ fn plan_accepts_valid_claude_code_task() {
             model: Some("sonnet".to_string()),
             json: true,
         }),
+        opencode: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -173,8 +197,108 @@ fn plan_rejects_kind_mismatch_claude_code() {
             json: true,
         }),
         claude_code: None,
+        opencode: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "kind=claude_code without claude_code config");
+}
+
+#[test]
+fn plan_rejects_empty_opencode_prompt() {
+    let task = Task {
+        id: "opencode".to_string(),
+        title: None,
+        mode: TaskMode::Implement,
+        deps: vec![],
+        locks: vec![],
+        timeout_sec: None,
+        kind: None,
+        codex: None,
+        claude_code: None,
+        opencode: Some(OpencodeConfig {
+            prompt: " ".to_string(),
+            model: None,
+            json: true,
+        }),
+    };
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "opencode.prompt is empty");
+}
+
+#[test]
+fn plan_accepts_valid_opencode_task() {
+    let task = Task {
+        id: "opencode".to_string(),
+        title: None,
+        mode: TaskMode::Implement,
+        deps: vec![],
+        locks: vec![],
+        timeout_sec: None,
+        kind: Some("opencode".to_string()),
+        codex: None,
+        claude_code: None,
+        opencode: Some(OpencodeConfig {
+            prompt: "implement feature".to_string(),
+            model: Some("anthropic/claude-sonnet".to_string()),
+            json: true,
+        }),
+    };
+
+    let plan = plan_with_tasks(vec![task]);
+    assert!(plan.validate().is_ok());
+}
+
+#[test]
+fn plan_rejects_kind_mismatch_opencode() {
+    let task = Task {
+        id: "mismatch".to_string(),
+        title: None,
+        mode: TaskMode::Implement,
+        deps: vec![],
+        locks: vec![],
+        timeout_sec: None,
+        kind: Some("opencode".to_string()),
+        codex: Some(CodexConfig {
+            prompt: "test".to_string(),
+            output_last_message: None,
+            verify_after: false,
+            sandbox: None,
+            ask_for_approval: None,
+            json: true,
+        }),
+        claude_code: None,
+        opencode: None,
+    };
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "kind=opencode without opencode config");
+}
+
+#[test]
+fn plan_rejects_multiple_runner_configs_with_opencode() {
+    let task = Task {
+        id: "multi".to_string(),
+        title: None,
+        mode: TaskMode::Implement,
+        deps: vec![],
+        locks: vec![],
+        timeout_sec: None,
+        kind: None,
+        codex: None,
+        claude_code: Some(ClaudeCodeConfig {
+            prompt: "test".to_string(),
+            model: None,
+            json: true,
+        }),
+        opencode: Some(OpencodeConfig {
+            prompt: "test".to_string(),
+            model: None,
+            json: true,
+        }),
+    };
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "multiple runner configs");
 }

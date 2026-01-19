@@ -21,6 +21,7 @@ use cli::{Cli, Commands, GlobalOptions, RecoveryOptions};
 use quedex::plan::{Plan, PlanFormat, Task};
 use quedex::runner::claude_code::ClaudeCodeRunner;
 use quedex::runner::codex::CodexRunner;
+use quedex::runner::opencode::OpencodeRunner;
 use quedex::runner::{ChildHandle, RunContext, Runner};
 use quedex::scheduler::{
     ScheduleReport, Scheduler, SchedulerOptions, TaskRecord, TaskResult, TaskRunner, TaskSpec,
@@ -135,6 +136,16 @@ async fn handle_run(
         matches!(task.kind.as_deref(), Some("claude_code")) || task.claude_code.is_some()
     }) {
         if let Err(err) = check_claude_code_available() {
+            eprintln!("environment error: {err}");
+            return Ok(4);
+        }
+    }
+
+    #[allow(clippy::collapsible_if)]
+    if plan.tasks.iter().any(|task| {
+        matches!(task.kind.as_deref(), Some("opencode")) || task.opencode.is_some()
+    }) {
+        if let Err(err) = check_opencode_available() {
             eprintln!("environment error: {err}");
             return Ok(4);
         }
@@ -340,6 +351,16 @@ async fn handle_start(
         }
     }
 
+    #[allow(clippy::collapsible_if)]
+    if plan.tasks.iter().any(|task| {
+        matches!(task.kind.as_deref(), Some("opencode")) || task.opencode.is_some()
+    }) {
+        if let Err(err) = check_opencode_available() {
+            eprintln!("environment error: {err}");
+            return Ok(4);
+        }
+    }
+
     let plan_path = if recovery.resume {
         snapshot_path
     } else {
@@ -469,6 +490,9 @@ async fn handle_retry(global: &GlobalOptions, run_id: &str, task_id: &str) -> Re
     }
     if matches!(task.kind.as_deref(), Some("claude_code")) || task.claude_code.is_some() {
         check_claude_code_available()?;
+    }
+    if matches!(task.kind.as_deref(), Some("opencode")) || task.opencode.is_some() {
+        check_opencode_available()?;
     }
 
     let mut state = read_state(&store_root, run_id)?;
@@ -868,6 +892,18 @@ fn check_claude_code_available() -> Result<()> {
     match status {
         Ok(_) => Ok(()),
         Err(err) => Err(anyhow!(err).context("claude not found")),
+    }
+}
+
+fn check_opencode_available() -> Result<()> {
+    let status = std::process::Command::new("opencode")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    match status {
+        Ok(_) => Ok(()),
+        Err(err) => Err(anyhow!(err).context("opencode not found")),
     }
 }
 
@@ -1526,6 +1562,7 @@ struct PlanTaskRunner {
     cancel: CancelHandle,
     codex: CodexRunner,
     claude_code: ClaudeCodeRunner,
+    opencode: OpencodeRunner,
     default_timeout_sec: Option<u64>,
 }
 
@@ -1544,6 +1581,7 @@ impl PlanTaskRunner {
             cancel,
             codex: CodexRunner::new(),
             claude_code: ClaudeCodeRunner::new(),
+            opencode: OpencodeRunner::new(),
             default_timeout_sec,
         }
     }
@@ -1559,6 +1597,7 @@ impl TaskRunner for PlanTaskRunner {
         let cancel = self.cancel.clone();
         let codex = self.codex;
         let claude_code = self.claude_code;
+        let opencode = self.opencode;
         let default_timeout_sec = self.default_timeout_sec;
 
         Box::pin(async move {
@@ -1573,8 +1612,10 @@ impl TaskRunner for PlanTaskRunner {
 
             let runner: &dyn Runner = if task.codex.is_some() {
                 &codex
-            } else {
+            } else if task.claude_code.is_some() {
                 &claude_code
+            } else {
+                &opencode
             };
 
             let child = match runner.spawn(task, &ctx) {
