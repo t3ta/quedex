@@ -20,7 +20,7 @@ pub struct Worktree {
 }
 
 impl Worktree {
-    /// 新しい worktree を作成
+    /// 新しい worktree を作成（既存があれば削除してから作成）
     pub fn create(source_repo: &Path, task_id: &str, config: &WorktreeConfig) -> Result<Self> {
         let base_dir = config
             .base_dir
@@ -29,6 +29,19 @@ impl Worktree {
         std::fs::create_dir_all(&base_dir)?;
 
         let worktree_path = base_dir.join(format!("task-{task_id}"));
+
+        // 既存の worktree があれば削除（リトライ対応）
+        if worktree_path.exists() {
+            let _ = Command::new("git")
+                .args(["worktree", "remove", "--force"])
+                .arg(&worktree_path)
+                .current_dir(source_repo)
+                .status();
+            // ディレクトリが残っている場合は直接削除
+            if worktree_path.exists() {
+                std::fs::remove_dir_all(&worktree_path)?;
+            }
+        }
 
         // git worktree add
         let status = Command::new("git")
@@ -70,13 +83,20 @@ impl Worktree {
         self.auto_cleanup = false;
     }
 
-    /// タスク成功時に変更を patch として保存
+    /// タスク成功時に変更を patch として保存（新規ファイルも含む）
     pub fn save_patch(&self, patches_dir: &Path) -> Result<PathBuf> {
         std::fs::create_dir_all(patches_dir)?;
         let patch_path = patches_dir.join(format!("{}.patch", self.task_id));
 
+        // 新規ファイルをステージングに追加（intent to add）
+        let _ = Command::new("git")
+            .args(["add", "-A"])
+            .current_dir(&self.path)
+            .status();
+
+        // ステージング済みの変更を diff（新規ファイルも含む）
         let output = Command::new("git")
-            .args(["diff", "HEAD"])
+            .args(["diff", "--cached", "HEAD"])
             .current_dir(&self.path)
             .output()
             .context("Failed to generate diff")?;
