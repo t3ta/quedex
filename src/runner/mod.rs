@@ -7,6 +7,7 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::plan::Task;
 use crate::store::Store;
+use crate::worktree::manager::WorktreeManager;
 
 pub mod claude_code;
 pub mod codex;
@@ -20,6 +21,7 @@ pub struct RunContext {
     pub cwd: PathBuf,
     pub env: HashMap<String, String>,
     pub store: Arc<dyn Store>,
+    pub worktree_manager: Option<Arc<WorktreeManager>>,
 }
 
 impl Clone for RunContext {
@@ -28,6 +30,7 @@ impl Clone for RunContext {
             cwd: self.cwd.clone(),
             env: self.env.clone(),
             store: Arc::clone(&self.store),
+            worktree_manager: self.worktree_manager.clone(),
         }
     }
 }

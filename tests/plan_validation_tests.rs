@@ -8,6 +8,7 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
         deps: deps.into_iter().map(|dep| dep.to_string()).collect(),
         locks: vec![],
         timeout_sec: None,
+        no_worktree: false,
         kind: None,
         codex: Some(CodexConfig {
             prompt: "test prompt".to_string(),
@@ -22,6 +23,7 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
     }
 }
 
+#[allow(dead_code)]
 fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
     Task {
         id: id.to_string(),
@@ -30,6 +32,7 @@ fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
         deps: deps.into_iter().map(|dep| dep.to_string()).collect(),
         locks: vec![],
         timeout_sec: None,
+        no_worktree: false,
         kind: None,
         codex: None,
         claude_code: None,
@@ -85,6 +88,7 @@ fn plan_rejects_empty_codex_prompt() {
         deps: vec![],
         locks: vec![],
         timeout_sec: None,
+        no_worktree: false,
         kind: None,
         codex: Some(CodexConfig {
             prompt: " ".to_string(),
@@ -111,6 +115,7 @@ fn plan_rejects_empty_claude_code_prompt() {
         deps: vec![],
         locks: vec![],
         timeout_sec: None,
+        no_worktree: false,
         kind: None,
         codex: None,
         claude_code: Some(ClaudeCodeConfig {
@@ -134,6 +139,7 @@ fn plan_rejects_multiple_runner_configs() {
         deps: vec![],
         locks: vec![],
         timeout_sec: None,
+        no_worktree: false,
         kind: None,
         codex: Some(CodexConfig {
             prompt: "test".to_string(),
@@ -164,6 +170,7 @@ fn plan_accepts_valid_claude_code_task() {
         deps: vec![],
         locks: vec![],
         timeout_sec: None,
+        no_worktree: false,
         kind: Some("claude_code".to_string()),
         codex: None,
         claude_code: Some(ClaudeCodeConfig {
@@ -187,6 +194,7 @@ fn plan_rejects_kind_mismatch_claude_code() {
         deps: vec![],
         locks: vec![],
         timeout_sec: None,
+        no_worktree: false,
         kind: Some("claude_code".to_string()),
         codex: Some(CodexConfig {
             prompt: "test".to_string(),
@@ -213,6 +221,7 @@ fn plan_rejects_empty_opencode_prompt() {
         deps: vec![],
         locks: vec![],
         timeout_sec: None,
+        no_worktree: false,
         kind: None,
         codex: None,
         claude_code: None,
@@ -236,6 +245,7 @@ fn plan_accepts_valid_opencode_task() {
         deps: vec![],
         locks: vec![],
         timeout_sec: None,
+        no_worktree: false,
         kind: Some("opencode".to_string()),
         codex: None,
         claude_code: None,
@@ -259,6 +269,7 @@ fn plan_rejects_kind_mismatch_opencode() {
         deps: vec![],
         locks: vec![],
         timeout_sec: None,
+        no_worktree: false,
         kind: Some("opencode".to_string()),
         codex: Some(CodexConfig {
             prompt: "test".to_string(),
@@ -285,6 +296,7 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
         deps: vec![],
         locks: vec![],
         timeout_sec: None,
+        no_worktree: false,
         kind: None,
         codex: None,
         claude_code: Some(ClaudeCodeConfig {
