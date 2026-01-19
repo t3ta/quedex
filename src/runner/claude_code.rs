@@ -2,7 +2,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 
-use crate::plan::{Task, TaskMode};
+use crate::plan::Task;
 use crate::runner::{ChildHandle, RunContext, Runner};
 use crate::store::LogStream;
 
@@ -50,14 +50,6 @@ impl Runner for ClaudeCodeRunner {
         // Output format
         if config.json {
             cmd.arg("--output-format").arg("json");
-        }
-
-        // For research mode, save the last message to file
-        #[allow(clippy::collapsible_if)]
-        if task.mode == TaskMode::Research {
-            if let Some(output_path) = config.output_last_message.as_ref() {
-                cmd.arg("--output-file").arg(output_path);
-            }
         }
 
         // Prompt as positional argument
