@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use clap::Parser;
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode};
@@ -28,11 +28,11 @@ use quedex::scheduler::{
 };
 use quedex::store::fs::FsStore;
 use quedex::store::recovery::recover_running_tasks;
-use quedex::store::{Event, LogStream, RunStatus, State, TaskState, TaskStatus, Store};
+use quedex::store::{Event, LogStream, RunStatus, State, Store, TaskState, TaskStatus};
 use quedex::tui;
 use quedex::worktree::{
-    manager::{TaskWorkdir, WorktreeManager},
     WorktreeConfig,
+    manager::{TaskWorkdir, WorktreeManager},
 };
 
 #[tokio::main]
@@ -69,7 +69,11 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             follow,
             stderr,
         } => handle_logs(&cli.global, &run_id, &task_id, follow, stderr),
-        Commands::Retry { run_id, task_id } => handle_retry(&cli.global, &run_id, &task_id).await,
+        Commands::Retry {
+            run_id,
+            task_id,
+            reload_plan,
+        } => handle_retry(&cli.global, &run_id, &task_id, reload_plan).await,
         Commands::Cancel { run_id, task_id } => handle_cancel(&cli.global, &run_id, task_id),
         Commands::Clean { run_id, all } => handle_clean(&cli.global, run_id, all),
         Commands::Graph {
@@ -146,9 +150,11 @@ async fn handle_run(
     }
 
     #[allow(clippy::collapsible_if)]
-    if plan.tasks.iter().any(|task| {
-        matches!(task.kind.as_deref(), Some("opencode")) || task.opencode.is_some()
-    }) {
+    if plan
+        .tasks
+        .iter()
+        .any(|task| matches!(task.kind.as_deref(), Some("opencode")) || task.opencode.is_some())
+    {
         if let Err(err) = check_opencode_available() {
             eprintln!("environment error: {err}");
             return Ok(4);
@@ -227,11 +233,7 @@ async fn handle_run(
 
         let state = State {
             run_id: run_id.clone(),
-            run_name: plan
-                .run
-                .name
-                .clone()
-                .unwrap_or_else(|| run_id.clone()),
+            run_name: plan.run.name.clone().unwrap_or_else(|| run_id.clone()),
             status: RunStatus::Running,
             tasks: tasks_state,
             started_at: now,
@@ -371,9 +373,11 @@ async fn handle_start(
     }
 
     #[allow(clippy::collapsible_if)]
-    if plan.tasks.iter().any(|task| {
-        matches!(task.kind.as_deref(), Some("opencode")) || task.opencode.is_some()
-    }) {
+    if plan
+        .tasks
+        .iter()
+        .any(|task| matches!(task.kind.as_deref(), Some("opencode")) || task.opencode.is_some())
+    {
         if let Err(err) = check_opencode_available() {
             eprintln!("environment error: {err}");
             return Ok(4);
@@ -494,8 +498,19 @@ fn handle_logs(
     Ok(0)
 }
 
-async fn handle_retry(global: &GlobalOptions, run_id: &str, task_id: &str) -> Result<i32> {
+async fn handle_retry(
+    global: &GlobalOptions,
+    run_id: &str,
+    task_id: &str,
+    reload_plan: bool,
+) -> Result<i32> {
     let store_root = resolve_store_path(global.store.as_ref())?;
+
+    if reload_plan {
+        eprintln!(
+            "Note: Reloading plan from run directory's plan.json (any manual edits will be used)"
+        );
+    }
     let plan = load_plan_snapshot(&store_root, run_id)?;
     let task = plan
         .tasks
@@ -519,7 +534,9 @@ async fn handle_retry(global: &GlobalOptions, run_id: &str, task_id: &str) -> Re
         return Err(anyhow!("run {run_id} is still running"));
     }
     let Some(task_state) = state.tasks.get(task_id) else {
-        return Err(anyhow!("task {task_id} not found in state for run {run_id}"));
+        return Err(anyhow!(
+            "task {task_id} not found in state for run {run_id}"
+        ));
     };
     if !matches!(task_state.status, TaskStatus::Failed | TaskStatus::Canceled) {
         return Err(anyhow!(
@@ -530,7 +547,9 @@ async fn handle_retry(global: &GlobalOptions, run_id: &str, task_id: &str) -> Re
     }
     for dep in &task.deps {
         let Some(dep_state) = state.tasks.get(dep) else {
-            return Err(anyhow!("task {task_id} dependency {dep} not found in state"));
+            return Err(anyhow!(
+                "task {task_id} dependency {dep} not found in state"
+            ));
         };
         if dep_state.status != TaskStatus::Succeeded {
             return Err(anyhow!(
@@ -543,7 +562,9 @@ async fn handle_retry(global: &GlobalOptions, run_id: &str, task_id: &str) -> Re
     }
 
     let Some(task_state) = state.tasks.get_mut(task_id) else {
-        return Err(anyhow!("task {task_id} not found in state for run {run_id}"));
+        return Err(anyhow!(
+            "task {task_id} not found in state for run {run_id}"
+        ));
     };
     task_state.status = TaskStatus::Pending;
     task_state.exit_code = None;
@@ -704,7 +725,7 @@ fn clean_run_dir(store_root: &Path, run_id: &str, strict: bool) -> Result<CleanR
     if !run_dir.exists() {
         return Err(anyhow!("run {run_id} not found"));
     }
-    
+
     // Check if run is active
     let active_check = run_active_reason(store_root, run_id);
     match active_check {
@@ -722,9 +743,7 @@ fn clean_run_dir(store_root: &Path, run_id: &str, strict: bool) -> Result<CleanR
                 return Err(err);
             }
             // In non-strict mode, treat unverifiable runs as potentially active
-            eprintln!(
-                "Warning: failed to verify run {run_id} status: {err}"
-            );
+            eprintln!("Warning: failed to verify run {run_id} status: {err}");
             return Ok(CleanResult::SkippedRunning {
                 reason: format!("could not verify status: {err}"),
             });
@@ -761,9 +780,7 @@ fn run_active_reason(store_root: &Path, run_id: &str) -> Result<Option<String>> 
             Ok(true) => return Ok(Some(format!("pid {pid}"))),
             Ok(false) => {}
             Err(err) => {
-                return Err(anyhow!(
-                    "cannot verify run {run_id} pid {pid}: {err}"
-                ));
+                return Err(anyhow!("cannot verify run {run_id} pid {pid}: {err}"));
             }
         }
     }
@@ -784,17 +801,12 @@ fn run_active_reason(store_root: &Path, run_id: &str) -> Result<Option<String>> 
                     Ok(true) => alive_tasks.push(format!("{task_id} (pid {pid})")),
                     Ok(false) => {}
                     Err(err) => {
-                        return Err(anyhow!(
-                            "cannot verify task {task_id} pid {pid}: {err}"
-                        ));
+                        return Err(anyhow!("cannot verify task {task_id} pid {pid}: {err}"));
                     }
                 }
             }
             if !alive_tasks.is_empty() {
-                return Ok(Some(format!(
-                    "running tasks: {}",
-                    alive_tasks.join(", ")
-                )));
+                return Ok(Some(format!("running tasks: {}", alive_tasks.join(", "))));
             }
         }
     }
@@ -802,12 +814,7 @@ fn run_active_reason(store_root: &Path, run_id: &str) -> Result<Option<String>> 
     Ok(None)
 }
 
-fn handle_graph(
-    global: &GlobalOptions,
-    target: &str,
-    mermaid: bool,
-    ascii: bool,
-) -> Result<i32> {
+fn handle_graph(global: &GlobalOptions, target: &str, mermaid: bool, ascii: bool) -> Result<i32> {
     let store_root = resolve_store_path(global.store.as_ref())?;
     let plan = if Path::new(target).exists() {
         load_plan(target)?.0
@@ -856,8 +863,8 @@ fn load_plan(plan_arg: &str) -> Result<(Plan, PathBuf)> {
     }
 
     let path = PathBuf::from(plan_arg);
-    let contents = fs::read_to_string(&path)
-        .with_context(|| format!("read plan file {}", path.display()))?;
+    let contents =
+        fs::read_to_string(&path).with_context(|| format!("read plan file {}", path.display()))?;
     let format = plan_format_from_path(&path);
     let plan = parse_plan_with_fallback(&contents, format)?;
     let abs_path = if path.is_absolute() {
@@ -999,12 +1006,10 @@ fn list_runs_with_activity(store_root: &Path) -> Result<Vec<RunInfo>> {
         })
         .collect();
     // Sort: active runs first (by started_at desc), then inactive runs (by started_at desc)
-    runs.sort_by(|a, b| {
-        match (a.is_active, b.is_active) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => b.state.started_at.cmp(&a.state.started_at),
-        }
+    runs.sort_by(|a, b| match (a.is_active, b.is_active) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => b.state.started_at.cmp(&a.state.started_at),
     });
     Ok(runs)
 }
@@ -1014,8 +1019,16 @@ fn print_run_selection_ui(runs: &[RunInfo], selected: usize) {
     print!("\x1B[2J\x1B[H");
     println!("Select a run to monitor:\n");
 
-    let active_runs: Vec<_> = runs.iter().enumerate().filter(|(_, r)| r.is_active).collect();
-    let inactive_runs: Vec<_> = runs.iter().enumerate().filter(|(_, r)| !r.is_active).collect();
+    let active_runs: Vec<_> = runs
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.is_active)
+        .collect();
+    let inactive_runs: Vec<_> = runs
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| !r.is_active)
+        .collect();
 
     if !active_runs.is_empty() {
         println!("Running:");
@@ -1025,11 +1038,7 @@ fn print_run_selection_ui(runs: &[RunInfo], selected: usize) {
             let short_id: String = run.state.run_id.chars().take(8).collect();
             println!(
                 "{} [{:?}] {}  {}  ({})",
-                marker,
-                run.state.status,
-                short_id,
-                run.state.run_name,
-                reason
+                marker, run.state.status, short_id, run.state.run_name, reason
             );
         }
         println!();
@@ -1042,10 +1051,7 @@ fn print_run_selection_ui(runs: &[RunInfo], selected: usize) {
             let short_id: String = run.state.run_id.chars().take(8).collect();
             println!(
                 "{} [{:?}] {}  {}",
-                marker,
-                run.state.status,
-                short_id,
-                run.state.run_name
+                marker, run.state.status, short_id, run.state.run_name
             );
         }
         println!();
@@ -1117,7 +1123,10 @@ fn list_run_ids(store_root: &Path) -> Result<Vec<String>> {
 }
 
 fn print_states_table(states: &[State]) {
-    println!("{:<36} {:<10} {:<20} name", "run_id", "status", "started_at");
+    println!(
+        "{:<36} {:<10} {:<20} name",
+        "run_id", "status", "started_at"
+    );
     for state in states {
         println!(
             "{:<36} {:<10} {:<20} {}",
@@ -1174,9 +1183,7 @@ fn stream_log(path: &Path, follow: bool) -> Result<()> {
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)
         .with_context(|| format!("read {}", path.display()))?;
-    stdout
-        .write_all(&buffer)
-        .context("write log output")?;
+    stdout.write_all(&buffer).context("write log output")?;
     stdout.flush().context("flush log output")?;
     if !follow {
         return Ok(());
@@ -1207,17 +1214,17 @@ fn terminate_pid(pid: u32) -> Result<()> {
         if !status.success() {
             eprintln!("Warning: SIGTERM failed for pid {pid}, trying SIGKILL");
         }
-        
+
         // Give the process time to gracefully shut down before escalating to SIGKILL
         std::thread::sleep(std::time::Duration::from_secs(2));
-        
+
         // Check if process still exists and escalate to SIGKILL if needed
         let check_status = std::process::Command::new("kill")
             .arg("-0")
             .arg(pid.to_string())
             .status()
             .context("check if process exists")?;
-        
+
         if check_status.success() {
             // Process still exists, escalate to SIGKILL
             eprintln!("Warning: pid {pid} still running after SIGTERM, escalating to SIGKILL");
@@ -1275,8 +1282,7 @@ fn run_pid_path(store_root: &Path, run_id: &str) -> PathBuf {
 fn write_run_pid(store_root: &Path, run_id: &str) -> Result<()> {
     let path = run_pid_path(store_root, run_id);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let mut file = File::create(&path).with_context(|| format!("open {}", path.display()))?;
     writeln!(file, "{}", std::process::id()).context("write run pid")?;
@@ -1348,7 +1354,7 @@ fn print_ascii_graph(plan: &Plan) {
 fn spawn_cancel_listener(cancel: CancelHandle) {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
         tokio::spawn(async move {
             let mut term = match signal(SignalKind::terminate()) {
                 Ok(signal) => signal,
@@ -1440,7 +1446,9 @@ impl StateHandle {
         match self.state.lock() {
             Ok(guard) => guard.clone(),
             Err(poisoned) => {
-                eprintln!("Error: state lock poisoned - returning potentially corrupted state (data may be inconsistent)");
+                eprintln!(
+                    "Error: state lock poisoned - returning potentially corrupted state (data may be inconsistent)"
+                );
                 poisoned.into_inner().clone()
             }
         }
@@ -1454,7 +1462,9 @@ impl StateHandle {
             let mut state = match self.state.lock() {
                 Ok(guard) => guard,
                 Err(poisoned) => {
-                    eprintln!("Error: state lock poisoned - updating potentially corrupted state (data may be inconsistent)");
+                    eprintln!(
+                        "Error: state lock poisoned - updating potentially corrupted state (data may be inconsistent)"
+                    );
                     poisoned.into_inner()
                 }
             };
@@ -1484,7 +1494,12 @@ impl StateHandle {
         Ok(())
     }
 
-    fn task_finished(&self, task_id: &str, status: TaskStatus, exit_code: Option<i32>) -> Result<()> {
+    fn task_finished(
+        &self,
+        task_id: &str,
+        status: TaskStatus,
+        exit_code: Option<i32>,
+    ) -> Result<()> {
         let now = Utc::now();
         self.update(|state| {
             if let Some(task) = state.tasks.get_mut(task_id) {
@@ -1548,7 +1563,9 @@ impl CancelHandle {
         let children = match self.active.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                eprintln!("Error: active lock poisoned - cannot safely kill child processes (some processes may not be terminated)");
+                eprintln!(
+                    "Error: active lock poisoned - cannot safely kill child processes (some processes may not be terminated)"
+                );
                 return;
             }
         };
@@ -1567,7 +1584,9 @@ impl CancelHandle {
                 guard.insert(task_id.to_string(), child);
             }
             Err(_) => {
-                eprintln!("Error: active lock poisoned - cannot register task {task_id} (cancellation may not work correctly)");
+                eprintln!(
+                    "Error: active lock poisoned - cannot register task {task_id} (cancellation may not work correctly)"
+                );
             }
         }
     }
@@ -1578,7 +1597,9 @@ impl CancelHandle {
                 guard.remove(task_id);
             }
             Err(_) => {
-                eprintln!("Error: active lock poisoned - cannot unregister task {task_id} (may cause issues with future cancellations)");
+                eprintln!(
+                    "Error: active lock poisoned - cannot unregister task {task_id} (may cause issues with future cancellations)"
+                );
             }
         }
     }

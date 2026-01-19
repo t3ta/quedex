@@ -71,6 +71,8 @@ pub enum Commands {
     Retry {
         run_id: String,
         task_id: String,
+        #[arg(long, help = "Reload plan.json from the run directory before retrying")]
+        reload_plan: bool,
     },
     Cancel {
         run_id: String,
