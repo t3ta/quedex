@@ -159,14 +159,13 @@ fn retry_task(app: &mut App) -> Result<()> {
         return Err(anyhow!("no task selected"));
     };
     let Some(task_state) = app.state.tasks.get(task_id) else {
-        return Err(anyhow!("task {} not found in state", task_id));
+        return Err(anyhow!("task {task_id} not found in state"));
     };
 
     use crate::store::TaskStatus;
     if !matches!(task_state.status, TaskStatus::Failed | TaskStatus::Canceled) {
         return Err(anyhow!(
-            "task {} must be Failed or Canceled to retry (current: {:?})",
-            task_id,
+            "task {task_id} must be Failed or Canceled to retry (current: {:?})",
             task_state.status
         ));
     }
@@ -183,7 +182,7 @@ fn retry_task(app: &mut App) -> Result<()> {
             .output();
     });
 
-    app.set_status(format!("retrying task {}...", task_id_display));
+    app.set_status(format!("retrying task {task_id_display}..."));
     Ok(())
 }
 
@@ -192,13 +191,13 @@ fn cancel_task(app: &mut App) -> Result<()> {
         return Err(anyhow!("no task selected"));
     };
     let Some(state) = app.state.tasks.get(task_id) else {
-        return Err(anyhow!("task {} not found in state", task_id));
+        return Err(anyhow!("task {task_id} not found in state"));
     };
     let Some(pid) = state.pid else {
-        return Err(anyhow!("task {} has no pid to cancel", task_id));
+        return Err(anyhow!("task {task_id} has no pid to cancel"));
     };
     terminate_pid(pid)?;
-    app.set_status(format!("sent cancel to task {}", task_id));
+    app.set_status(format!("sent cancel to task {task_id}"));
     Ok(())
 }
 
@@ -279,7 +278,7 @@ fn list_states(store_root: &Path) -> Result<Vec<State>> {
         let run_id = entry.file_name().to_string_lossy().to_string();
         match read_state(store_root, &run_id) {
             Ok(state) => states.push(state),
-            Err(err) => eprintln!("skip run {}: {err}", run_id),
+            Err(err) => eprintln!("skip run {run_id}: {err}"),
         }
     }
     Ok(states)
@@ -309,7 +308,7 @@ fn terminate_pid(pid: u32) -> Result<()> {
             .status()
             .context("spawn kill command")?;
         if !status.success() {
-            return Err(anyhow!("failed to terminate pid {}", pid));
+            return Err(anyhow!("failed to terminate pid {pid}"));
         }
         Ok(())
     }

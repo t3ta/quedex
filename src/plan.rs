@@ -66,8 +66,6 @@ pub struct ClaudeCodeConfig {
     pub prompt: String,
     #[serde(default)]
     pub model: Option<String>,
-    #[serde(default)]
-    pub output_last_message: Option<PathBuf>,
     #[serde(default = "default_json")]
     pub json: bool,
 }
@@ -168,16 +166,10 @@ impl Plan {
                     );
                 }
             }
-            if let Some(claude_code) = task.claude_code.as_ref() {
-                if claude_code.prompt.trim().is_empty() {
-                    bail!("task {} claude_code.prompt is empty", task.id);
-                }
-                if claude_code.output_last_message.is_some() && task.mode != TaskMode::Research {
-                    bail!(
-                        "task {} claude_code.output_last_message only allowed for research mode",
-                        task.id
-                    );
-                }
+            if let Some(claude_code) = task.claude_code.as_ref()
+                && claude_code.prompt.trim().is_empty()
+            {
+                bail!("task {} claude_code.prompt is empty", task.id);
             }
             for dep in &task.deps {
                 if dep == &task.id {

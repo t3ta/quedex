@@ -36,7 +36,7 @@ async fn main() {
     let code = match dispatch(cli).await {
         Ok(code) => code,
         Err(err) => {
-            eprintln!("{:#}", err);
+            eprintln!("{err:#}");
             1
         }
     };
@@ -102,15 +102,14 @@ async fn handle_run(
     let snapshot_path = plan_snapshot_path(&store_root, &run_id);
     if recovery.resume {
         if !state_path.exists() {
-            return Err(anyhow!("run {} has no state to resume", run_id));
+            return Err(anyhow!("run {run_id} has no state to resume"));
         }
         if snapshot_path.exists() {
             plan = load_plan_snapshot(&store_root, &run_id)?;
         }
     } else if state_path.exists() {
         return Err(anyhow!(
-            "run {} already exists (use --resume or --clean-start)",
-            run_id
+            "run {run_id} already exists (use --resume or --clean-start)"
         ));
     }
 
@@ -302,7 +301,7 @@ async fn handle_start(
 
     if recovery.resume {
         if !snapshot_path.exists() {
-            return Err(anyhow!("run {} has no plan snapshot to resume", run_id));
+            return Err(anyhow!("run {run_id} has no plan snapshot to resume"));
         }
         plan = load_plan_snapshot(&store_root, &run_id)?;
         let store = FsStore::new(&store_root, &run_id)?;
@@ -463,7 +462,7 @@ async fn handle_retry(global: &GlobalOptions, run_id: &str, task_id: &str) -> Re
         .iter()
         .find(|task| task.id == task_id)
         .cloned()
-        .ok_or_else(|| anyhow!("task {} not found in run {}", task_id, run_id))?;
+        .ok_or_else(|| anyhow!("task {task_id} not found in run {run_id}"))?;
 
     if matches!(task.kind.as_deref(), Some("codex")) || task.codex.is_some() {
         check_codex_available()?;
@@ -474,10 +473,10 @@ async fn handle_retry(global: &GlobalOptions, run_id: &str, task_id: &str) -> Re
 
     let mut state = read_state(&store_root, run_id)?;
     if state.status == RunStatus::Running {
-        return Err(anyhow!("run {} is still running", run_id));
+        return Err(anyhow!("run {run_id} is still running"));
     }
     let Some(task_state) = state.tasks.get(task_id) else {
-        return Err(anyhow!("task {} not found in state for run {}", task_id, run_id));
+        return Err(anyhow!("task {task_id} not found in state for run {run_id}"));
     };
     if !matches!(task_state.status, TaskStatus::Failed | TaskStatus::Canceled) {
         return Err(anyhow!(
@@ -488,7 +487,7 @@ async fn handle_retry(global: &GlobalOptions, run_id: &str, task_id: &str) -> Re
     }
     for dep in &task.deps {
         let Some(dep_state) = state.tasks.get(dep) else {
-            return Err(anyhow!("task {} dependency {} not found in state", task_id, dep));
+            return Err(anyhow!("task {task_id} dependency {dep} not found in state"));
         };
         if dep_state.status != TaskStatus::Succeeded {
             return Err(anyhow!(
@@ -501,7 +500,7 @@ async fn handle_retry(global: &GlobalOptions, run_id: &str, task_id: &str) -> Re
     }
 
     let Some(task_state) = state.tasks.get_mut(task_id) else {
-        return Err(anyhow!("task {} not found in state for run {}", task_id, run_id));
+        return Err(anyhow!("task {task_id} not found in state for run {run_id}"));
     };
     task_state.status = TaskStatus::Pending;
     task_state.exit_code = None;
@@ -579,9 +578,9 @@ fn handle_cancel(global: &GlobalOptions, run_id: &str, task_id: Option<String>) 
                 terminate_pid(pid)?;
                 return Ok(0);
             }
-            return Err(anyhow!("task {} has no pid to cancel", task_id));
+            return Err(anyhow!("task {task_id} has no pid to cancel"));
         }
-        return Err(anyhow!("task {} not found in run {}", task_id, run_id));
+        return Err(anyhow!("task {task_id} not found in run {run_id}"));
     }
 
     let pid_path = run_pid_path(&store_root, run_id);
@@ -600,7 +599,7 @@ fn handle_cancel(global: &GlobalOptions, run_id: &str, task_id: Option<String>) 
         #[allow(clippy::collapsible_if)]
         if let Some(pid) = task_state.pid {
             if let Err(err) = terminate_pid(pid) {
-                eprintln!("Warning: failed to terminate pid {}: {}", pid, err);
+                eprintln!("Warning: failed to terminate pid {pid}: {err}");
             }
         }
     }
@@ -645,7 +644,7 @@ fn handle_clean(global: &GlobalOptions, run_id: Option<String>, all: bool) -> Re
 fn clean_run_dir(store_root: &Path, run_id: &str, strict: bool) -> Result<CleanResult> {
     let run_dir = run_dir(store_root, run_id);
     if !run_dir.exists() {
-        return Err(anyhow!("run {} not found", run_id));
+        return Err(anyhow!("run {run_id} not found"));
     }
     
     // Check if run is active
@@ -653,7 +652,7 @@ fn clean_run_dir(store_root: &Path, run_id: &str, strict: bool) -> Result<CleanR
     match active_check {
         Ok(Some(reason)) => {
             if strict {
-                return Err(anyhow!("run {} is still running ({})", run_id, reason));
+                return Err(anyhow!("run {run_id} is still running ({reason})"));
             }
             return Ok(CleanResult::SkippedRunning { reason });
         }
@@ -666,8 +665,7 @@ fn clean_run_dir(store_root: &Path, run_id: &str, strict: bool) -> Result<CleanR
             }
             // In non-strict mode, treat unverifiable runs as potentially active
             eprintln!(
-                "Warning: failed to verify run {} status: {err}",
-                run_id
+                "Warning: failed to verify run {run_id} status: {err}"
             );
             return Ok(CleanResult::SkippedRunning {
                 reason: format!("could not verify status: {err}"),
@@ -706,9 +704,7 @@ fn run_active_reason(store_root: &Path, run_id: &str) -> Result<Option<String>> 
             Ok(false) => {}
             Err(err) => {
                 return Err(anyhow!(
-                    "cannot verify run {} pid {}: {err}",
-                    run_id,
-                    pid
+                    "cannot verify run {run_id} pid {pid}: {err}"
                 ));
             }
         }
@@ -731,9 +727,7 @@ fn run_active_reason(store_root: &Path, run_id: &str) -> Result<Option<String>> 
                     Ok(false) => {}
                     Err(err) => {
                         return Err(anyhow!(
-                            "cannot verify task {} pid {}: {err}",
-                            task_id,
-                            pid
+                            "cannot verify task {task_id} pid {pid}: {err}"
                         ));
                     }
                 }
@@ -908,7 +902,7 @@ fn list_states(store_root: &Path) -> Result<Vec<State>> {
         let run_id = entry.file_name().to_string_lossy().to_string();
         match read_state(store_root, &run_id) {
             Ok(state) => states.push(state),
-            Err(err) => eprintln!("skip run {}: {err}", run_id),
+            Err(err) => eprintln!("skip run {run_id}: {err}"),
         }
     }
     Ok(states)
@@ -1071,7 +1065,7 @@ fn print_state(state: &State) {
     println!("status: {:?}", state.status);
     println!("started_at: {}", state.started_at);
     if let Some(completed_at) = state.completed_at {
-        println!("completed_at: {}", completed_at);
+        println!("completed_at: {completed_at}");
     }
     println!();
     println!("{:<16} {:<10} {:<6} started", "task", "status", "exit");
@@ -1141,7 +1135,7 @@ fn terminate_pid(pid: u32) -> Result<()> {
             .context("spawn kill command")?;
 
         if !status.success() {
-            eprintln!("Warning: SIGTERM failed for pid {}, trying SIGKILL", pid);
+            eprintln!("Warning: SIGTERM failed for pid {pid}, trying SIGKILL");
         }
         
         // Give the process time to gracefully shut down before escalating to SIGKILL
@@ -1156,7 +1150,7 @@ fn terminate_pid(pid: u32) -> Result<()> {
         
         if check_status.success() {
             // Process still exists, escalate to SIGKILL
-            eprintln!("Warning: pid {} still running after SIGTERM, escalating to SIGKILL", pid);
+            eprintln!("Warning: pid {pid} still running after SIGTERM, escalating to SIGKILL");
             let kill_status = std::process::Command::new("kill")
                 .arg("-KILL")
                 .arg(pid.to_string())
@@ -1164,7 +1158,7 @@ fn terminate_pid(pid: u32) -> Result<()> {
                 .context("spawn kill -KILL command")?;
 
             if !kill_status.success() {
-                return Err(anyhow!("failed to kill pid {} even with SIGKILL", pid));
+                return Err(anyhow!("failed to kill pid {pid} even with SIGKILL"));
             }
         }
         Ok(())
@@ -1503,7 +1497,7 @@ impl CancelHandle {
                 guard.insert(task_id.to_string(), child);
             }
             Err(_) => {
-                eprintln!("Error: active lock poisoned - cannot register task {} (cancellation may not work correctly)", task_id);
+                eprintln!("Error: active lock poisoned - cannot register task {task_id} (cancellation may not work correctly)");
             }
         }
     }
@@ -1514,7 +1508,7 @@ impl CancelHandle {
                 guard.remove(task_id);
             }
             Err(_) => {
-                eprintln!("Error: active lock poisoned - cannot unregister task {} (may cause issues with future cancellations)", task_id);
+                eprintln!("Error: active lock poisoned - cannot unregister task {task_id} (may cause issues with future cancellations)");
             }
         }
     }
@@ -1605,7 +1599,7 @@ impl TaskRunner for PlanTaskRunner {
                     Ok(result) => result,
                     Err(_) => {
                         // Write timeout message to task's stderr log file
-                        let timeout_msg = format!("task {} timed out after {} seconds\n", task_id, timeout_secs);
+                        let timeout_msg = format!("task {task_id} timed out after {timeout_secs} seconds\n");
                         if let Ok(mut stderr_log) = ctx.store.open_log(&task_id, LogStream::Stderr) {
                             let _ = stderr_log.write_all(timeout_msg.as_bytes());
                         }
@@ -1632,12 +1626,12 @@ impl TaskRunner for PlanTaskRunner {
             let status = match wait_result {
                 Ok(Ok(status)) => status,
                 Ok(Err(err)) => {
-                    eprintln!("task {} wait error: {err}", task_id);
+                    eprintln!("task {task_id} wait error: {err}");
                     let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
                     return TaskResult::failed(1);
                 }
                 Err(err) => {
-                    eprintln!("task {} join error: {err}", task_id);
+                    eprintln!("task {task_id} join error: {err}");
                     let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
                     return TaskResult::failed(1);
                 }

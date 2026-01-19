@@ -264,16 +264,16 @@ fn render_task_tree<'a>(
         for (i, child_id) in child_ids.iter().enumerate() {
             // 親とのつながりを示す縦線を追加
             if i < child_count {
-                let vertical_line = format!("{}│", prefix);
+                let vertical_line = format!("{prefix}│");
                 lines.push(Line::from(vertical_line));
             }
 
             if let Some(child_task) = app.tasks.iter().find(|t| t.id == *child_id) {
                 let is_last_child = i == child_count - 1;
                 let new_prefix = if is_last {
-                    format!("{}   ", prefix)
+                    format!("{prefix}   ")
                 } else {
-                    format!("{}│  ", prefix)
+                    format!("{prefix}│  ")
                 };
                 render_task_tree(
                     child_task,

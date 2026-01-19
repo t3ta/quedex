@@ -95,7 +95,6 @@ fn plan_rejects_empty_claude_code_prompt() {
         claude_code: Some(ClaudeCodeConfig {
             prompt: " ".to_string(),
             model: None,
-            output_last_message: None,
             json: true,
         }),
     };
@@ -125,7 +124,6 @@ fn plan_rejects_multiple_runner_configs() {
         claude_code: Some(ClaudeCodeConfig {
             prompt: "test".to_string(),
             model: None,
-            output_last_message: None,
             json: true,
         }),
     };
@@ -148,7 +146,6 @@ fn plan_accepts_valid_claude_code_task() {
         claude_code: Some(ClaudeCodeConfig {
             prompt: "implement feature".to_string(),
             model: Some("sonnet".to_string()),
-            output_last_message: None,
             json: true,
         }),
     };
