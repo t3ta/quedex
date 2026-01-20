@@ -11,9 +11,9 @@
       "id": "step-1",
       "title": "Step 1",
       "mode": "implement",
-      "kind": "shell",
-      "shell": {
-        "command": "bash -lc 'echo \"step 1\"'"
+      "kind": "codex",
+      "codex": {
+        "prompt": "Echo 'step 1' message"
       }
     },
     {
@@ -21,9 +21,9 @@
       "title": "Step 2",
       "mode": "implement",
       "deps": ["step-1"],
-      "kind": "shell",
-      "shell": {
-        "command": "bash -lc 'echo \"step 2\"'"
+      "kind": "codex",
+      "codex": {
+        "prompt": "Echo 'step 2' message"
       }
     },
     {
@@ -31,9 +31,9 @@
       "title": "Step 3",
       "mode": "implement",
       "deps": ["step-2"],
-      "kind": "shell",
-      "shell": {
-        "command": "bash -lc 'echo \"step 3\"'"
+      "kind": "codex",
+      "codex": {
+        "prompt": "Echo 'step 3' message"
       }
     }
   ]

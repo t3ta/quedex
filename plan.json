@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "run": {
+    "name": "feature-enhancements-v2",
+    "cwd": ".",
+    "max_concurrency": 3,
+    "fail_fast": false,
+    "default_timeout_sec": 1800
+  },
+  "tasks": [
+    {
+      "id": "research-yaml",
+      "title": "調査: plan.yaml対応の設計",
+      "mode": "research",
+      "deps": [],
+      "locks": [],
+      "kind": "claude_code",
+      "claude_code": {
+        "prompt": "quedexプロジェクトにplan.yaml対応を追加するための調査を行います。\n\n## 調査項目\n1. 現在のsrc/plan.rsの実装を確認（Plan構造体、load_plan関数など）\n2. serde_yamlの現在の依存関係をCargo.tomlで確認\n3. 拡張子による自動判別の実装方法を検討\n\n## 成果物\n- 実装方針のまとめ\n- 変更が必要なファイルのリスト\n- 具体的なコード変更案",
+        "output_last_message": "artifacts/research-yaml.md",
+        "model": "opus"
+      }
+    },
+    {
+      "id": "research-notifications",
+      "title": "調査: Webhook通知機能の設計",
+      "mode": "research",
+      "deps": [],
+      "locks": [],
+      "kind": "claude_code",
+      "claude_code": {
+        "prompt": "quedexプロジェクトにWebhook通知機能を追加するための調査を行います。\n\n## 調査項目\n1. 現在のイベントシステム（store/mod.rsのStoreEvent）を確認\n2. 通知を送るべきタイミングを特定\n   - 実行開始時\n   - タスク完了時（成功/失敗）\n   - 全体完了時\n3. reqwestクレートを新たに追加するか、標準ライブラリのみで実装するか検討\n4. 非同期でWebhookを送信する設計\n\n## 成果物\n- 実装方針のまとめ\n- plan.jsonのスキーマ拡張案\n- 新規ファイル/変更ファイルのリスト",
+        "output_last_message": "artifacts/research-notifications.md",
+        "model": "opus"
+      }
+    },
+    {
+      "id": "research-template",
+      "title": "調査: プロンプトテンプレート機能の設計",
+      "mode": "research",
+      "deps": [],
+      "locks": [],
+      "kind": "claude_code",
+      "claude_code": {
+        "prompt": "quedexプロジェクトにプロンプトテンプレート/変数展開機能を追加するための調査を行います。\n\n## 調査項目\n1. 現在のプロンプト処理（codex.prompt, claude_code.prompt等）を確認\n2. 変数展開の実装方法を検討\n   - ${variable}形式のシンプルな置換\n   - 環境変数の参照（${env.VAR}）\n   - 前タスクの出力参照の可能性\n3. plan.jsonのvariablesセクションの設計\n\n## 成果物\n- 実装方針のまとめ\n- plan.jsonのスキーマ拡張案\n- コード変更案",
+        "output_last_message": "artifacts/research-template.md",
+        "model": "opus"
+      }
+    },
+    {
+      "id": "research-config",
+      "title": "調査: quedex.toml設定ファイルの設計",
+      "mode": "research",
+      "deps": [],
+      "locks": [],
+      "kind": "claude_code",
+      "claude_code": {
+        "prompt": "quedexプロジェクトにquedex.toml設定ファイル機能を追加するための調査を行います。\n\n## 調査項目\n1. 現在のCLIオプション（src/cli.rs）を確認\n2. どのオプションをデフォルト化すべきか検討\n   - max_concurrency\n   - fail_fast\n   - store パス\n   - runner固有の設定\n3. 設定ファイルの読み込み優先順位（コマンドライン > quedex.toml > デフォルト）\n4. tomlクレートの使用検討\n\n## 成果物\n- quedex.tomlのスキーマ案\n- 実装方針のまとめ\n- コード変更リスト",
+        "output_last_message": "artifacts/research-config.md",
+        "model": "opus"
+      }
+    },
+    {
+      "id": "impl-yaml-support",
+      "title": "実装: plan.yaml対応",
+      "mode": "implement",
+      "deps": ["research-yaml"],
+      "locks": ["workspace"],
+      "kind": "claude_code",
+      "claude_code": {
+        "prompt": "artifacts/research-yaml.mdの調査結果に基づいて、plan.yaml対応を実装してください。\n\n## 要件\n1. plan.yamlとplan.jsonの両方をサポート\n2. 拡張子による自動判別\n3. 既存のJSONサポートは維持\n4. YAMLの複数行文字列（|）をプロンプトで活用可能に\n\n## 実装後\ncargo build && cargo clippyでエラーがないことを確認してください。",
+        "model": "opus"
+      }
+    },
+    {
+      "id": "impl-template",
+      "title": "実装: プロンプトテンプレート機能",
+      "mode": "implement",
+      "deps": ["research-template"],
+      "locks": ["workspace"],
+      "kind": "claude_code",
+      "claude_code": {
+        "prompt": "artifacts/research-template.mdの調査結果に基づいて、プロンプトテンプレート機能を実装してください。\n\n## 要件\n1. plan.jsonにvariablesセクションを追加\n2. ${variable}形式でプロンプト内で変数を展開\n3. ${env.VAR}で環境変数を参照可能\n4. 未定義変数はエラーとして報告\n\n## 実装後\ncargo build && cargo clippyでエラーがないことを確認してください。",
+        "model": "opus"
+      }
+    },
+    {
+      "id": "impl-config",
+      "title": "実装: quedex.toml設定ファイル",
+      "mode": "implement",
+      "deps": ["research-config"],
+      "locks": ["workspace"],
+      "kind": "claude_code",
+      "claude_code": {
+        "prompt": "artifacts/research-config.mdの調査結果に基づいて、quedex.toml設定ファイル機能を実装してください。\n\n## 要件\n1. quedex.tomlの読み込み（カレントディレクトリ）\n2. CLIオプションがquedex.tomlより優先\n3. 設定可能な項目：\n   - max_concurrency\n   - fail_fast\n   - store\n   - default_timeout_sec\n\n## 実装後\ncargo build && cargo clippyでエラーがないことを確認してください。",
+        "model": "opus"
+      }
+    },
+    {
+      "id": "impl-notifications",
+      "title": "実装: Webhook通知機能",
+      "mode": "implement",
+      "deps": ["research-notifications"],
+      "locks": ["workspace"],
+      "kind": "claude_code",
+      "claude_code": {
+        "prompt": "artifacts/research-notifications.mdの調査結果に基づいて、Webhook通知機能を実装してください。\n\n## 要件\n1. plan.jsonのrunセクションにnotificationsを追加\n2. 以下のイベントで通知を送信：\n   - on_start: 実行開始時\n   - on_task_complete: タスク完了時\n   - on_complete: 全体完了時\n   - on_failure: 失敗時\n3. Slack/Discord互換のJSONペイロード\n4. 非同期で送信（実行をブロックしない）\n\n## 実装後\ncargo build && cargo clippyでエラーがないことを確認してください。",
+        "model": "opus"
+      }
+    },
+    {
+      "id": "test-all",
+      "title": "検証: 全機能のテスト",
+      "mode": "verify",
+      "deps": ["impl-yaml-support", "impl-template", "impl-config", "impl-notifications"],
+      "locks": ["workspace"],
+      "kind": "claude_code",
+      "claude_code": {
+        "prompt": "追加した全機能のテストを実行します。\n\n## タスク\n1. cargo test --all でテストを実行\n2. cargo clippy -- -D warnings で警告をチェック\n3. 以下の機能を手動でテスト：\n   - plan.yamlの読み込み（examples/があれば）\n   - 変数展開が正しく動作するか\n   - quedex.tomlの読み込み\n\nエラーがあれば修正してください。",
+        "model": "opus"
+      }
+    },
+    {
+      "id": "update-docs",
+      "title": "実装: ドキュメント更新",
+      "mode": "implement",
+      "deps": ["test-all"],
+      "locks": ["workspace"],
+      "kind": "claude_code",
+      "claude_code": {
+        "prompt": "README.mdとOVERVIEW.mdを更新して、新機能を文書化してください。\n\n## 追加する内容\n1. plan.yaml対応（使用例付き）\n2. プロンプトテンプレート機能（変数の定義と使用方法）\n3. quedex.toml設定ファイル（設定例）\n4. Webhook通知機能（Slack/Discord連携例）\n\n簡潔で実用的な例を含めてください。",
+        "model": "opus"
+      }
+    }
+  ]
+}

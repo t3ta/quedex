@@ -22,6 +22,8 @@ pub struct RunContext {
     pub env: HashMap<String, String>,
     pub store: Arc<dyn Store>,
     pub worktree_manager: Option<Arc<WorktreeManager>>,
+    /// Template variables for prompt expansion
+    pub variables: HashMap<String, String>,
 }
 
 impl Clone for RunContext {
@@ -31,6 +33,7 @@ impl Clone for RunContext {
             env: self.env.clone(),
             store: Arc::clone(&self.store),
             worktree_manager: self.worktree_manager.clone(),
+            variables: self.variables.clone(),
         }
     }
 }

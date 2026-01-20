@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use crate::plan::{Task, TaskMode};
 use crate::runner::{ChildHandle, RunContext, Runner};
 use crate::store::LogStream;
+use crate::template::expand_prompt;
 
 const VERIFY_AFTER_SUFFIX: &str = "実装後 build→lint→test を実行し、エラーがあれば修正して";
 
@@ -30,7 +31,9 @@ impl Runner for CodexRunner {
             .as_ref()
             .context("codex config missing")?;
 
-        let mut prompt = config.prompt.clone();
+        // Expand template variables in the prompt
+        let mut prompt = expand_prompt(&config.prompt, &ctx.variables)
+            .with_context(|| format!("expand prompt for task {}", task.id))?;
         if matches!(task.mode, TaskMode::Implement) && config.verify_after {
             prompt.push_str("\n\n");
             prompt.push_str(VERIFY_AFTER_SUFFIX);

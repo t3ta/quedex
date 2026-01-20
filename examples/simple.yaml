@@ -1,0 +1,20 @@
+version: 1
+description: "Simple YAML plan example with variables"
+
+variables:
+  project_name: "quedex"
+  target_file: "src/lib.rs"
+
+run:
+  name: "yaml-example"
+  max_concurrency: 1
+  fail_fast: true
+
+tasks:
+  - id: analyze
+    title: "Analyze target file"
+    mode: research
+    kind: codex
+    codex:
+      prompt: "Analyze the ${target_file} file in the ${project_name} project"
+      model: "o3-mini"

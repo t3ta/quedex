@@ -1,6 +1,9 @@
+pub mod config;
+pub mod notifier;
 pub mod plan;
 pub mod runner;
 pub mod scheduler;
 pub mod store;
+pub mod template;
 pub mod tui;
 pub mod worktree;

@@ -27,21 +27,11 @@ pub struct GlobalOptions {
     pub verbose: bool,
 }
 
-impl GlobalOptions {
-    pub fn effective_fail_fast(&self) -> bool {
-        if self.no_fail_fast {
-            false
-        } else {
-            self.fail_fast
-        }
-    }
-}
-
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Initialize a new plan.json template
+    /// Initialize a new plan template (JSON or YAML)
     Init {
-        /// Output file path (default: plan.json)
+        /// Output file path (default: plan.json, use .yaml/.yml for YAML format)
         #[arg(short = 'o', long, value_name = "path")]
         output: Option<PathBuf>,
         /// Overwrite existing file
@@ -92,7 +82,7 @@ pub enum Commands {
     Retry {
         run_id: String,
         task_id: String,
-        #[arg(long, help = "Reload plan.json from the run directory before retrying")]
+        #[arg(long, help = "Reload plan from the run directory before retrying")]
         reload_plan: bool,
     },
     /// Cancel a running task or run
@@ -129,7 +119,7 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Output JSON schema for plan.json
+    /// Output JSON schema for plan files (plan.json/plan.yaml)
     Schema {
         /// Output file path (default: stdout)
         #[arg(short = 'o', long, value_name = "path")]

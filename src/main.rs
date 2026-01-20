@@ -18,6 +18,8 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use uuid::Uuid;
 
 use cli::{Cli, Commands, GlobalOptions, RecoveryOptions};
+use quedex::config::{Config, EffectiveOptions};
+use quedex::notifier::Notifier;
 use quedex::plan::{Plan, PlanFormat, Task};
 use quedex::runner::claude_code::ClaudeCodeRunner;
 use quedex::runner::codex::CodexRunner;
@@ -49,6 +51,28 @@ async fn main() {
 }
 
 async fn dispatch(cli: Cli) -> Result<i32> {
+    // Load configuration from quedex.toml
+    let config = Config::load().unwrap_or_else(|err| {
+        eprintln!("Warning: failed to load config: {err}");
+        Config::default()
+    });
+
+    // Create effective options by merging CLI with config
+    let effective = EffectiveOptions::new(
+        cli.global.store.clone(),
+        cli.global.max_concurrency,
+        cli.global.fail_fast,
+        cli.global.no_fail_fast,
+        &config,
+    );
+
+    if cli.global.verbose {
+        eprintln!("[verbose] Config loaded: max_concurrency={:?}, fail_fast={:?}, store={:?}, default_timeout_sec={:?}",
+            config.max_concurrency, config.fail_fast, config.store, config.default_timeout_sec);
+        eprintln!("[verbose] Effective options: max_concurrency={:?}, fail_fast={}, store={:?}, default_timeout_sec={:?}",
+            effective.max_concurrency, effective.fail_fast, effective.store, effective.default_timeout_sec);
+    }
+
     match cli.command {
         Commands::Init { output, force } => handle_init(&cli.global, output, force),
         Commands::Run {
@@ -61,39 +85,39 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             if dry_run {
                 handle_dry_run(&cli.global, &plan)
             } else {
-                handle_run(&cli.global, &plan, recovery, run_id, base_dir).await
+                handle_run(&cli.global, &effective, &plan, recovery, run_id, base_dir).await
             }
         }
         Commands::Start {
             plan,
             recovery,
             run_id,
-        } => handle_start(&cli.global, &plan, recovery, run_id).await,
-        Commands::Status { run_id, json } => handle_status(&cli.global, run_id, json),
-        Commands::Tui { run_id } => handle_tui(&cli.global, run_id),
+        } => handle_start(&cli.global, &effective, &plan, recovery, run_id).await,
+        Commands::Status { run_id, json } => handle_status(&effective, run_id, json),
+        Commands::Tui { run_id } => handle_tui(&effective, run_id),
         Commands::Logs {
             run_id,
             task_id,
             follow,
             stderr,
-        } => handle_logs(&cli.global, &run_id, &task_id, follow, stderr),
+        } => handle_logs(&effective, &run_id, &task_id, follow, stderr),
         Commands::Retry {
             run_id,
             task_id,
             reload_plan,
-        } => handle_retry(&cli.global, &run_id, &task_id, reload_plan).await,
-        Commands::Cancel { run_id, task_id } => handle_cancel(&cli.global, &run_id, task_id),
+        } => handle_retry(&cli.global, &effective, &run_id, &task_id, reload_plan).await,
+        Commands::Cancel { run_id, task_id } => handle_cancel(&effective, &run_id, task_id),
         Commands::Clean {
             run_id,
             all,
             fix_orphans,
-        } => handle_clean(&cli.global, run_id, all, fix_orphans),
+        } => handle_clean(&cli.global, &effective, run_id, all, fix_orphans),
         Commands::Graph {
             target,
             mermaid,
             ascii,
-        } => handle_graph(&cli.global, &target, mermaid, ascii),
-        Commands::History { limit, all, json } => handle_history(&cli.global, limit, all, json),
+        } => handle_graph(&effective, &target, mermaid, ascii),
+        Commands::History { limit, all, json } => handle_history(&cli.global, &effective, limit, all, json),
         Commands::Schema { output } => handle_schema(output),
     }
 }
@@ -112,7 +136,29 @@ fn handle_init(global: &GlobalOptions, output: Option<PathBuf>, force: bool) -> 
         eprintln!("[verbose] Creating plan template at {}", output_path.display());
     }
 
-    let template = r#"{
+    let is_yaml = matches!(
+        output_path.extension().and_then(|ext| ext.to_str()),
+        Some("yaml") | Some("yml")
+    );
+
+    let template = if is_yaml {
+        r#"version: 1
+run:
+  name: my-plan
+  max_concurrency: 2
+  fail_fast: true
+tasks:
+  - id: task-1
+    mode: implement
+    deps: []
+    kind: codex
+    codex:
+      prompt: |
+        Describe what this task should do.
+        You can use multi-line strings in YAML.
+"#
+    } else {
+        r#"{
   "version": 1,
   "run": {
     "name": "my-plan",
@@ -130,7 +176,8 @@ fn handle_init(global: &GlobalOptions, output: Option<PathBuf>, force: bool) -> 
     }
   ]
 }
-"#;
+"#
+    };
 
     fs::write(&output_path, template)
         .with_context(|| format!("write plan template to {}", output_path.display()))?;
@@ -218,8 +265,8 @@ fn handle_dry_run(global: &GlobalOptions, plan_arg: &str) -> Result<i32> {
     Ok(0)
 }
 
-fn handle_history(global: &GlobalOptions, limit: usize, all: bool, json: bool) -> Result<i32> {
-    let store_root = resolve_store_path(global.store.as_ref())?;
+fn handle_history(global: &GlobalOptions, effective: &EffectiveOptions, limit: usize, all: bool, json: bool) -> Result<i32> {
+    let store_root = resolve_store_path(effective.store.as_ref())?;
 
     if global.verbose {
         eprintln!("[verbose] Reading history from {}", store_root.display());
@@ -278,7 +325,8 @@ fn handle_schema(output: Option<PathBuf>) -> Result<i32> {
 }
 
 async fn handle_run(
-    global: &GlobalOptions,
+    _global: &GlobalOptions,
+    effective: &EffectiveOptions,
     plan_arg: &str,
     recovery: RecoveryOptions,
     run_id: Option<String>,
@@ -288,7 +336,7 @@ async fn handle_run(
     if let Some(base_dir) = base_dir {
         plan_base_dir = base_dir;
     }
-    let store_root = resolve_store_path(global.store.as_ref())?;
+    let store_root = resolve_store_path(effective.store.as_ref())?;
     if recovery.resume && run_id.is_none() {
         return Err(anyhow!("--resume requires --run-id"));
     }
@@ -379,6 +427,7 @@ async fn handle_run(
         env: plan.run.env.clone(),
         store: store.clone(),
         worktree_manager,
+        variables: plan.variables.clone(),
     };
 
     let (mut state, initial_states) = if recovery.resume {
@@ -465,10 +514,23 @@ async fn handle_run(
     let max_concurrency = plan
         .run
         .max_concurrency
-        .or(global.max_concurrency)
+        .or(effective.max_concurrency)
         .unwrap_or(1);
-    let fail_fast = plan.run.fail_fast.unwrap_or(global.effective_fail_fast());
-    let default_timeout_sec = plan.run.default_timeout_sec;
+    let fail_fast = plan.run.fail_fast.unwrap_or(effective.fail_fast);
+    let default_timeout_sec = plan.run.default_timeout_sec.or(effective.default_timeout_sec);
+
+    // Create notifier for webhook notifications
+    let run_name = plan.run.name.clone().unwrap_or_else(|| run_id.clone());
+    let notifier = Notifier::new(
+        plan.run.notifications.clone(),
+        run_id.clone(),
+        run_name,
+    );
+
+    // Send run started notification
+    if let Some(ref n) = notifier {
+        n.notify_start();
+    }
 
     let runner = PlanTaskRunner::new(
         Arc::new(tasks_map),
@@ -476,6 +538,7 @@ async fn handle_run(
         state_handle.clone(),
         cancel.clone(),
         default_timeout_sec,
+        notifier.clone(),
     );
     let scheduler = if let Some(initial_states) = initial_states {
         Scheduler::new_with_initial_state(
@@ -506,11 +569,33 @@ async fn handle_run(
     state_handle.update_run_status(run_status)?;
     remove_run_pid(&store_root, &run_id);
 
+    // Send completion/failure notification
+    if let Some(ref n) = notifier {
+        let total = state.tasks.len();
+        let succeeded = state
+            .tasks
+            .values()
+            .filter(|t| t.status == TaskStatus::Succeeded)
+            .count();
+        let failed = state
+            .tasks
+            .values()
+            .filter(|t| t.status == TaskStatus::Failed)
+            .count();
+
+        if run_status == RunStatus::Completed {
+            n.notify_complete(total, succeeded);
+        } else if run_status == RunStatus::Failed {
+            n.notify_failure(total, failed, succeeded);
+        }
+    }
+
     Ok(exit_code)
 }
 
 async fn handle_start(
-    global: &GlobalOptions,
+    _global: &GlobalOptions,
+    effective: &EffectiveOptions,
     plan_arg: &str,
     recovery: RecoveryOptions,
     run_id: Option<String>,
@@ -520,7 +605,7 @@ async fn handle_start(
     }
     let (mut plan, base_dir) = load_plan(plan_arg)?;
 
-    let store_root = resolve_store_path(global.store.as_ref())?;
+    let store_root = resolve_store_path(effective.store.as_ref())?;
     let run_id = run_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let snapshot_path = plan_snapshot_path(&store_root, &run_id);
 
@@ -597,13 +682,13 @@ async fn handle_start(
     if recovery.clean_start {
         cmd.arg("--clean-start");
     }
-    if let Some(store_path) = global.store.as_ref() {
+    if let Some(store_path) = effective.store.as_ref() {
         cmd.arg("--store").arg(store_path);
     }
-    if let Some(max) = global.max_concurrency {
+    if let Some(max) = effective.max_concurrency {
         cmd.arg("--max-concurrency").arg(max.to_string());
     }
-    if !global.effective_fail_fast() {
+    if !effective.fail_fast {
         cmd.arg("--no-fail-fast");
     }
     cmd.stdin(Stdio::null())
@@ -615,8 +700,8 @@ async fn handle_start(
     Ok(0)
 }
 
-fn handle_status(global: &GlobalOptions, run_id: Option<String>, json: bool) -> Result<i32> {
-    let store_root = resolve_store_path(global.store.as_ref())?;
+fn handle_status(effective: &EffectiveOptions, run_id: Option<String>, json: bool) -> Result<i32> {
+    let store_root = resolve_store_path(effective.store.as_ref())?;
     if let Some(run_id) = run_id {
         let state = read_state(&store_root, &run_id)?;
         if json {
@@ -640,8 +725,8 @@ fn handle_status(global: &GlobalOptions, run_id: Option<String>, json: bool) -> 
     Ok(0)
 }
 
-fn handle_tui(global: &GlobalOptions, run_id: Option<String>) -> Result<i32> {
-    let store_root = resolve_store_path(global.store.as_ref())?;
+fn handle_tui(effective: &EffectiveOptions, run_id: Option<String>) -> Result<i32> {
+    let store_root = resolve_store_path(effective.store.as_ref())?;
 
     // run_idが指定されている場合は従来通りTUI起動
     if run_id.is_some() {
@@ -676,13 +761,13 @@ fn handle_tui(global: &GlobalOptions, run_id: Option<String>) -> Result<i32> {
 }
 
 fn handle_logs(
-    global: &GlobalOptions,
+    effective: &EffectiveOptions,
     run_id: &str,
     task_id: &str,
     follow: bool,
     stderr: bool,
 ) -> Result<i32> {
-    let store_root = resolve_store_path(global.store.as_ref())?;
+    let store_root = resolve_store_path(effective.store.as_ref())?;
     let path = log_path(&store_root, run_id, task_id, stderr);
     if !path.exists() {
         return Err(anyhow!("log file not found: {}", path.display()));
@@ -692,12 +777,13 @@ fn handle_logs(
 }
 
 async fn handle_retry(
-    global: &GlobalOptions,
+    _global: &GlobalOptions,
+    effective: &EffectiveOptions,
     run_id: &str,
     task_id: &str,
     reload_plan: bool,
 ) -> Result<i32> {
-    let store_root = resolve_store_path(global.store.as_ref())?;
+    let store_root = resolve_store_path(effective.store.as_ref())?;
 
     if reload_plan {
         eprintln!(
@@ -793,6 +879,7 @@ async fn handle_retry(
         env: plan.run.env.clone(),
         store: store.clone(),
         worktree_manager,
+        variables: plan.variables.clone(),
     };
 
     let state_handle = StateHandle::new(store.clone(), state);
@@ -810,17 +897,19 @@ async fn handle_retry(
     let max_concurrency = plan
         .run
         .max_concurrency
-        .or(global.max_concurrency)
+        .or(effective.max_concurrency)
         .unwrap_or(1);
-    let fail_fast = plan.run.fail_fast.unwrap_or(global.effective_fail_fast());
-    let default_timeout_sec = plan.run.default_timeout_sec;
+    let fail_fast = plan.run.fail_fast.unwrap_or(effective.fail_fast);
+    let default_timeout_sec = plan.run.default_timeout_sec.or(effective.default_timeout_sec);
 
+    // Notifier for retry (no notifications for single task retry)
     let runner = PlanTaskRunner::new(
         Arc::new(tasks_map),
         ctx,
         state_handle.clone(),
         cancel,
         default_timeout_sec,
+        None,
     );
     let scheduler = Scheduler::new(
         task_specs,
@@ -841,8 +930,8 @@ async fn handle_retry(
     Ok(exit_code)
 }
 
-fn handle_cancel(global: &GlobalOptions, run_id: &str, task_id: Option<String>) -> Result<i32> {
-    let store_root = resolve_store_path(global.store.as_ref())?;
+fn handle_cancel(effective: &EffectiveOptions, run_id: &str, task_id: Option<String>) -> Result<i32> {
+    let store_root = resolve_store_path(effective.store.as_ref())?;
     if let Some(task_id) = task_id {
         let state = read_state(&store_root, run_id)?;
         if let Some(task_state) = state.tasks.get(&task_id) {
@@ -885,11 +974,12 @@ enum CleanResult {
 
 fn handle_clean(
     global: &GlobalOptions,
+    effective: &EffectiveOptions,
     run_id: Option<String>,
     all: bool,
     fix_orphans: bool,
 ) -> Result<i32> {
-    let store_root = resolve_store_path(global.store.as_ref())?;
+    let store_root = resolve_store_path(effective.store.as_ref())?;
 
     // Handle --fix-orphans mode
     if fix_orphans {
@@ -1111,8 +1201,8 @@ fn fix_orphaned_runs(store_root: &Path, verbose: bool) -> Result<Vec<String>> {
     Ok(fixed)
 }
 
-fn handle_graph(global: &GlobalOptions, target: &str, mermaid: bool, ascii: bool) -> Result<i32> {
-    let store_root = resolve_store_path(global.store.as_ref())?;
+fn handle_graph(effective: &EffectiveOptions, target: &str, mermaid: bool, ascii: bool) -> Result<i32> {
+    let store_root = resolve_store_path(effective.store.as_ref())?;
     let plan = if Path::new(target).exists() {
         load_plan(target)?.0
     } else {
@@ -1916,6 +2006,7 @@ struct PlanTaskRunner {
     claude_code: ClaudeCodeRunner,
     opencode: OpencodeRunner,
     default_timeout_sec: Option<u64>,
+    notifier: Option<Notifier>,
 }
 
 impl PlanTaskRunner {
@@ -1925,6 +2016,7 @@ impl PlanTaskRunner {
         state: StateHandle,
         cancel: CancelHandle,
         default_timeout_sec: Option<u64>,
+        notifier: Option<Notifier>,
     ) -> Self {
         Self {
             tasks,
@@ -1935,6 +2027,7 @@ impl PlanTaskRunner {
             claude_code: ClaudeCodeRunner::new(),
             opencode: OpencodeRunner::new(),
             default_timeout_sec,
+            notifier,
         }
     }
 }
@@ -1951,6 +2044,7 @@ impl TaskRunner for PlanTaskRunner {
         let claude_code = self.claude_code;
         let opencode = self.opencode;
         let default_timeout_sec = self.default_timeout_sec;
+        let notifier = self.notifier.clone();
 
         Box::pin(async move {
             let Some(task) = tasks.get(&task_spec.id) else {
@@ -2110,6 +2204,11 @@ impl TaskRunner for PlanTaskRunner {
                 } else {
                     manager.release_failure(&task_id, workdir);
                 }
+            }
+
+            // Send task completion notification
+            if let Some(ref notifier) = notifier {
+                notifier.notify_task_complete(&task_id, result.status, result.exit_code);
             }
 
             result

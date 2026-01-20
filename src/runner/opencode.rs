@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use crate::plan::Task;
 use crate::runner::{ChildHandle, RunContext, Runner};
 use crate::store::LogStream;
+use crate::template::expand_prompt;
 
 #[derive(Clone, Copy)]
 pub struct OpencodeRunner;
@@ -27,6 +28,10 @@ impl Runner for OpencodeRunner {
             .opencode
             .as_ref()
             .context("opencode config missing")?;
+
+        // Expand template variables in the prompt
+        let prompt = expand_prompt(&config.prompt, &ctx.variables)
+            .with_context(|| format!("expand prompt for task {}", task.id))?;
 
         let stdout_path = ctx.store.log_path(&task.id, LogStream::Stdout);
         let stderr_path = ctx.store.log_path(&task.id, LogStream::Stderr);
@@ -53,7 +58,7 @@ impl Runner for OpencodeRunner {
         }
 
         // Prompt as positional argument
-        cmd.arg(&config.prompt);
+        cmd.arg(&prompt);
 
         let child = cmd
             .current_dir(&ctx.cwd)
