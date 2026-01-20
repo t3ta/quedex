@@ -20,6 +20,8 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
         }),
         claude_code: None,
         opencode: None,
+        retry_count: 0,
+        retry_delay_sec: 0,
     }
 }
 
@@ -41,6 +43,8 @@ fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
             model: None,
             json: true,
         }),
+        retry_count: 0,
+        retry_delay_sec: 0,
     }
 }
 
@@ -100,6 +104,8 @@ fn plan_rejects_empty_codex_prompt() {
         }),
         claude_code: None,
         opencode: None,
+        retry_count: 0,
+        retry_delay_sec: 0,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -124,6 +130,8 @@ fn plan_rejects_empty_claude_code_prompt() {
             json: true,
         }),
         opencode: None,
+        retry_count: 0,
+        retry_delay_sec: 0,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -155,6 +163,8 @@ fn plan_rejects_multiple_runner_configs() {
             json: true,
         }),
         opencode: None,
+        retry_count: 0,
+        retry_delay_sec: 0,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -179,6 +189,8 @@ fn plan_accepts_valid_claude_code_task() {
             json: true,
         }),
         opencode: None,
+        retry_count: 0,
+        retry_delay_sec: 0,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -206,6 +218,8 @@ fn plan_rejects_kind_mismatch_claude_code() {
         }),
         claude_code: None,
         opencode: None,
+        retry_count: 0,
+        retry_delay_sec: 0,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -230,6 +244,8 @@ fn plan_rejects_empty_opencode_prompt() {
             model: None,
             json: true,
         }),
+        retry_count: 0,
+        retry_delay_sec: 0,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -254,6 +270,8 @@ fn plan_accepts_valid_opencode_task() {
             model: Some("anthropic/claude-sonnet".to_string()),
             json: true,
         }),
+        retry_count: 0,
+        retry_delay_sec: 0,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -281,6 +299,8 @@ fn plan_rejects_kind_mismatch_opencode() {
         }),
         claude_code: None,
         opencode: None,
+        retry_count: 0,
+        retry_delay_sec: 0,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -309,6 +329,8 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
             model: None,
             json: true,
         }),
+        retry_count: 0,
+        retry_delay_sec: 0,
     };
 
     let plan = plan_with_tasks(vec![task]);

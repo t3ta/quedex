@@ -50,12 +50,20 @@ async fn main() {
 
 async fn dispatch(cli: Cli) -> Result<i32> {
     match cli.command {
+        Commands::Init { output, force } => handle_init(&cli.global, output, force),
         Commands::Run {
             plan,
             recovery,
             run_id,
             base_dir,
-        } => handle_run(&cli.global, &plan, recovery, run_id, base_dir).await,
+            dry_run,
+        } => {
+            if dry_run {
+                handle_dry_run(&cli.global, &plan)
+            } else {
+                handle_run(&cli.global, &plan, recovery, run_id, base_dir).await
+            }
+        }
         Commands::Start {
             plan,
             recovery,
@@ -81,7 +89,188 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             mermaid,
             ascii,
         } => handle_graph(&cli.global, &target, mermaid, ascii),
+        Commands::History { limit, all, json } => handle_history(&cli.global, limit, all, json),
+        Commands::Schema { output } => handle_schema(output),
     }
+}
+
+fn handle_init(global: &GlobalOptions, output: Option<PathBuf>, force: bool) -> Result<i32> {
+    let output_path = output.unwrap_or_else(|| PathBuf::from("plan.json"));
+
+    if output_path.exists() && !force {
+        return Err(anyhow!(
+            "file {} already exists (use --force to overwrite)",
+            output_path.display()
+        ));
+    }
+
+    if global.verbose {
+        eprintln!("[verbose] Creating plan template at {}", output_path.display());
+    }
+
+    let template = r#"{
+  "version": 1,
+  "run": {
+    "name": "my-plan",
+    "max_concurrency": 2,
+    "fail_fast": true
+  },
+  "tasks": [
+    {
+      "id": "task-1",
+      "mode": "implement",
+      "deps": [],
+      "codex": {
+        "prompt": "Describe what this task should do"
+      }
+    }
+  ]
+}
+"#;
+
+    fs::write(&output_path, template)
+        .with_context(|| format!("write plan template to {}", output_path.display()))?;
+
+    println!("Created {}", output_path.display());
+    Ok(0)
+}
+
+fn handle_dry_run(global: &GlobalOptions, plan_arg: &str) -> Result<i32> {
+    let (plan, _plan_base_dir) = load_plan(plan_arg)?;
+
+    if let Err(err) = plan.validate() {
+        eprintln!("plan validation error: {err}");
+        return Ok(3);
+    }
+
+    println!("Dry run mode - no tasks will be executed");
+    println!();
+    println!("Plan: {}", plan.run.name.as_deref().unwrap_or("(unnamed)"));
+    println!("Tasks: {}", plan.tasks.len());
+
+    if global.verbose {
+        eprintln!("[verbose] Max concurrency: {:?}", plan.run.max_concurrency);
+        eprintln!("[verbose] Fail fast: {:?}", plan.run.fail_fast);
+    }
+
+    // Build dependency graph to determine execution order
+    let mut in_degree: HashMap<&str, usize> = HashMap::new();
+    let mut dependents: HashMap<&str, Vec<&str>> = HashMap::new();
+
+    for task in &plan.tasks {
+        in_degree.entry(task.id.as_str()).or_insert(0);
+        for dep in &task.deps {
+            dependents
+                .entry(dep.as_str())
+                .or_default()
+                .push(task.id.as_str());
+            *in_degree.entry(task.id.as_str()).or_insert(0) += 1;
+        }
+    }
+
+    // Topological sort using Kahn's algorithm
+    let mut queue: Vec<&str> = in_degree
+        .iter()
+        .filter(|(_, deg)| **deg == 0)
+        .map(|(id, _)| *id)
+        .collect();
+    queue.sort(); // Sort for deterministic output
+
+    let mut order = Vec::new();
+    while let Some(task_id) = queue.pop() {
+        order.push(task_id);
+        if let Some(deps) = dependents.get(task_id) {
+            for &dep in deps {
+                if let Some(deg) = in_degree.get_mut(dep) {
+                    *deg -= 1;
+                    if *deg == 0 {
+                        queue.push(dep);
+                        queue.sort();
+                    }
+                }
+            }
+        }
+    }
+
+    println!();
+    println!("Execution order:");
+    for (i, task_id) in order.iter().enumerate() {
+        let task = plan.tasks.iter().find(|t| t.id == *task_id).unwrap();
+        let deps_str = if task.deps.is_empty() {
+            "none".to_string()
+        } else {
+            task.deps.join(", ")
+        };
+        let runner = if task.codex.is_some() {
+            "codex"
+        } else if task.claude_code.is_some() {
+            "claude_code"
+        } else {
+            "opencode"
+        };
+        println!("  {}. {} (deps: {}) [{}]", i + 1, task_id, deps_str, runner);
+    }
+
+    Ok(0)
+}
+
+fn handle_history(global: &GlobalOptions, limit: usize, all: bool, json: bool) -> Result<i32> {
+    let store_root = resolve_store_path(global.store.as_ref())?;
+
+    if global.verbose {
+        eprintln!("[verbose] Reading history from {}", store_root.display());
+    }
+
+    let mut states = list_states(&store_root)?;
+    states.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+
+    let display_limit = if all { states.len() } else { limit };
+    let states: Vec<_> = states.into_iter().take(display_limit).collect();
+
+    if json {
+        let text = serde_json::to_string_pretty(&states)?;
+        println!("{text}");
+    } else {
+        if states.is_empty() {
+            println!("No execution history found");
+            return Ok(0);
+        }
+        println!(
+            "{:<36} {:<10} {:<20} {:<20} name",
+            "run_id", "status", "started_at", "completed_at"
+        );
+        for state in &states {
+            let completed_str = state
+                .completed_at
+                .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "{:<36} {:<10} {:<20} {:<20} {}",
+                state.run_id,
+                format!("{:?}", state.status),
+                state.started_at.format("%Y-%m-%d %H:%M:%S"),
+                completed_str,
+                state.run_name
+            );
+        }
+    }
+
+    Ok(0)
+}
+
+fn handle_schema(output: Option<PathBuf>) -> Result<i32> {
+    let schema = quedex::plan::plan_json_schema();
+    let schema_json = serde_json::to_string_pretty(&schema)?;
+
+    if let Some(output_path) = output {
+        fs::write(&output_path, &schema_json)
+            .with_context(|| format!("write schema to {}", output_path.display()))?;
+        println!("Schema written to {}", output_path.display());
+    } else {
+        println!("{schema_json}");
+    }
+
+    Ok(0)
 }
 
 async fn handle_run(
@@ -1661,6 +1850,9 @@ impl TaskRunner for PlanTaskRunner {
             };
 
             let task_id = task.id.clone();
+            let retry_count = task.retry_count;
+            let retry_delay_sec = task.retry_delay_sec;
+
             if cancel.is_canceled() {
                 let _ = state.task_finished(&task_id, TaskStatus::Canceled, None);
                 return TaskResult::canceled();
@@ -1682,28 +1874,51 @@ impl TaskRunner for PlanTaskRunner {
             let mut task_ctx = ctx.clone();
             task_ctx.cwd = workdir.path().to_path_buf();
 
-            let result = 'result: {
-                let runner: &dyn Runner = if task.codex.is_some() {
-                    &codex
-                } else if task.claude_code.is_some() {
-                    &claude_code
-                } else {
-                    &opencode
-                };
+            let timeout_sec = task.timeout_sec.or(default_timeout_sec);
+            let mut attempt = 0u32;
+            let max_attempts = retry_count + 1; // Original attempt + retries
 
-                let child = match runner.spawn(task, &task_ctx) {
+            let result = loop {
+                attempt += 1;
+
+                if cancel.is_canceled() {
+                    let _ = state.task_finished(&task_id, TaskStatus::Canceled, None);
+                    break TaskResult::canceled();
+                }
+
+                if attempt > 1 {
+                    eprintln!(
+                        "task {task_id} retry attempt {}/{} after failure",
+                        attempt - 1,
+                        retry_count
+                    );
+                    if retry_delay_sec > 0 {
+                        tokio::time::sleep(Duration::from_secs(retry_delay_sec)).await;
+                    }
+                }
+
+                // Select runner and spawn child process
+                let child = if task.codex.is_some() {
+                    codex.spawn(task, &task_ctx)
+                } else if task.claude_code.is_some() {
+                    claude_code.spawn(task, &task_ctx)
+                } else {
+                    opencode.spawn(task, &task_ctx)
+                };
+                let child = match child {
                     Ok(child) => child,
                     Err(err) => {
                         eprintln!("task {task_id} spawn error: {err:#}");
-                        let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
-                        break 'result TaskResult::failed(1);
+                        if attempt >= max_attempts {
+                            let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
+                            break TaskResult::failed(1);
+                        }
+                        continue;
                     }
                 };
 
                 cancel.register(&task_id, child.clone());
                 let _ = state.task_started(&task_id, child.pid);
-
-                let timeout_sec = task.timeout_sec.or(default_timeout_sec);
 
                 let wait_future = tokio::task::spawn_blocking(move || child.wait());
                 let wait_result = if let Some(timeout_secs) = timeout_sec {
@@ -1729,8 +1944,13 @@ impl TaskRunner for PlanTaskRunner {
                                 }
                             }
                             cancel.unregister(&task_id);
-                            let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(124));
-                            break 'result TaskResult::failed(124);
+
+                            if attempt >= max_attempts {
+                                let _ =
+                                    state.task_finished(&task_id, TaskStatus::Failed, Some(124));
+                                break TaskResult::failed(124);
+                            }
+                            continue;
                         }
                     }
                 } else {
@@ -1743,19 +1963,35 @@ impl TaskRunner for PlanTaskRunner {
                     Ok(Ok(status)) => status,
                     Ok(Err(err)) => {
                         eprintln!("task {task_id} wait error: {err}");
-                        let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
-                        break 'result TaskResult::failed(1);
+                        if attempt >= max_attempts {
+                            let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
+                            break TaskResult::failed(1);
+                        }
+                        continue;
                     }
                     Err(err) => {
                         eprintln!("task {task_id} join error: {err}");
-                        let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
-                        break 'result TaskResult::failed(1);
+                        if attempt >= max_attempts {
+                            let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
+                            break TaskResult::failed(1);
+                        }
+                        continue;
                     }
                 };
 
                 let result = map_exit_status(status, cancel.is_canceled());
+
+                // If failed but have retries remaining, continue
+                if result.status == TaskStatus::Failed && attempt < max_attempts {
+                    eprintln!(
+                        "task {task_id} failed with exit code {:?}, will retry",
+                        result.exit_code
+                    );
+                    continue;
+                }
+
                 let _ = state.task_finished(&task_id, result.status, result.exit_code);
-                break 'result result;
+                break result;
             };
 
             if let Some(manager) = &ctx.worktree_manager {

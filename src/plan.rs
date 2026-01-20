@@ -4,9 +4,10 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use petgraph::algo::is_cyclic_directed;
 use petgraph::graphmap::DiGraphMap;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskMode {
     Research,
@@ -14,7 +15,7 @@ pub enum TaskMode {
     Verify,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct WorktreeRunConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -24,7 +25,7 @@ pub struct WorktreeRunConfig {
     pub shallow_depth: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct RunConfig {
     #[serde(default)]
     pub name: Option<String>,
@@ -42,7 +43,7 @@ pub struct RunConfig {
     pub default_timeout_sec: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Plan {
     pub version: u32,
     #[serde(default)]
@@ -50,18 +51,20 @@ pub struct Plan {
     pub tasks: Vec<Task>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CodexConfig {
     pub prompt: String,
     #[serde(default)]
     pub output_last_message: Option<PathBuf>,
     #[serde(default = "default_verify_after")]
+    #[schemars(default = "default_verify_after")]
     pub verify_after: bool,
     #[serde(default)]
     pub sandbox: Option<String>,
     #[serde(default)]
     pub ask_for_approval: Option<String>,
     #[serde(default = "default_json")]
+    #[schemars(default = "default_json")]
     pub json: bool,
 }
 
@@ -73,25 +76,27 @@ fn default_verify_after() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ClaudeCodeConfig {
     pub prompt: String,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default = "default_json")]
+    #[schemars(default = "default_json")]
     pub json: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OpencodeConfig {
     pub prompt: String,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default = "default_json")]
+    #[schemars(default = "default_json")]
     pub json: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Task {
     pub id: String,
     #[serde(default)]
@@ -113,6 +118,12 @@ pub struct Task {
     pub claude_code: Option<ClaudeCodeConfig>,
     #[serde(default)]
     pub opencode: Option<OpencodeConfig>,
+    /// Number of retry attempts on failure (0 = no retry)
+    #[serde(default)]
+    pub retry_count: u32,
+    /// Delay in seconds between retry attempts
+    #[serde(default)]
+    pub retry_delay_sec: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -237,4 +248,9 @@ impl Plan {
 
         Ok(())
     }
+}
+
+/// Generate JSON Schema for Plan
+pub fn plan_json_schema() -> schemars::schema::RootSchema {
+    schemars::schema_for!(Plan)
 }
