@@ -49,7 +49,7 @@ impl Runner for ClaudeCodeRunner {
 
         // Output format
         if config.json {
-            cmd.arg("--output-format").arg("json");
+            cmd.arg("--output-format").arg("stream-json");
         }
 
         // Prompt as positional argument
