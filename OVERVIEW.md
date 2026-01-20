@@ -63,7 +63,20 @@ LLM は「計画（plan）」まで。実行・監視・状態管理は quedex �
 * `--max-concurrency <n>`: plan 未指定時の並列数
 * `--fail-fast/--no-fail-fast`
 
-### 2.3 終了コード（run）
+### 2.3 quedex.toml 設定ファイル
+
+プロジェクトルートに配置。CLI オプションが優先。
+
+```toml
+max_concurrency = 4
+fail_fast = false
+store = ".quedex"
+default_timeout_sec = 3600
+```
+
+設定の優先順位: CLI オプション > quedex.toml > デフォルト値
+
+### 2.4 終了コード（run）
 
 * `0`: 成功（全タスク完了）
 * `1`: 失敗（fail_fast で止まった / 依存が失敗で実行不可が発生）
@@ -156,6 +169,54 @@ LLM は「計画（plan）」まで。実行・監視・状態管理は quedex �
 * cycles 無し（DAG）
 * `codex.prompt` 非空
 * `codex.output_last_message` は `mode=research` のみ許可（混乱を避ける）
+
+### 3.4 YAML 対応
+
+JSON に加えて YAML 形式もサポート。拡張子 `.yaml` / `.yml` で自動判定。
+
+```yaml
+version: 1
+variables:
+  module: "auth"
+
+run:
+  name: "feature"
+  max_concurrency: 2
+
+tasks:
+  - id: A
+    title: "調査"
+    mode: research
+    kind: codex
+    codex:
+      prompt: "${module} を調査"
+```
+
+### 3.5 プロンプトテンプレート
+
+`variables` で定義した変数を `${var}` で展開。環境変数は `${env.VAR}` で参照。
+
+```yaml
+variables:
+  target: "src/lib.rs"
+
+tasks:
+  - id: analyze
+    codex:
+      prompt: "${target} を分析（環境: ${env.NODE_ENV}）"
+```
+
+### 3.6 通知設定
+
+`run.notifications` で Webhook 通知を設定。
+
+```yaml
+run:
+  notifications:
+    url: "https://hooks.slack.com/services/XXX"
+    events: ["on_complete", "on_failure"]
+    username: "quedex"
+```
 
 ---
 

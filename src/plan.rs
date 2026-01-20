@@ -25,6 +25,19 @@ pub struct WorktreeRunConfig {
     pub shallow_depth: Option<u32>,
 }
 
+/// Configuration for webhook notifications.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+pub struct NotificationConfig {
+    /// Webhook URL (supports Slack/Discord incoming webhooks)
+    pub url: String,
+    /// Events to notify on. Valid values: "on_start", "on_task_complete", "on_complete", "on_failure"
+    #[serde(default)]
+    pub events: Vec<String>,
+    /// Custom username for the notification (optional)
+    #[serde(default)]
+    pub username: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct RunConfig {
     #[serde(default)]
@@ -41,6 +54,9 @@ pub struct RunConfig {
     pub fail_fast: Option<bool>,
     #[serde(default)]
     pub default_timeout_sec: Option<u64>,
+    /// Webhook notification configuration
+    #[serde(default)]
+    pub notifications: Option<NotificationConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -48,6 +64,11 @@ pub struct Plan {
     pub version: u32,
     #[serde(default)]
     pub run: RunConfig,
+    /// Template variables for prompt expansion.
+    /// Use ${variable} to reference these in prompts.
+    /// Use ${env.VAR} to reference environment variables.
+    #[serde(default)]
+    pub variables: HashMap<String, String>,
     pub tasks: Vec<Task>,
 }
 

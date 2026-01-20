@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use quedex::plan::{ClaudeCodeConfig, CodexConfig, OpencodeConfig, Plan, RunConfig, Task, TaskMode};
 
 fn codex_task(id: &str, deps: Vec<&str>) -> Task {
@@ -52,6 +53,7 @@ fn plan_with_tasks(tasks: Vec<Task>) -> Plan {
     Plan {
         version: 1,
         run: RunConfig::default(),
+        variables: HashMap::new(),
         tasks,
     }
 }

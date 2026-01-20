@@ -124,9 +124,11 @@ cargo run -- run plan.json
 - **`quedex retry <run_id> <task_id>`**: 失敗/キャンセルされたタスクを再実行
   - 依存関係が満たされている場合のみ実行可能
 
-## Plan スキーマ（JSON）
+## Plan スキーマ（JSON / YAML）
 
-最小構成:
+quedex は JSON と YAML の両方の plan ファイルをサポートしています。
+
+### JSON 形式（最小構成）
 
 ```json
 {
@@ -144,6 +146,42 @@ cargo run -- run plan.json
     }
   ]
 }
+```
+
+### YAML 形式
+
+YAML は可読性が高く、コメントも書けるため推奨フォーマットです。
+
+```yaml
+version: 1
+description: "認証機能の実装"
+
+variables:
+  target_module: "src/auth"
+  test_command: "npm test"
+
+run:
+  name: "auth-feature"
+  max_concurrency: 2
+  fail_fast: true
+
+tasks:
+  - id: research
+    title: "調査: 既存認証の把握"
+    mode: research
+    kind: codex
+    codex:
+      prompt: "${target_module} の既存実装を調査して要点をまとめて"
+      output_last_message: "artifacts/research.md"
+
+  - id: implement
+    title: "実装: 認証API"
+    mode: implement
+    deps: [research]
+    locks: [workspace]
+    kind: codex
+    codex:
+      prompt: "認証APIを実装し、${test_command} でテストを実行して"
 ```
 
 主要フィールド:
@@ -183,6 +221,103 @@ cargo run -- run plan.json
 - `id` の一意性、`deps` の存在、DAG（循環なし）
 - `codex.prompt` は必須
 - `output_last_message` は `mode=research` のみ許可
+
+## プロンプトテンプレート
+
+プロンプト内で変数展開が使えます。
+
+### 変数の定義
+
+plan ファイルの `variables` セクションで定義:
+
+```yaml
+variables:
+  project_name: "my-app"
+  target_dir: "src/components"
+```
+
+### 変数の使用
+
+`${variable}` 形式でプロンプト内から参照:
+
+```yaml
+tasks:
+  - id: analyze
+    title: "コード分析"
+    mode: research
+    kind: codex
+    codex:
+      prompt: "${target_dir} 内の ${project_name} コンポーネントを分析して"
+```
+
+### 環境変数の参照
+
+`${env.VAR}` で環境変数を参照:
+
+```yaml
+tasks:
+  - id: deploy
+    title: "デプロイ"
+    mode: implement
+    kind: codex
+    codex:
+      prompt: "${env.DEPLOY_TARGET} 環境にデプロイして"
+```
+
+## quedex.toml 設定ファイル
+
+プロジェクトルートに `quedex.toml` を配置すると、デフォルト設定を指定できます。
+CLI オプションが優先され、指定がない場合に設定ファイルの値が使われます。
+
+```toml
+# 同時実行タスク数（デフォルト: plan の指定値）
+max_concurrency = 4
+
+# 失敗時に即停止するか（デフォルト: true）
+fail_fast = false
+
+# 状態保存ディレクトリ（デフォルト: .quedex）
+store = ".quedex"
+
+# デフォルトタイムアウト（秒）
+default_timeout_sec = 3600
+```
+
+## Webhook 通知
+
+Slack や Discord に実行状況を通知できます。
+
+### 設定例
+
+```yaml
+run:
+  name: "daily-task"
+  notifications:
+    url: "https://hooks.slack.com/services/XXX/YYY/ZZZ"
+    events: ["on_start", "on_complete", "on_failure"]
+    username: "quedex-bot"
+```
+
+### 通知イベント
+
+| イベント | 説明 |
+|---------|------|
+| `on_start` | run 開始時 |
+| `on_task_complete` | 各タスク完了時 |
+| `on_complete` | 全タスク成功時 |
+| `on_failure` | run 失敗時 |
+
+`events` を省略すると全イベントが通知されます。
+
+### Discord での使用
+
+Discord の Webhook URL もそのまま使用可能:
+
+```yaml
+notifications:
+  url: "https://discord.com/api/webhooks/XXX/YYY"
+  events: ["on_complete", "on_failure"]
+```
 
 ## 使用例
 
