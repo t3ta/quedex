@@ -62,6 +62,11 @@ impl Notifier {
         if config.url.is_empty() {
             return None;
         }
+        // Validate URL scheme to avoid runtime errors
+        if !config.url.starts_with("http://") && !config.url.starts_with("https://") {
+            eprintln!("warning: notification URL must start with http:// or https://, skipping");
+            return None;
+        }
         Some(Self {
             config: Arc::new(config),
             client: reqwest::Client::new(),

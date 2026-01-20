@@ -5,9 +5,14 @@
 //! - `${env.VAR}` - expands to the value of environment variable `VAR`
 
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use anyhow::{bail, Result};
 use regex::Regex;
+
+/// Compiled regex for variable expansion, created once and reused.
+static TEMPLATE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\$\{([^}]+)\}").expect("invalid regex"));
 
 /// Expand template variables in a prompt string.
 ///
@@ -31,7 +36,7 @@ use regex::Regex;
 /// assert_eq!(result, "Hello test!");
 /// ```
 pub fn expand_prompt(prompt: &str, variables: &HashMap<String, String>) -> Result<String> {
-    let re = Regex::new(r"\$\{([^}]+)\}").expect("invalid regex");
+    let re = &*TEMPLATE_REGEX;
 
     let mut result = prompt.to_string();
     let mut errors: Vec<String> = Vec::new();
@@ -111,18 +116,18 @@ mod tests {
 
     #[test]
     fn test_expand_env_variable() {
-        // SAFETY: This test is single-threaded and only sets/removes test-specific env vars
+        // SAFETY: Using unique env var name to minimize conflicts with parallel tests.
+        // This is inherently racy but acceptable for testing purposes.
         unsafe {
-            std::env::set_var("TEST_QUEDEX_VAR", "test_value");
+            std::env::set_var("TEST_QUEDEX_EXPAND_VAR_1", "test_value");
         }
 
         let vars = HashMap::new();
-        let result = expand_prompt("Value: ${env.TEST_QUEDEX_VAR}", &vars).unwrap();
+        let result = expand_prompt("Value: ${env.TEST_QUEDEX_EXPAND_VAR_1}", &vars).unwrap();
         assert_eq!(result, "Value: test_value");
 
-        // SAFETY: This test is single-threaded and only sets/removes test-specific env vars
         unsafe {
-            std::env::remove_var("TEST_QUEDEX_VAR");
+            std::env::remove_var("TEST_QUEDEX_EXPAND_VAR_1");
         }
     }
 
@@ -179,20 +184,20 @@ mod tests {
 
     #[test]
     fn test_mixed_variables_and_env() {
-        // SAFETY: This test is single-threaded and only sets/removes test-specific env vars
+        // SAFETY: Using unique env var name to minimize conflicts with parallel tests.
+        // This is inherently racy but acceptable for testing purposes.
         unsafe {
-            std::env::set_var("TEST_QUEDEX_ENV", "env_value");
+            std::env::set_var("TEST_QUEDEX_MIXED_VAR_2", "env_value");
         }
 
         let mut vars = HashMap::new();
         vars.insert("local".to_string(), "local_value".to_string());
 
-        let result = expand_prompt("Local: ${local}, Env: ${env.TEST_QUEDEX_ENV}", &vars).unwrap();
+        let result = expand_prompt("Local: ${local}, Env: ${env.TEST_QUEDEX_MIXED_VAR_2}", &vars).unwrap();
         assert_eq!(result, "Local: local_value, Env: env_value");
 
-        // SAFETY: This test is single-threaded and only sets/removes test-specific env vars
         unsafe {
-            std::env::remove_var("TEST_QUEDEX_ENV");
+            std::env::remove_var("TEST_QUEDEX_MIXED_VAR_2");
         }
     }
 }

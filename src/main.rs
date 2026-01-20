@@ -151,6 +151,7 @@ tasks:
   - id: task-1
     mode: implement
     deps: []
+    kind: codex
     codex:
       prompt: |
         Describe what this task should do.

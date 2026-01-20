@@ -1,0 +1,4 @@
+# Quedex configuration file
+
+max_concurrency = 2
+fail_fast = false

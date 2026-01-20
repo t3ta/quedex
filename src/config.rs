@@ -66,7 +66,7 @@ impl EffectiveOptions {
     pub fn new(
         cli_store: Option<PathBuf>,
         cli_max_concurrency: Option<usize>,
-        cli_fail_fast: bool,
+        _cli_fail_fast: bool,
         cli_no_fail_fast: bool,
         config: &Config,
     ) -> Self {
@@ -76,16 +76,11 @@ impl EffectiveOptions {
         // max_concurrency: CLI > config
         let max_concurrency = cli_max_concurrency.or(config.max_concurrency);
 
-        // fail_fast: CLI explicit flags > config > default (true)
-        // If --no-fail-fast is specified, use false
-        // If config has a value and no CLI flag conflicts, use config
-        // Otherwise use true as default
+        // fail_fast: --no-fail-fast > config > default (true)
+        // Note: cli_fail_fast defaults to true in CLI, so we can't distinguish
+        // "user passed --fail-fast" from "default". Only --no-fail-fast is explicit.
         let fail_fast = if cli_no_fail_fast {
             false
-        } else if cli_fail_fast {
-            // --fail-fast is the default, so we need to check if config overrides
-            // Since cli_fail_fast defaults to true, we only use it when config doesn't specify
-            config.fail_fast.unwrap_or(true)
         } else {
             config.fail_fast.unwrap_or(true)
         };
