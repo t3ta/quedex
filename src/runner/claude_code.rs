@@ -47,8 +47,9 @@ impl Runner for ClaudeCodeRunner {
         let model = config.model.as_deref().unwrap_or("sonnet");
         cmd.arg("--model").arg(model);
 
-        // Output format
+        // Output format (stream-json requires --verbose with --print)
         if config.json {
+            cmd.arg("--verbose");
             cmd.arg("--output-format").arg("stream-json");
         }
 
