@@ -538,9 +538,9 @@ async fn handle_retry(
             "task {task_id} not found in state for run {run_id}"
         ));
     };
-    if !matches!(task_state.status, TaskStatus::Failed | TaskStatus::Canceled) {
+    if !matches!(task_state.status, TaskStatus::Failed | TaskStatus::Canceled | TaskStatus::Skipped) {
         return Err(anyhow!(
-            "task {} must be Failed or Canceled to retry (current: {:?})",
+            "task {} must be Failed, Canceled or Skipped to retry (current: {:?})",
             task_id,
             task_state.status
         ));
