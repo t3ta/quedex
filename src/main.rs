@@ -83,7 +83,11 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             reload_plan,
         } => handle_retry(&cli.global, &run_id, &task_id, reload_plan).await,
         Commands::Cancel { run_id, task_id } => handle_cancel(&cli.global, &run_id, task_id),
-        Commands::Clean { run_id, all } => handle_clean(&cli.global, run_id, all),
+        Commands::Clean {
+            run_id,
+            all,
+            fix_orphans,
+        } => handle_clean(&cli.global, run_id, all, fix_orphans),
         Commands::Graph {
             target,
             mermaid,
@@ -879,8 +883,28 @@ enum CleanResult {
     SkippedRunning { reason: String },
 }
 
-fn handle_clean(global: &GlobalOptions, run_id: Option<String>, all: bool) -> Result<i32> {
+fn handle_clean(
+    global: &GlobalOptions,
+    run_id: Option<String>,
+    all: bool,
+    fix_orphans: bool,
+) -> Result<i32> {
     let store_root = resolve_store_path(global.store.as_ref())?;
+
+    // Handle --fix-orphans mode
+    if fix_orphans {
+        let fixed = fix_orphaned_runs(&store_root, global.verbose)?;
+        if fixed.is_empty() {
+            println!("No orphaned runs found");
+        } else {
+            println!("Fixed {} orphaned run(s):", fixed.len());
+            for run_id in &fixed {
+                println!("  - {run_id}");
+            }
+        }
+        return Ok(0);
+    }
+
     if let Some(run_id) = run_id {
         if all {
             return Err(anyhow!("--all cannot be used with run_id"));
@@ -890,7 +914,7 @@ fn handle_clean(global: &GlobalOptions, run_id: Option<String>, all: bool) -> Re
     }
 
     if !all {
-        return Err(anyhow!("clean requires run_id or --all"));
+        return Err(anyhow!("clean requires run_id or --all or --fix-orphans"));
     }
 
     let run_ids = list_run_ids(&store_root)?;
@@ -1001,6 +1025,90 @@ fn run_active_reason(store_root: &Path, run_id: &str) -> Result<Option<String>> 
     }
 
     Ok(None)
+}
+
+/// Fix orphaned runs by marking them as failed.
+///
+/// An orphaned run is one that has status=Running but the parent quedex process
+/// is no longer alive. This can happen when quedex crashes or is killed without
+/// proper cleanup.
+fn fix_orphaned_runs(store_root: &Path, verbose: bool) -> Result<Vec<String>> {
+    use quedex::store::{fs::FsStore, Store};
+
+    let mut fixed = Vec::new();
+    let states = list_states(store_root)?;
+
+    for state in states {
+        // Only process Running runs
+        if state.status != RunStatus::Running {
+            continue;
+        }
+
+        // Check if the run is actually active
+        let is_active = match run_active_reason(store_root, &state.run_id) {
+            Ok(Some(reason)) => {
+                if verbose {
+                    eprintln!(
+                        "[verbose] Run {} is still active: {}",
+                        state.run_id, reason
+                    );
+                }
+                true
+            }
+            Ok(None) => false,
+            Err(err) => {
+                eprintln!(
+                    "Warning: could not verify run {} status: {}",
+                    state.run_id, err
+                );
+                // Skip if we can't verify - don't mark potentially active runs as failed
+                continue;
+            }
+        };
+
+        if is_active {
+            continue;
+        }
+
+        // This run is orphaned - fix it
+        if verbose {
+            eprintln!("[verbose] Fixing orphaned run: {}", state.run_id);
+        }
+
+        let store = FsStore::new(store_root, &state.run_id)?;
+        let mut updated_state = state.clone();
+        let now = Utc::now();
+
+        // Update run status
+        updated_state.status = RunStatus::Failed;
+        updated_state.completed_at = Some(now);
+
+        // Update any Running tasks to Failed
+        for (task_id, task_state) in updated_state.tasks.iter_mut() {
+            if task_state.status == TaskStatus::Running {
+                if verbose {
+                    eprintln!(
+                        "[verbose]   Marking task {} as failed (was running with pid {:?})",
+                        task_id, task_state.pid
+                    );
+                }
+                task_state.status = TaskStatus::Failed;
+                task_state.completed_at = Some(now);
+                task_state.exit_code = Some(-1);
+                task_state.pid = None;
+            }
+        }
+
+        // Write the updated state
+        store.write_state(updated_state)?;
+
+        // Remove the stale run.pid file if it exists
+        remove_run_pid(store_root, &state.run_id);
+
+        fixed.push(state.run_id.clone());
+    }
+
+    Ok(fixed)
 }
 
 fn handle_graph(global: &GlobalOptions, target: &str, mermaid: bool, ascii: bool) -> Result<i32> {

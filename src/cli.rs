@@ -105,6 +105,9 @@ pub enum Commands {
         run_id: Option<String>,
         #[arg(long, action = ArgAction::SetTrue)]
         all: bool,
+        /// Fix orphaned runs (mark as failed if parent process is dead)
+        #[arg(long, action = ArgAction::SetTrue)]
+        fix_orphans: bool,
     },
     /// Show task dependency graph
     Graph {
