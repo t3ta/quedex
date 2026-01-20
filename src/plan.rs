@@ -207,15 +207,15 @@ impl Plan {
                     );
                 }
             }
-            if let Some(claude_code) = task.claude_code.as_ref()
-                && claude_code.prompt.trim().is_empty()
-            {
-                bail!("task {} claude_code.prompt is empty", task.id);
+            if let Some(claude_code) = task.claude_code.as_ref() {
+                if claude_code.prompt.trim().is_empty() {
+                    bail!("task {} claude_code.prompt is empty", task.id);
+                }
             }
-            if let Some(opencode) = task.opencode.as_ref()
-                && opencode.prompt.trim().is_empty()
-            {
-                bail!("task {} opencode.prompt is empty", task.id);
+            if let Some(opencode) = task.opencode.as_ref() {
+                if opencode.prompt.trim().is_empty() {
+                    bail!("task {} opencode.prompt is empty", task.id);
+                }
             }
             for dep in &task.deps {
                 if dep == &task.id {
