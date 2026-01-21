@@ -23,6 +23,7 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        condition: None,
     }
 }
 
@@ -46,6 +47,7 @@ fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
         }),
         retry_count: 0,
         retry_delay_sec: 0,
+        condition: None,
     }
 }
 
@@ -108,6 +110,7 @@ fn plan_rejects_empty_codex_prompt() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        condition: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -134,6 +137,7 @@ fn plan_rejects_empty_claude_code_prompt() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        condition: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -167,6 +171,7 @@ fn plan_rejects_multiple_runner_configs() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        condition: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -193,6 +198,7 @@ fn plan_accepts_valid_claude_code_task() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        condition: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -222,6 +228,7 @@ fn plan_rejects_kind_mismatch_claude_code() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        condition: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -248,6 +255,7 @@ fn plan_rejects_empty_opencode_prompt() {
         }),
         retry_count: 0,
         retry_delay_sec: 0,
+        condition: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -274,6 +282,7 @@ fn plan_accepts_valid_opencode_task() {
         }),
         retry_count: 0,
         retry_delay_sec: 0,
+        condition: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -303,6 +312,7 @@ fn plan_rejects_kind_mismatch_opencode() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        condition: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -333,6 +343,7 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
         }),
         retry_count: 0,
         retry_delay_sec: 0,
+        condition: None,
     };
 
     let plan = plan_with_tasks(vec![task]);

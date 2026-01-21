@@ -1,4 +1,5 @@
 pub mod config;
+pub mod dry_run;
 pub mod notifier;
 pub mod plan;
 pub mod runner;
