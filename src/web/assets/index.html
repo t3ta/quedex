@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quedex Dashboard</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header>
+        <h1>Quedex Dashboard</h1>
+        <div id="connection-status" class="status-disconnected">Disconnected</div>
+    </header>
+    
+    <main>
+        <section id="runs-container">
+            <h2>Runs</h2>
+            <div id="runs-list"></div>
+        </section>
+        
+        <section id="tasks-container" style="display: none;">
+            <div class="tasks-header">
+                <h2>Tasks - <span id="current-run-name"></span></h2>
+                <button id="back-btn" class="btn">Back to Runs</button>
+            </div>
+            <div id="tasks-summary"></div>
+            <div id="tasks-list"></div>
+        </section>
+        
+        <section id="logs-container" style="display: none;">
+            <div class="logs-header">
+                <h2>Logs - <span id="current-task-id"></span></h2>
+                <button id="close-logs-btn" class="btn">Close</button>
+            </div>
+            <div class="logs-tabs">
+                <button class="tab-btn active" data-tab="stdout">stdout</button>
+                <button class="tab-btn" data-tab="stderr">stderr</button>
+            </div>
+            <pre id="logs-content"></pre>
+        </section>
+    </main>
+    
+    <script src="/app.js"></script>
+</body>
+</html>

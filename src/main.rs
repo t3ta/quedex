@@ -21,7 +21,8 @@ use cli::{Cli, Commands, GlobalOptions, RecoveryOptions};
 use quedex::config::{Config, EffectiveOptions};
 use quedex::dry_run::{detect_lock_conflicts, generate_execution_waves};
 use quedex::notifier::Notifier;
-use quedex::plan::{Plan, PlanFormat, Task};
+use quedex::plan::{Plan, PlanFormat, Task, TimeoutConfig};
+use quedex::stats::StatsCollector;
 use quedex::runner::claude_code::ClaudeCodeRunner;
 use quedex::runner::codex::CodexRunner;
 use quedex::runner::opencode::OpencodeRunner;
@@ -128,6 +129,9 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             check_locks,
             mermaid,
         } => handle_dry_run_extended(&cli.global, &effective, &plan, show_order, check_locks, mermaid),
+        Commands::Serve { run_id, port, host } => {
+            handle_serve(&cli.global, run_id, host, port, &config).await
+        }
     }
 }
 
@@ -941,6 +945,7 @@ async fn handle_run(
         cancel.clone(),
         default_timeout_sec,
         notifier.clone(),
+        &store_root,
     );
     let scheduler = if let Some(initial_states) = initial_states {
         Scheduler::new_with_initial_state(
@@ -1410,6 +1415,7 @@ async fn handle_retry(
         cancel,
         default_timeout_sec,
         None,
+        &store_root,
     );
     let scheduler = Scheduler::new(
         task_specs,
@@ -1502,8 +1508,7 @@ fn handle_cancel(
             println!("No cancellable tasks found in group '{group_name}'");
         } else {
             println!(
-                "Cancelled {} task(s) in group '{}' ({} running, {} pending)",
-                total, group_name, running_cancelled, pending_cancelled
+                "Cancelled {total} task(s) in group '{group_name}' ({running_cancelled} running, {pending_cancelled} pending)"
             );
         }
         return Ok(0);
@@ -2679,11 +2684,6 @@ impl CancelHandle {
     }
 }
 
-/// Task runner implementation for executing plan tasks.
-///
-/// Executes tasks using either the Codex runner (for LLM-assisted tasks)
-/// or the Claude Code runner (for Claude CLI tasks). Handles task lifecycle
-/// including spawn, execution, timeout enforcement, and state updates.
 struct PlanTaskRunner {
     tasks: Arc<HashMap<String, Task>>,
     ctx: RunContext,
@@ -2694,6 +2694,7 @@ struct PlanTaskRunner {
     opencode: OpencodeRunner,
     default_timeout_sec: Option<u64>,
     notifier: Option<Notifier>,
+    stats: StatsCollector,
 }
 
 impl PlanTaskRunner {
@@ -2704,7 +2705,10 @@ impl PlanTaskRunner {
         cancel: CancelHandle,
         default_timeout_sec: Option<u64>,
         notifier: Option<Notifier>,
+        store_root: &std::path::Path,
     ) -> Self {
+        let stats = StatsCollector::collect_from_store(store_root)
+            .unwrap_or_else(|_| StatsCollector::new());
         Self {
             tasks,
             ctx,
@@ -2715,6 +2719,21 @@ impl PlanTaskRunner {
             opencode: OpencodeRunner::new(),
             default_timeout_sec,
             notifier,
+            stats,
+        }
+    }
+
+    /// Resolve the effective timeout for a task.
+    #[allow(dead_code)]
+    fn resolve_timeout(&self, task_id: &str, timeout_config: Option<&TimeoutConfig>) -> Option<u64> {
+        match timeout_config {
+            Some(TimeoutConfig::Fixed(secs)) => Some(*secs),
+            Some(TimeoutConfig::Dynamic(dynamic)) => {
+                // Try to resolve from stats, fall back to default
+                self.stats.resolve_timeout(task_id, dynamic)
+                    .or(self.default_timeout_sec)
+            }
+            None => self.default_timeout_sec,
         }
     }
 }
@@ -2732,6 +2751,7 @@ impl TaskRunner for PlanTaskRunner {
         let opencode = self.opencode;
         let default_timeout_sec = self.default_timeout_sec;
         let notifier = self.notifier.clone();
+        let stats = self.stats.clone();
 
         Box::pin(async move {
             let Some(task) = tasks.get(&task_spec.id) else {
@@ -2763,7 +2783,17 @@ impl TaskRunner for PlanTaskRunner {
             let mut task_ctx = ctx.clone();
             task_ctx.cwd = workdir.path().to_path_buf();
 
-            let timeout_sec = task.timeout_sec.or(default_timeout_sec);
+            let timeout_sec = {
+                let task_id = &task_spec.id;
+                match task.timeout_sec.as_ref() {
+                    Some(TimeoutConfig::Fixed(secs)) => Some(*secs),
+                    Some(TimeoutConfig::Dynamic(dynamic)) => {
+                        stats.resolve_timeout(task_id, dynamic)
+                            .or(default_timeout_sec)
+                    }
+                    None => default_timeout_sec,
+                }
+            };
             let mut attempt = 0u32;
             let max_attempts = retry_count + 1; // Original attempt + retries
 
@@ -2923,4 +2953,28 @@ fn map_exit_status(status: std::process::ExitStatus, canceled: bool) -> TaskResu
         let code = status.code().unwrap_or(-1);
         TaskResult::failed(code)
     }
+}
+
+async fn handle_serve(
+    global: &GlobalOptions,
+    run_id: Option<String>,
+    host: String,
+    port: u16,
+    config: &Config,
+) -> Result<i32> {
+    let store_root = global
+        .store
+        .clone()
+        .or_else(|| config.store.clone())
+        .unwrap_or_else(|| PathBuf::from(".quedex"));
+
+    quedex::web::serve(quedex::web::ServerConfig {
+        host,
+        port,
+        store_root,
+        run_id,
+    })
+    .await?;
+
+    Ok(0)
 }
