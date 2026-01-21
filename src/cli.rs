@@ -161,6 +161,17 @@ pub enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         mermaid: bool,
     },
+    /// Start web dashboard server
+    Serve {
+        /// Run ID to monitor (optional, will monitor all runs if not specified)
+        run_id: Option<String>,
+        /// Port to listen on
+        #[arg(short, long, default_value = "8080")]
+        port: u16,
+        /// Host to bind to
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+    },
 }
 
 #[derive(Debug, Args, Clone, Copy)]

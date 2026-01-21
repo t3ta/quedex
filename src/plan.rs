@@ -164,6 +164,43 @@ pub struct OpencodeConfig {
     pub json: bool,
 }
 
+/// Dynamic timeout configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DynamicTimeout {
+    /// Calculate timeout as average + 2σ from history
+    Auto,
+    /// Calculate timeout as 2x the average from history
+    #[serde(rename = "2x_average")]
+    TwoXAverage,
+}
+
+/// Timeout configuration - can be fixed seconds or dynamic.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum TimeoutConfig {
+    /// Fixed timeout in seconds
+    Fixed(u64),
+    /// Dynamic timeout based on historical execution times
+    Dynamic(DynamicTimeout),
+}
+
+impl TimeoutConfig {
+    /// Returns Some(seconds) if this is a fixed timeout, None if dynamic.
+    pub fn as_fixed(&self) -> Option<u64> {
+        match self {
+            TimeoutConfig::Fixed(secs) => Some(*secs),
+            TimeoutConfig::Dynamic(_) => None,
+        }
+    }
+}
+
+impl Default for TimeoutConfig {
+    fn default() -> Self {
+        TimeoutConfig::Fixed(300) // 5 minutes default
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Task {
     pub id: String,
@@ -179,7 +216,7 @@ pub struct Task {
     #[serde(default)]
     pub locks: Vec<String>,
     #[serde(default)]
-    pub timeout_sec: Option<u64>,
+    pub timeout_sec: Option<TimeoutConfig>,
     #[serde(default)]
     pub no_worktree: bool,
     #[serde(default)]
