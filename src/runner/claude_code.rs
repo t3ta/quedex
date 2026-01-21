@@ -64,7 +64,6 @@ impl Runner for ClaudeCodeRunner {
         let child = cmd
             .current_dir(&ctx.cwd)
             .envs(&ctx.env)
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr))
             .spawn()
