@@ -370,6 +370,22 @@ impl Plan {
             }
         }
 
+        // Validate no conflict between Plan.groups and Task.group
+        for task in &self.tasks {
+            if let Some(ref task_group) = task.group {
+                if let Some(plan_groups) = task_to_groups.get(task.id.as_str()) {
+                    if !plan_groups.contains(&task_group.as_str()) {
+                        bail!(
+                            "task '{}' has group field '{}' but is listed in Plan.groups under '{}'",
+                            task.id,
+                            task_group,
+                            plan_groups[0]
+                        );
+                    }
+                }
+            }
+        }
+
         let mut graph = DiGraphMap::<&str, ()>::new();
         for task in &self.tasks {
             graph.add_node(task.id.as_str());

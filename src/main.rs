@@ -1459,30 +1459,52 @@ fn handle_cancel(
             )
         })?;
 
-        let state = read_state(&store_root, run_id)?;
+        let mut state = read_state(&store_root, run_id)?;
         let group_task_set: std::collections::HashSet<_> = group_task_ids.iter().collect();
 
-        let mut cancelled_count = 0;
+        let mut running_cancelled = 0;
+        let mut pending_cancelled = 0;
+
+        // First pass: terminate Running tasks
         for (tid, task_state) in &state.tasks {
             if !group_task_set.contains(tid) {
                 continue;
             }
-            // Only cancel Running tasks (which have a pid)
             if task_state.status == TaskStatus::Running {
                 if let Some(pid) = task_state.pid {
                     if let Err(err) = terminate_pid(pid) {
                         eprintln!("Warning: failed to terminate pid {pid} for task {tid}: {err}");
                     } else {
-                        cancelled_count += 1;
+                        running_cancelled += 1;
                     }
                 }
             }
         }
 
-        if cancelled_count == 0 {
+        // Second pass: mark Pending tasks as Canceled
+        for tid in group_task_ids {
+            if let Some(task_state) = state.tasks.get_mut(tid) {
+                if task_state.status == TaskStatus::Pending {
+                    task_state.status = TaskStatus::Canceled;
+                    pending_cancelled += 1;
+                }
+            }
+        }
+
+        // Write updated state if any pending tasks were cancelled
+        if pending_cancelled > 0 {
+            let store = FsStore::new(&store_root, run_id)?;
+            store.write_state(state)?;
+        }
+
+        let total = running_cancelled + pending_cancelled;
+        if total == 0 {
             println!("No cancellable tasks found in group '{group_name}'");
         } else {
-            println!("Cancelled {cancelled_count} task(s) in group '{group_name}'");
+            println!(
+                "Cancelled {} task(s) in group '{}' ({} running, {} pending)",
+                total, group_name, running_cancelled, pending_cancelled
+            );
         }
         return Ok(0);
     }
