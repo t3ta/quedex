@@ -1,0 +1,59 @@
+name: 'quedex'
+description: 'Run quedex DAG-based task execution'
+author: 't3ta'
+
+branding:
+  icon: 'play-circle'
+  color: 'blue'
+
+inputs:
+  plan:
+    description: 'Path to the plan file (plan.json or plan.yaml)'
+    required: true
+    default: 'plan.json'
+  fail-fast:
+    description: 'Stop execution on first failure'
+    required: false
+    default: 'true'
+  version:
+    description: 'quedex version to install (empty = build from source)'
+    required: false
+    default: ''
+
+outputs:
+  status:
+    description: 'Final execution status (Completed, Failed, Canceled)'
+    value: ${{ steps.run.outputs.status }}
+  duration:
+    description: 'Total execution duration in seconds'
+    value: ${{ steps.run.outputs.duration }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Rust
+      if: inputs.version == ''
+      uses: dtolnay/rust-action@stable
+
+    - name: Cache cargo
+      if: inputs.version == ''
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Run quedex
+      id: run
+      shell: bash
+      env:
+        INPUT_PLAN: ${{ inputs.plan }}
+        INPUT_FAIL_FAST: ${{ inputs.fail-fast }}
+        INPUT_VERSION: ${{ inputs.version }}
+      run: ${{ github.action_path }}/action.sh

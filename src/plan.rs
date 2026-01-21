@@ -97,6 +97,49 @@ fn default_verify_after() -> bool {
     true
 }
 
+/// Condition for conditional task execution.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum TaskCondition {
+    /// Environment variable condition
+    Env(EnvCondition),
+    /// Previous task result condition
+    TaskResult(TaskResultCondition),
+}
+
+/// Environment variable based condition.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EnvCondition {
+    /// Name of the environment variable to check
+    pub env: String,
+    /// Value that the environment variable must equal
+    #[serde(default)]
+    pub equals: Option<String>,
+    /// Value that the environment variable must not equal
+    #[serde(default)]
+    pub not_equals: Option<String>,
+    /// Whether the environment variable must exist (true) or must not exist (false)
+    #[serde(default)]
+    pub exists: Option<bool>,
+}
+
+/// Previous task result based condition.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TaskResultCondition {
+    /// Task ID to check the result of
+    pub task: String,
+    /// Expected status of the referenced task
+    pub status: ConditionStatus,
+}
+
+/// Status values for task result conditions.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConditionStatus {
+    Succeeded,
+    Failed,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ClaudeCodeConfig {
     pub prompt: String,
@@ -145,6 +188,9 @@ pub struct Task {
     /// Delay in seconds between retry attempts
     #[serde(default)]
     pub retry_delay_sec: u64,
+    /// Condition for conditional execution. If the condition is not met, the task is skipped.
+    #[serde(default)]
+    pub condition: Option<TaskCondition>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -250,6 +296,30 @@ impl Plan {
             for dep in &task.deps {
                 if !ids.contains(dep.as_str()) {
                     bail!("task {} has missing dep {}", task.id, dep);
+                }
+            }
+            // Validate condition references
+            if let Some(TaskCondition::TaskResult(cond)) = &task.condition {
+                if !ids.contains(cond.task.as_str()) {
+                    bail!(
+                        "task {} condition references non-existent task {}",
+                        task.id,
+                        cond.task
+                    );
+                }
+                if cond.task == task.id {
+                    bail!(
+                        "task {} condition cannot reference itself",
+                        task.id
+                    );
+                }
+                // Condition-referenced task must be declared as a dependency
+                if !task.deps.contains(&cond.task) {
+                    bail!(
+                        "task {} condition references task {} but does not declare it as a dependency",
+                        task.id,
+                        cond.task
+                    );
                 }
             }
         }

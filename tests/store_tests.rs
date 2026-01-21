@@ -35,6 +35,7 @@ fn fs_store_appends_events_and_writes_state() -> Result<()> {
             started_at: Some(ts),
             completed_at: None,
             pid: Some(42),
+            skip_reason: None,
         },
     );
 

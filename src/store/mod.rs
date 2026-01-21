@@ -71,6 +71,20 @@ pub enum TaskStatus {
     Skipped,
 }
 
+/// Reason for why a task was skipped.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SkipReason {
+    /// Skipped because a dependency failed or was canceled
+    DependencyFailed,
+    /// Skipped due to fail-fast mode being triggered
+    FailFast,
+    /// Skipped because the task's condition was not met
+    ConditionNotMet {
+        /// Human-readable description of the condition that was not met
+        condition: String,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct State {
     pub run_id: String,
@@ -90,6 +104,9 @@ pub struct TaskState {
     pub completed_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub pid: Option<u32>,
+    /// Reason for why this task was skipped (if status is Skipped)
+    #[serde(default)]
+    pub skip_reason: Option<SkipReason>,
 }
 
 pub trait Store: Send + Sync {

@@ -177,21 +177,24 @@ async fn scheduler_resolves_deps_in_order() {
             id: "A".to_string(),
             deps: vec![],
             locks: vec![],
+            condition: None,
         },
         TaskSpec {
             id: "B".to_string(),
             deps: vec!["A".to_string()],
             locks: vec![],
+            condition: None,
         },
         TaskSpec {
             id: "C".to_string(),
             deps: vec!["B".to_string()],
             locks: vec![],
+            condition: None,
         },
     ];
 
     let scheduler = build_scheduler(tasks, runner, 4, false);
-    let report = scheduler.run().await;
+    let report = scheduler.run(&HashMap::new()).await;
 
     let order = drain_started(&mut rx);
     assert_eq!(order, vec!["A", "B", "C"]);
@@ -243,21 +246,24 @@ async fn scheduler_enforces_lock_exclusion() {
             id: "A".to_string(),
             deps: vec![],
             locks: vec!["db".to_string()],
+            condition: None,
         },
         TaskSpec {
             id: "B".to_string(),
             deps: vec![],
             locks: vec!["db".to_string()],
+            condition: None,
         },
         TaskSpec {
             id: "C".to_string(),
             deps: vec![],
             locks: vec![],
+            condition: None,
         },
     ];
 
     let scheduler = build_scheduler(tasks, runner, 2, false);
-    let report = scheduler.run().await;
+    let report = scheduler.run(&HashMap::new()).await;
 
     assert!(!lock_violation.load(Ordering::SeqCst));
     assert_status(&report, "A", TaskStatus::Succeeded);
@@ -307,21 +313,24 @@ async fn scheduler_skips_pending_tasks_on_fail_fast() {
             id: "A".to_string(),
             deps: vec![],
             locks: vec![],
+            condition: None,
         },
         TaskSpec {
             id: "B".to_string(),
             deps: vec![],
             locks: vec![],
+            condition: None,
         },
         TaskSpec {
             id: "C".to_string(),
             deps: vec![],
             locks: vec![],
+            condition: None,
         },
     ];
 
     let scheduler = build_scheduler(tasks, runner, 2, true);
-    let report = scheduler.run().await;
+    let report = scheduler.run(&HashMap::new()).await;
     let started = drain_started(&mut rx);
 
     let skipped: Vec<_> = report
@@ -386,26 +395,30 @@ async fn scheduler_respects_max_concurrency() {
             id: "A".to_string(),
             deps: vec![],
             locks: vec![],
+            condition: None,
         },
         TaskSpec {
             id: "B".to_string(),
             deps: vec![],
             locks: vec![],
+            condition: None,
         },
         TaskSpec {
             id: "C".to_string(),
             deps: vec![],
             locks: vec![],
+            condition: None,
         },
         TaskSpec {
             id: "D".to_string(),
             deps: vec![],
             locks: vec![],
+            condition: None,
         },
     ];
 
     let scheduler = build_scheduler(tasks, runner, 2, false);
-    let _ = scheduler.run().await;
+    let _ = scheduler.run(&HashMap::new()).await;
 
     assert!(max_running.load(Ordering::SeqCst) <= 2);
 }

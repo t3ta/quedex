@@ -125,6 +125,29 @@ pub enum Commands {
         #[arg(short = 'o', long, value_name = "path")]
         output: Option<PathBuf>,
     },
+    /// Show execution statistics and metrics
+    Stats {
+        /// Time period to analyze (e.g., "7d", "24h", "1w")
+        #[arg(long, value_name = "DURATION")]
+        since: Option<String>,
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+    },
+    /// Analyze execution plan without running tasks
+    DryRun {
+        /// Path to plan file
+        plan: String,
+        /// Show execution order in waves (respecting max_concurrency and locks)
+        #[arg(long, action = ArgAction::SetTrue)]
+        show_order: bool,
+        /// Check for potential lock conflicts
+        #[arg(long, action = ArgAction::SetTrue)]
+        check_locks: bool,
+        /// Output dependency graph in Mermaid format
+        #[arg(long, action = ArgAction::SetTrue)]
+        mermaid: bool,
+    },
 }
 
 #[derive(Debug, Args, Clone, Copy)]

@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use cli::{Cli, Commands, GlobalOptions, RecoveryOptions};
 use quedex::config::{Config, EffectiveOptions};
+use quedex::dry_run::{detect_lock_conflicts, generate_execution_waves};
 use quedex::notifier::Notifier;
 use quedex::plan::{Plan, PlanFormat, Task};
 use quedex::runner::claude_code::ClaudeCodeRunner;
@@ -30,7 +31,7 @@ use quedex::scheduler::{
 };
 use quedex::store::fs::FsStore;
 use quedex::store::recovery::recover_running_tasks;
-use quedex::store::{Event, LogStream, RunStatus, State, Store, TaskState, TaskStatus};
+use quedex::store::{Event, LogStream, RunStatus, SkipReason, State, Store, TaskState, TaskStatus};
 use quedex::tui;
 use quedex::worktree::{
     WorktreeConfig,
@@ -119,6 +120,13 @@ async fn dispatch(cli: Cli) -> Result<i32> {
         } => handle_graph(&effective, &target, mermaid, ascii),
         Commands::History { limit, all, json } => handle_history(&cli.global, &effective, limit, all, json),
         Commands::Schema { output } => handle_schema(output),
+        Commands::Stats { since, json } => handle_stats(&cli.global, &effective, since, json),
+        Commands::DryRun {
+            plan,
+            show_order,
+            check_locks,
+            mermaid,
+        } => handle_dry_run_extended(&cli.global, &effective, &plan, show_order, check_locks, mermaid),
     }
 }
 
@@ -265,6 +273,132 @@ fn handle_dry_run(global: &GlobalOptions, plan_arg: &str) -> Result<i32> {
     Ok(0)
 }
 
+/// Extended dry-run handler with wave analysis, lock checking, and mermaid output
+fn handle_dry_run_extended(
+    global: &GlobalOptions,
+    effective: &EffectiveOptions,
+    plan_arg: &str,
+    show_order: bool,
+    check_locks: bool,
+    mermaid: bool,
+) -> Result<i32> {
+    let (plan, _plan_base_dir) = load_plan(plan_arg)?;
+
+    if let Err(err) = plan.validate() {
+        eprintln!("plan validation error: {err}");
+        return Ok(3);
+    }
+
+    // If no specific option is given, show basic dry-run output
+    let show_basic = !show_order && !check_locks && !mermaid;
+
+    if show_basic {
+        println!("Dry run mode - no tasks will be executed");
+        println!();
+    }
+
+    println!("Plan: {}", plan.run.name.as_deref().unwrap_or("(unnamed)"));
+    println!("Tasks: {}", plan.tasks.len());
+
+    let max_concurrency = plan
+        .run
+        .max_concurrency
+        .or(effective.max_concurrency)
+        .unwrap_or(1);
+
+    if global.verbose {
+        eprintln!("[verbose] Max concurrency: {}", max_concurrency);
+        eprintln!("[verbose] Fail fast: {:?}", plan.run.fail_fast);
+    }
+
+    // Mermaid output
+    if mermaid {
+        println!();
+        print_mermaid_graph(&plan);
+        return Ok(0);
+    }
+
+    // Generate waves for execution order analysis
+    let waves = generate_execution_waves(&plan, max_concurrency);
+
+    // Show execution order in waves
+    if show_order || show_basic {
+        println!();
+        println!("Execution order (max_concurrency={}):", max_concurrency);
+        for (wave_idx, wave) in waves.iter().enumerate() {
+            let task_ids: Vec<&str> = wave.iter().map(|s| s.as_str()).collect();
+
+            // Collect dependencies for all tasks in this wave
+            let all_deps: Vec<String> = wave
+                .iter()
+                .filter_map(|task_id| {
+                    plan.tasks.iter().find(|t| t.id == *task_id).map(|t| t.deps.clone())
+                })
+                .flatten()
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+
+            // Build annotation
+            let annotation = if wave.len() > 1 {
+                if all_deps.is_empty() {
+                    " (parallel)".to_string()
+                } else {
+                    let mut deps_sorted: Vec<_> = all_deps;
+                    deps_sorted.sort();
+                    format!(" (parallel, depends on {})", deps_sorted.join(", "))
+                }
+            } else if !all_deps.is_empty() {
+                let mut deps_sorted: Vec<_> = all_deps;
+                deps_sorted.sort();
+                format!(" (depends on {})", deps_sorted.join(", "))
+            } else {
+                String::new()
+            };
+
+            println!("  Wave {}: [{}]{}", wave_idx + 1, task_ids.join(", "), annotation);
+
+            // Show dependencies for each task in verbose mode
+            if global.verbose {
+                for task_id in wave {
+                    if let Some(task) = plan.tasks.iter().find(|t| t.id == *task_id) {
+                        let deps_str = if task.deps.is_empty() {
+                            "none".to_string()
+                        } else {
+                            task.deps.join(", ")
+                        };
+                        let locks_str = if task.locks.is_empty() {
+                            "none".to_string()
+                        } else {
+                            task.locks.join(", ")
+                        };
+                        eprintln!("    [verbose] {} - deps: [{}], locks: [{}]", task_id, deps_str, locks_str);
+                    }
+                }
+            }
+        }
+    }
+
+    // Check for lock conflicts
+    if check_locks {
+        println!();
+        let conflicts = detect_lock_conflicts(&plan);
+        if conflicts.is_empty() {
+            println!("Lock conflicts: none detected");
+        } else {
+            println!("Potential lock conflicts detected:");
+            for conflict in &conflicts {
+                println!("  Lock '{}': tasks [{}] may compete", conflict.lock_name, conflict.task_ids.join(", "));
+                if !conflict.notes.is_empty() {
+                    println!("    Note: {}", conflict.notes);
+                }
+            }
+        }
+    }
+
+    Ok(0)
+}
+
 fn handle_history(global: &GlobalOptions, effective: &EffectiveOptions, limit: usize, all: bool, json: bool) -> Result<i32> {
     let store_root = resolve_store_path(effective.store.as_ref())?;
 
@@ -319,6 +453,249 @@ fn handle_schema(output: Option<PathBuf>) -> Result<i32> {
         println!("Schema written to {}", output_path.display());
     } else {
         println!("{schema_json}");
+    }
+
+    Ok(0)
+}
+
+/// Statistics output structure for JSON serialization
+#[derive(serde::Serialize)]
+struct StatsOutput {
+    period: StatsPeriod,
+    total_runs: usize,
+    successful_runs: usize,
+    failed_runs: usize,
+    success_rate: f64,
+    avg_duration_seconds: Option<i64>,
+    most_failed_task: Option<TaskFailureInfo>,
+    longest_task: Option<TaskDurationInfo>,
+}
+
+#[derive(serde::Serialize)]
+struct StatsPeriod {
+    since: Option<String>,
+    until: String,
+}
+
+#[derive(serde::Serialize)]
+struct TaskFailureInfo {
+    task_id: String,
+    failure_count: usize,
+}
+
+#[derive(serde::Serialize)]
+struct TaskDurationInfo {
+    task_id: String,
+    avg_duration_seconds: i64,
+}
+
+/// Parse duration string like "7d", "24h", "1w" into chrono::Duration
+fn parse_duration(s: &str) -> Result<chrono::Duration> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err(anyhow!("Empty duration string"));
+    }
+
+    let (num_str, unit) = s.split_at(s.len() - 1);
+    let num: i64 = num_str
+        .parse()
+        .with_context(|| format!("Invalid duration number: {}", num_str))?;
+
+    match unit {
+        "s" => Ok(chrono::Duration::seconds(num)),
+        "m" => Ok(chrono::Duration::minutes(num)),
+        "h" => Ok(chrono::Duration::hours(num)),
+        "d" => Ok(chrono::Duration::days(num)),
+        "w" => Ok(chrono::Duration::weeks(num)),
+        _ => Err(anyhow!(
+            "Invalid duration format: {}. Use s, m, h, d, or w suffix",
+            s
+        )),
+    }
+}
+
+/// Format duration in human-readable format (e.g., "2m 34s")
+fn format_duration(seconds: i64) -> String {
+    if seconds < 60 {
+        format!("{}s", seconds)
+    } else if seconds < 3600 {
+        let mins = seconds / 60;
+        let secs = seconds % 60;
+        if secs > 0 {
+            format!("{}m {}s", mins, secs)
+        } else {
+            format!("{}m", mins)
+        }
+    } else {
+        let hours = seconds / 3600;
+        let mins = (seconds % 3600) / 60;
+        if mins > 0 {
+            format!("{}h {}m", hours, mins)
+        } else {
+            format!("{}h", hours)
+        }
+    }
+}
+
+fn handle_stats(
+    global: &GlobalOptions,
+    effective: &EffectiveOptions,
+    since: Option<String>,
+    json_output: bool,
+) -> Result<i32> {
+    let store_root = resolve_store_path(effective.store.as_ref())?;
+
+    if global.verbose {
+        eprintln!("[verbose] Reading stats from {}", store_root.display());
+    }
+
+    let mut states = list_states(&store_root)?;
+
+    // Parse and apply period filter
+    let cutoff = if let Some(ref since_str) = since {
+        let duration = parse_duration(since_str)?;
+        Some(Utc::now() - duration)
+    } else {
+        None
+    };
+
+    if let Some(cutoff_time) = cutoff {
+        states.retain(|s| s.started_at >= cutoff_time);
+        if global.verbose {
+            eprintln!(
+                "[verbose] Filtered to {} runs since {}",
+                states.len(),
+                cutoff_time
+            );
+        }
+    }
+
+    // Calculate statistics
+    let total_runs = states.len();
+    let successful_runs = states
+        .iter()
+        .filter(|s| s.status == RunStatus::Completed)
+        .count();
+    let failed_runs = states
+        .iter()
+        .filter(|s| s.status == RunStatus::Failed)
+        .count();
+    let success_rate = if total_runs > 0 {
+        (successful_runs as f64 / total_runs as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    // Calculate average run duration
+    let durations: Vec<i64> = states
+        .iter()
+        .filter_map(|s| {
+            s.completed_at
+                .map(|end| (end - s.started_at).num_seconds())
+        })
+        .collect();
+    let avg_duration = if !durations.is_empty() {
+        Some(durations.iter().sum::<i64>() / durations.len() as i64)
+    } else {
+        None
+    };
+
+    // Find most failed task
+    let mut task_failures: HashMap<String, usize> = HashMap::new();
+    for state in &states {
+        for (task_id, task) in &state.tasks {
+            if task.status == TaskStatus::Failed {
+                *task_failures.entry(task_id.clone()).or_default() += 1;
+            }
+        }
+    }
+    let most_failed = task_failures
+        .iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(id, count)| TaskFailureInfo {
+            task_id: id.clone(),
+            failure_count: *count,
+        });
+
+    // Find longest task (by average duration)
+    let mut task_durations: HashMap<String, Vec<i64>> = HashMap::new();
+    for state in &states {
+        for (task_id, task) in &state.tasks {
+            if let (Some(start), Some(end)) = (task.started_at, task.completed_at) {
+                task_durations
+                    .entry(task_id.clone())
+                    .or_default()
+                    .push((end - start).num_seconds());
+            }
+        }
+    }
+    let longest_task = task_durations
+        .iter()
+        .filter_map(|(id, durs)| {
+            if durs.is_empty() {
+                return None;
+            }
+            let avg = durs.iter().sum::<i64>() / durs.len() as i64;
+            Some(TaskDurationInfo {
+                task_id: id.clone(),
+                avg_duration_seconds: avg,
+            })
+        })
+        .max_by_key(|info| info.avg_duration_seconds);
+
+    // Output results
+    if json_output {
+        let output = StatsOutput {
+            period: StatsPeriod {
+                since: cutoff.map(|t| t.to_rfc3339()),
+                until: Utc::now().to_rfc3339(),
+            },
+            total_runs,
+            successful_runs,
+            failed_runs,
+            success_rate: (success_rate * 100.0).round() / 100.0,
+            avg_duration_seconds: avg_duration,
+            most_failed_task: most_failed,
+            longest_task,
+        };
+        let text = serde_json::to_string_pretty(&output)?;
+        println!("{text}");
+    } else {
+        // Text output
+        let period_str = if let Some(ref s) = since {
+            format!("last {}", s)
+        } else {
+            "all time".to_string()
+        };
+        println!("Execution Statistics ({})", period_str);
+        println!("{}", "=".repeat(40));
+        println!("Total runs:       {}", total_runs);
+        println!(
+            "Success rate:     {:.1}% ({}/{})",
+            success_rate, successful_runs, total_runs
+        );
+        if let Some(avg) = avg_duration {
+            println!("Avg duration:     {}", format_duration(avg));
+        } else {
+            println!("Avg duration:     -");
+        }
+        if let Some(ref mf) = most_failed {
+            println!(
+                "Most failed task: {} ({} failures)",
+                mf.task_id, mf.failure_count
+            );
+        } else {
+            println!("Most failed task: -");
+        }
+        if let Some(ref lt) = longest_task {
+            println!(
+                "Longest task:     {} (avg {})",
+                lt.task_id,
+                format_duration(lt.avg_duration_seconds)
+            );
+        } else {
+            println!("Longest task:     -");
+        }
     }
 
     Ok(0)
@@ -469,6 +846,7 @@ async fn handle_run(
                     started_at: None,
                     completed_at: None,
                     pid: None,
+                    skip_reason: None,
                 },
             );
         }
@@ -508,6 +886,7 @@ async fn handle_run(
             id: task.id.clone(),
             deps: task.deps.clone(),
             locks: task.locks.clone(),
+            condition: task.condition.clone(),
         })
         .collect();
 
@@ -561,7 +940,12 @@ async fn handle_run(
         )
     };
 
-    let report = scheduler.run().await;
+    // Collect environment variables for condition evaluation
+    // Start with system environment, then overlay plan-defined env vars
+    let mut env_vars: HashMap<String, String> = std::env::vars().collect();
+    env_vars.extend(plan.run.env.clone());
+
+    let report = scheduler.run(&env_vars).await;
     reconcile_state(&state_handle, &report)?;
 
     state = state_handle.snapshot();
@@ -892,6 +1276,7 @@ async fn handle_retry(
         id: task.id.clone(),
         deps: Vec::new(),
         locks: task.locks.clone(),
+        condition: task.condition.clone(),
     }];
 
     let max_concurrency = plan
@@ -920,7 +1305,11 @@ async fn handle_retry(
         runner,
     );
 
-    let report = scheduler.run().await;
+    // Collect environment variables for condition evaluation
+    let mut env_vars: HashMap<String, String> = std::env::vars().collect();
+    env_vars.extend(plan.run.env.clone());
+
+    let report = scheduler.run(&env_vars).await;
     reconcile_state(&state_handle, &report)?;
 
     let state = state_handle.snapshot();
@@ -1694,19 +2083,24 @@ fn load_plan_snapshot(store_root: &Path, run_id: &str) -> Result<Plan> {
 
 fn finalize_run_status(state: &State) -> (RunStatus, i32) {
     let mut has_failed = false;
-    let mut has_skipped = false;
+    let mut has_skipped_not_condition = false;
     let mut has_canceled = false;
 
     for task in state.tasks.values() {
         match task.status {
             TaskStatus::Failed => has_failed = true,
-            TaskStatus::Skipped => has_skipped = true,
+            TaskStatus::Skipped => {
+                // Condition-based skips are intentional and not failures
+                if !matches!(task.skip_reason, Some(SkipReason::ConditionNotMet { .. })) {
+                    has_skipped_not_condition = true;
+                }
+            }
             TaskStatus::Canceled => has_canceled = true,
             _ => {}
         }
     }
 
-    if has_failed || has_skipped {
+    if has_failed || has_skipped_not_condition {
         (RunStatus::Failed, 1)
     } else if has_canceled {
         (RunStatus::Canceled, 2)
@@ -1769,6 +2163,7 @@ fn reconcile_state(state_handle: &StateHandle, report: &ScheduleReport) -> Resul
                 if task_state.status != record.status {
                     task_state.status = record.status;
                     task_state.exit_code = record.exit_code;
+                    task_state.skip_reason = record.skip_reason.clone();
                     if matches!(
                         record.status,
                         TaskStatus::Succeeded
@@ -1795,6 +2190,7 @@ fn build_initial_records(state: &State) -> HashMap<String, TaskRecord> {
                 TaskRecord {
                     status: task_state.status,
                     exit_code: task_state.exit_code,
+                    skip_reason: task_state.skip_reason.clone(),
                 },
             )
         })

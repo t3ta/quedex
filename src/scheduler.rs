@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::{mpsc, Semaphore};
 
-use crate::store::TaskStatus;
+use crate::plan::{TaskCondition, TaskResultCondition};
+use crate::store::{SkipReason, TaskStatus};
 
 pub type TaskId = String;
 pub type LockTable = HashMap<String, Option<TaskId>>;
@@ -14,6 +15,7 @@ pub struct TaskSpec {
     pub id: TaskId,
     pub deps: Vec<TaskId>,
     pub locks: Vec<String>,
+    pub condition: Option<TaskCondition>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -55,6 +57,7 @@ impl TaskResult {
 pub struct TaskRecord {
     pub status: TaskStatus,
     pub exit_code: Option<i32>,
+    pub skip_reason: Option<SkipReason>,
 }
 
 #[derive(Debug, Clone)]
@@ -110,7 +113,7 @@ where
         }
     }
 
-    pub async fn run(self) -> ScheduleReport {
+    pub async fn run(self, env_vars: &HashMap<String, String>) -> ScheduleReport {
         let max_concurrency = self.options.max_concurrency.max(1);
         let semaphore = Arc::new(Semaphore::new(max_concurrency));
         let lock_table = Arc::new(Mutex::new(init_lock_table(&self.tasks)));
@@ -122,6 +125,7 @@ where
             states.entry(task_id.clone()).or_insert(TaskRecord {
                 status: TaskStatus::Pending,
                 exit_code: None,
+                skip_reason: None,
             });
         }
 
@@ -142,6 +146,7 @@ where
                 &mut states,
                 &mut ready_queue,
                 fail_fast_triggered,
+                env_vars,
             );
 
             let mut rotations = 0usize;
@@ -156,6 +161,7 @@ where
                     if let Some(record) = states.get_mut(&task_id) {
                         record.status = TaskStatus::Skipped;
                         record.exit_code = None;
+                        record.skip_reason = Some(SkipReason::FailFast);
                     }
                     continue;
                 }
@@ -330,60 +336,176 @@ fn release_locks(lock_table: &Arc<Mutex<LockTable>>, task_id: &TaskId, locks: &[
 /// * `states` - Current execution state of all tasks
 /// * `ready_queue` - Queue of tasks ready to execute (modified in place)
 /// * `fail_fast_triggered` - Whether fail-fast mode is active
+/// * `env_vars` - Environment variables for condition evaluation
 ///
 /// # Behavior
 /// - If fail_fast is active, returns immediately without queuing tasks
-/// - For each pending task, checks if all dependencies succeeded
-/// - If a dependency failed, marks the task as Skipped
-/// - If all dependencies are satisfied, marks task as Ready and adds to queue
+/// - For each pending task, checks if all dependencies succeeded (or were condition-skipped)
+/// - If a dependency truly failed, marks the task as Skipped with DependencyFailed reason
+/// - If condition is not met, marks the task as Skipped with ConditionNotMet reason
+/// - If all dependencies are satisfied and condition is met, marks task as Ready and adds to queue
 fn refresh_ready(
     tasks: &HashMap<TaskId, TaskSpec>,
     states: &mut HashMap<TaskId, TaskRecord>,
     ready_queue: &mut VecDeque<TaskId>,
     fail_fast_triggered: bool,
+    env_vars: &HashMap<String, String>,
 ) {
     if fail_fast_triggered {
         return;
     }
-    for task in tasks.values() {
-        let Some(record) = states.get(&task.id) else {
-            continue;
-        };
-        if record.status != TaskStatus::Pending {
-            continue;
-        }
-        if deps_failed(task, states) {
-            if let Some(record) = states.get_mut(&task.id) {
-                record.status = TaskStatus::Skipped;
-                record.exit_code = None;
+    // Loop until no more state changes occur (handles dependency chains)
+    loop {
+        let mut changed = false;
+        for task in tasks.values() {
+            let Some(record) = states.get(&task.id) else {
+                continue;
+            };
+            if record.status != TaskStatus::Pending {
+                continue;
             }
-            continue;
-        }
-        if deps_satisfied(task, states) {
+            // Check if any dependency truly failed (not condition-skipped)
+            if deps_failed(task, states) {
+                if let Some(record) = states.get_mut(&task.id) {
+                    record.status = TaskStatus::Skipped;
+                    record.exit_code = None;
+                    record.skip_reason = Some(SkipReason::DependencyFailed);
+                    changed = true;
+                }
+                continue;
+            }
+            // Check if all dependencies are satisfied (succeeded or condition-skipped)
+            if !deps_satisfied(task, states) {
+                continue;
+            }
+            // Check condition if present
+            if let Some(condition) = &task.condition {
+                let (satisfied, desc) = evaluate_condition(condition, states, env_vars);
+                if !satisfied {
+                    if let Some(record) = states.get_mut(&task.id) {
+                        record.status = TaskStatus::Skipped;
+                        record.exit_code = None;
+                        record.skip_reason = Some(SkipReason::ConditionNotMet { condition: desc });
+                        changed = true;
+                    }
+                    continue;
+                }
+            }
+            // All checks passed - mark as ready
             if let Some(record) = states.get_mut(&task.id) {
                 record.status = TaskStatus::Ready;
                 record.exit_code = None;
+                changed = true;
             }
             ready_queue.push_back(task.id.clone());
+        }
+        if !changed {
+            break;
         }
     }
 }
 
+/// Evaluates a task condition.
+///
+/// Returns a tuple of (satisfied, description) where:
+/// - satisfied: whether the condition is met
+/// - description: human-readable description of the condition evaluation
+fn evaluate_condition(
+    condition: &TaskCondition,
+    states: &HashMap<TaskId, TaskRecord>,
+    env_vars: &HashMap<String, String>,
+) -> (bool, String) {
+    use crate::plan::{ConditionStatus, EnvCondition, TaskResultCondition};
+
+    match condition {
+        TaskCondition::Env(EnvCondition {
+            env,
+            equals,
+            not_equals,
+            exists,
+        }) => {
+            let value = env_vars.get(env);
+            // Priority order if multiple fields are set: equals > not_equals > exists
+            // If none are set, defaults to checking if env var exists
+            let result = match (equals, not_equals, exists) {
+                (Some(expected), _, _) => value.map(|v| v == expected).unwrap_or(false),
+                (_, Some(not_expected), _) => value.map(|v| v != not_expected).unwrap_or(true),
+                (_, _, Some(should_exist)) => value.is_some() == *should_exist,
+                _ => value.is_some(),
+            };
+            let desc = format!("env {} = {:?}", env, value);
+            (result, desc)
+        }
+        TaskCondition::TaskResult(TaskResultCondition { task, status }) => {
+            let actual_status = states.get(task).map(|r| r.status);
+            let expected = match status {
+                ConditionStatus::Succeeded => TaskStatus::Succeeded,
+                ConditionStatus::Failed => TaskStatus::Failed,
+            };
+            let result = actual_status == Some(expected);
+            let desc = format!("task {} status = {:?}, expected {:?}", task, actual_status, expected);
+            (result, desc)
+        }
+    }
+}
+
+/// Checks if all dependencies are satisfied.
+/// A dependency is considered satisfied if it:
+/// - Succeeded, OR
+/// - Was skipped due to condition not met (condition-skip is treated as success), OR
+/// - Failed but the task's condition expects that failure
 fn deps_satisfied(task: &TaskSpec, states: &HashMap<TaskId, TaskRecord>) -> bool {
+    // Get the task ID that is referenced in a TaskResultCondition with Failed status
+    let condition_expects_failure: Option<&str> = task.condition.as_ref().and_then(|cond| {
+        if let TaskCondition::TaskResult(TaskResultCondition { task: task_id, status }) = cond {
+            if *status == crate::plan::ConditionStatus::Failed {
+                return Some(task_id.as_str());
+            }
+        }
+        None
+    });
+
     task.deps.iter().all(|dep| {
-        states
-            .get(dep)
-            .is_some_and(|record| record.status == TaskStatus::Succeeded)
+        states.get(dep).is_some_and(|record| {
+            record.status == TaskStatus::Succeeded
+                || (record.status == TaskStatus::Skipped
+                    && matches!(record.skip_reason, Some(SkipReason::ConditionNotMet { .. })))
+                || (record.status == TaskStatus::Failed
+                    && condition_expects_failure == Some(dep.as_str()))
+        })
     })
 }
 
+/// Checks if any dependency truly failed (not condition-skipped or expected by condition).
+/// Returns true if a dependency:
+/// - Failed (unless the task has a condition expecting that failure), OR
+/// - Was canceled, OR
+/// - Was skipped due to dependency failure or fail-fast (but NOT condition-skip)
 fn deps_failed(task: &TaskSpec, states: &HashMap<TaskId, TaskRecord>) -> bool {
+    // Get the task ID that is referenced in a TaskResultCondition with Failed status
+    let condition_expects_failure: Option<&str> = task.condition.as_ref().and_then(|cond| {
+        if let TaskCondition::TaskResult(TaskResultCondition { task: task_id, status }) = cond {
+            if *status == crate::plan::ConditionStatus::Failed {
+                return Some(task_id.as_str());
+            }
+        }
+        None
+    });
+
     task.deps.iter().any(|dep| {
-        states.get(dep).is_none_or(|record| {
-            matches!(
-                record.status,
-                TaskStatus::Failed | TaskStatus::Canceled | TaskStatus::Skipped
-            )
+        states.get(dep).is_some_and(|record| {
+            match record.status {
+                TaskStatus::Failed => {
+                    // If this task's condition expects this dep to fail, don't treat it as dep failure
+                    condition_expects_failure != Some(dep.as_str())
+                }
+                TaskStatus::Canceled => true,
+                TaskStatus::Skipped => {
+                    // Condition-skip is treated as success, other skips are failure
+                    !matches!(record.skip_reason, Some(SkipReason::ConditionNotMet { .. }))
+                }
+                _ => false,
+            }
         })
     })
 }
@@ -417,6 +539,7 @@ fn apply_fail_fast(states: &mut HashMap<TaskId, TaskRecord>, ready_queue: &mut V
         if matches!(record.status, TaskStatus::Pending | TaskStatus::Ready) {
             record.status = TaskStatus::Skipped;
             record.exit_code = None;
+            record.skip_reason = Some(SkipReason::FailFast);
         }
     }
 }
