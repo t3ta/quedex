@@ -313,6 +313,14 @@ impl Plan {
                         task.id
                     );
                 }
+                // Condition-referenced task must be declared as a dependency
+                if !task.deps.contains(&cond.task) {
+                    bail!(
+                        "task {} condition references task {} but does not declare it as a dependency",
+                        task.id,
+                        cond.task
+                    );
+                }
             }
         }
 

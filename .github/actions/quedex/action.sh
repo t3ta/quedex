@@ -56,10 +56,11 @@ run_quedex() {
   log_info "Store: ${STORE_DIR}"
 
   local exit_code=0
+  # shellcheck disable=SC2086
   quedex run "${plan}" \
     --store "${STORE_DIR}" \
     --run-id "${RUN_ID}" \
-    ${fail_fast_flag} || exit_code=$?
+    ${fail_fast_flag:+"${fail_fast_flag}"} || exit_code=$?
 
   return ${exit_code}
 }
@@ -86,10 +87,17 @@ parse_results() {
   completed_at=$(jq -r '.completed_at // empty' "${state_file}")
 
   if [[ -n "${started_at}" && -n "${completed_at}" ]]; then
-    # Convert to epoch and calculate difference
+    # Convert to epoch and calculate difference (cross-platform)
     local start_epoch end_epoch
-    start_epoch=$(date -d "${started_at}" +%s 2>/dev/null || echo "0")
-    end_epoch=$(date -d "${completed_at}" +%s 2>/dev/null || echo "0")
+    if date --version >/dev/null 2>&1; then
+      # GNU date
+      start_epoch=$(date -d "${started_at}" +%s 2>/dev/null || echo "0")
+      end_epoch=$(date -d "${completed_at}" +%s 2>/dev/null || echo "0")
+    else
+      # BSD date (macOS)
+      start_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${started_at%%.*}" +%s 2>/dev/null || echo "0")
+      end_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${completed_at%%.*}" +%s 2>/dev/null || echo "0")
+    fi
     duration=$((end_epoch - start_epoch))
   else
     duration=0
@@ -111,18 +119,18 @@ generate_summary() {
 
   local status plan_name total_tasks completed failed skipped
   status=$(jq -r '.status' "${state_file}")
-  plan_name=$(jq -r '.plan_name // "Unknown"' "${state_file}")
+  plan_name=$(jq -r '.run_name // "Unknown"' "${state_file}")
 
   # Count tasks by status
   total_tasks=$(jq '.tasks | length' "${state_file}")
-  completed=$(jq '[.tasks[] | select(.status == "Completed")] | length' "${state_file}")
+  completed=$(jq '[.tasks[] | select(.status == "Succeeded")] | length' "${state_file}")
   failed=$(jq '[.tasks[] | select(.status == "Failed")] | length' "${state_file}")
   skipped=$(jq '[.tasks[] | select(.status == "Skipped")] | length' "${state_file}")
 
   # Status emoji
   local status_emoji
   case "${status}" in
-    "Completed") status_emoji="✅" ;;
+    "Succeeded") status_emoji="✅" ;;
     "Failed") status_emoji="❌" ;;
     "Canceled") status_emoji="⚠️" ;;
     *) status_emoji="❓" ;;

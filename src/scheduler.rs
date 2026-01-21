@@ -425,11 +425,13 @@ fn evaluate_condition(
             exists,
         }) => {
             let value = env_vars.get(env);
+            // Priority order if multiple fields are set: equals > not_equals > exists
+            // If none are set, defaults to checking if env var exists
             let result = match (equals, not_equals, exists) {
                 (Some(expected), _, _) => value.map(|v| v == expected).unwrap_or(false),
                 (_, Some(not_expected), _) => value.map(|v| v != not_expected).unwrap_or(true),
                 (_, _, Some(should_exist)) => value.is_some() == *should_exist,
-                _ => value.is_some(), // default: check if env var exists
+                _ => value.is_some(),
             };
             let desc = format!("env {} = {:?}", env, value);
             (result, desc)

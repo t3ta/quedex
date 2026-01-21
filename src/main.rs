@@ -31,7 +31,7 @@ use quedex::scheduler::{
 };
 use quedex::store::fs::FsStore;
 use quedex::store::recovery::recover_running_tasks;
-use quedex::store::{Event, LogStream, RunStatus, State, Store, TaskState, TaskStatus};
+use quedex::store::{Event, LogStream, RunStatus, SkipReason, State, Store, TaskState, TaskStatus};
 use quedex::tui;
 use quedex::worktree::{
     WorktreeConfig,
@@ -631,12 +631,15 @@ fn handle_stats(
     }
     let longest_task = task_durations
         .iter()
-        .map(|(id, durs)| {
+        .filter_map(|(id, durs)| {
+            if durs.is_empty() {
+                return None;
+            }
             let avg = durs.iter().sum::<i64>() / durs.len() as i64;
-            TaskDurationInfo {
+            Some(TaskDurationInfo {
                 task_id: id.clone(),
                 avg_duration_seconds: avg,
-            }
+            })
         })
         .max_by_key(|info| info.avg_duration_seconds);
 
@@ -2080,19 +2083,24 @@ fn load_plan_snapshot(store_root: &Path, run_id: &str) -> Result<Plan> {
 
 fn finalize_run_status(state: &State) -> (RunStatus, i32) {
     let mut has_failed = false;
-    let mut has_skipped = false;
+    let mut has_skipped_not_condition = false;
     let mut has_canceled = false;
 
     for task in state.tasks.values() {
         match task.status {
             TaskStatus::Failed => has_failed = true,
-            TaskStatus::Skipped => has_skipped = true,
+            TaskStatus::Skipped => {
+                // Condition-based skips are intentional and not failures
+                if !matches!(task.skip_reason, Some(SkipReason::ConditionNotMet { .. })) {
+                    has_skipped_not_condition = true;
+                }
+            }
             TaskStatus::Canceled => has_canceled = true,
             _ => {}
         }
     }
 
-    if has_failed || has_skipped {
+    if has_failed || has_skipped_not_condition {
         (RunStatus::Failed, 1)
     } else if has_canceled {
         (RunStatus::Canceled, 2)
