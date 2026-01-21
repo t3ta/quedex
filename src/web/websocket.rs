@@ -85,16 +85,14 @@ async fn get_current_state(state: &AppState) -> Result<String, ()> {
                 }
             }
         }
-    } else {
-        if let Ok(entries) = std::fs::read_dir(&runs_dir) {
-            for entry in entries.flatten() {
-                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    let state_path = entry.path().join("state.json");
-                    if state_path.exists() {
-                        if let Ok(content) = std::fs::read_to_string(&state_path) {
-                            if let Ok(run_state) = serde_json::from_str::<serde_json::Value>(&content) {
-                                runs.push(run_state);
-                            }
+    } else if let Ok(entries) = std::fs::read_dir(&runs_dir) {
+        for entry in entries.flatten() {
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                let state_path = entry.path().join("state.json");
+                if state_path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&state_path) {
+                        if let Ok(run_state) = serde_json::from_str::<serde_json::Value>(&content) {
+                            runs.push(run_state);
                         }
                     }
                 }

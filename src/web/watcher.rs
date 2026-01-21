@@ -1,6 +1,6 @@
 //! File watcher for monitoring state changes.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -72,7 +72,7 @@ pub fn start_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
 }
 
 /// Extract run_id from a state.json path.
-fn extract_run_id(path: &PathBuf, store_root: &PathBuf) -> Option<String> {
+fn extract_run_id(path: &Path, store_root: &Path) -> Option<String> {
     // Path format: {store_root}/runs/{run_id}/state.json
     let runs_dir = store_root.join("runs");
     let relative = path.strip_prefix(&runs_dir).ok()?;

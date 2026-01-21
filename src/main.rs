@@ -1509,8 +1509,7 @@ fn handle_cancel(
             println!("No cancellable tasks found in group '{group_name}'");
         } else {
             println!(
-                "Cancelled {} task(s) in group '{}' ({} running, {} pending)",
-                total, group_name, running_cancelled, pending_cancelled
+                "Cancelled {total} task(s) in group '{group_name}' ({running_cancelled} running, {pending_cancelled} pending)"
             );
         }
         return Ok(0);

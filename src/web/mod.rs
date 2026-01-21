@@ -62,7 +62,7 @@ pub async fn serve(config: ServerConfig) -> anyhow::Result<()> {
     let app = build_router(state);
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
-    println!("Starting web dashboard at http://{}", addr);
+    println!("Starting web dashboard at http://{addr}");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
