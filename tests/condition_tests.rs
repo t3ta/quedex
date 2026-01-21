@@ -430,6 +430,7 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
         id: "main".to_string(),
         title: None,
         mode: TaskMode::Implement,
+        group: None,
         deps: vec![],
         locks: vec![],
         timeout_sec: None,
@@ -457,6 +458,7 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
         version: 1,
         run: RunConfig::default(),
         variables: HashMap::new(),
+        groups: HashMap::new(),
         tasks: vec![task],
     };
 
@@ -476,6 +478,7 @@ fn plan_rejects_condition_referencing_self() {
         id: "main".to_string(),
         title: None,
         mode: TaskMode::Implement,
+        group: None,
         deps: vec![],
         locks: vec![],
         timeout_sec: None,
@@ -503,6 +506,7 @@ fn plan_rejects_condition_referencing_self() {
         version: 1,
         run: RunConfig::default(),
         variables: HashMap::new(),
+        groups: HashMap::new(),
         tasks: vec![task],
     };
 

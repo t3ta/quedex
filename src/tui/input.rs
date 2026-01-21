@@ -11,6 +11,7 @@ pub enum Action {
     CancelTask,
     CancelRun,
     ToggleGraph,
+    ToggleGroupCollapse,
 }
 
 pub fn handle_key(event: KeyEvent) -> Option<Action> {
@@ -26,6 +27,7 @@ pub fn handle_key(event: KeyEvent) -> Option<Action> {
         }
         KeyCode::Char('C') => Some(Action::CancelRun),
         KeyCode::Char('g') => Some(Action::ToggleGraph),
+        KeyCode::Char(' ') => Some(Action::ToggleGroupCollapse),
         _ => None,
     }
 }

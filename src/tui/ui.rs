@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::store::{LogStream, TaskStatus};
 
-use super::app::App;
+use super::app::{App, DisplayRow};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.graph_mode {
@@ -32,27 +32,55 @@ fn draw_main(frame: &mut Frame, app: &mut App) {
 
 fn draw_tasks(frame: &mut Frame, app: &mut App, area: Rect) {
     let now = chrono::Utc::now();
-    let rows = app.tasks.iter().map(|task| {
-        let status = app.task_status(&task.id);
-        let status_text = format!("{status:?}");
-        let duration = app.task_duration(&task.id, now);
-        let deps = app.deps_remaining(task).to_string();
-        let title = task.title.clone();
-        let row = Row::new(vec![
-            Cell::from(task.id.clone()),
-            Cell::from(title),
-            Cell::from(status_text),
-            Cell::from(duration),
-            Cell::from(deps),
-        ]);
-        row.style(status_style(status))
-    });
+    let rows: Vec<Row> = app
+        .display_rows
+        .iter()
+        .map(|display_row| match display_row {
+            DisplayRow::GroupHeader { name, task_count } => {
+                let icon = if app.collapsed_groups.contains(name) {
+                    "▶"
+                } else {
+                    "▼"
+                };
+                let header_text = format!("{icon} {name} ({task_count} tasks)");
+                Row::new(vec![
+                    Cell::from(header_text),
+                    Cell::from(""),
+                    Cell::from(""),
+                    Cell::from(""),
+                    Cell::from(""),
+                ])
+                .style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))
+            }
+            DisplayRow::Task(task) => {
+                let status = app.task_status(&task.id);
+                let status_text = format!("{status:?}");
+                let duration = app.task_duration(&task.id, now);
+                let deps = app.deps_remaining(task).to_string();
+                let title = task.title.clone();
+                // Indent task ID if it belongs to a group
+                let id_display = if task.group.is_some() {
+                    format!("  {}", task.id)
+                } else {
+                    task.id.clone()
+                };
+                Row::new(vec![
+                    Cell::from(id_display),
+                    Cell::from(title),
+                    Cell::from(status_text),
+                    Cell::from(duration),
+                    Cell::from(deps),
+                ])
+                .style(status_style(status))
+            }
+        })
+        .collect();
 
     let header = Row::new(vec!["id", "title", "status", "dur", "deps"])
         .style(Style::default().add_modifier(Modifier::BOLD));
 
     let widths = [
-        Constraint::Length(10),
+        Constraint::Length(14),
         Constraint::Min(16),
         Constraint::Length(10),
         Constraint::Length(8),
@@ -61,7 +89,7 @@ fn draw_tasks(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let focus = if app.log_focus { " (log focus)" } else { "" };
     let block = Block::default()
-        .title(format!("Tasks{focus}"))
+        .title(format!("Tasks{focus} [Space: toggle group]"))
         .borders(Borders::ALL);
 
     let highlight_style = if app.log_focus {
@@ -205,25 +233,69 @@ fn build_dependency_graph(app: &App) -> Vec<Line<'_>> {
         }
     }
 
-    // 2. ルートタスク（依存元がないタスク）を特定
-    let roots: Vec<_> = app
-        .tasks
-        .iter()
-        .filter(|task| task.deps.is_empty())
-        .collect();
-
-    if roots.is_empty() {
-        return vec![Line::from("no tasks found")];
+    // 2. グループごとにタスクを分類
+    let mut grouped: HashMap<Option<&str>, Vec<&super::app::TaskInfo>> = HashMap::new();
+    for task in &app.tasks {
+        grouped
+            .entry(task.group.as_deref())
+            .or_default()
+            .push(task);
     }
 
-    // 3. 再帰的にツリーを走査
+    // 3. グループ名をソート（Some が先、None が後）
+    let mut group_names: Vec<Option<&str>> = grouped.keys().cloned().collect();
+    group_names.sort_by(|a, b| match (a, b) {
+        (Some(a_name), Some(b_name)) => a_name.cmp(b_name),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+
     let mut lines = Vec::new();
     let now = chrono::Utc::now();
-    for (i, root) in roots.iter().enumerate() {
-        if i > 0 {
-            lines.push(Line::from("")); // ルート間に空行を挿入
+
+    for group_name in group_names {
+        let group_tasks = grouped.get(&group_name).unwrap();
+
+        // グループヘッダを表示
+        if let Some(name) = group_name {
+            if !lines.is_empty() {
+                lines.push(Line::from(""));
+            }
+            let header = format!("─────── {name} ───────");
+            lines.push(Line::from(header).style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        } else if !lines.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from("─────── (ungrouped) ───────").style(Style::default().fg(Color::DarkGray)));
         }
-        render_task_tree(root, &children, app, "", true, &mut lines, now);
+
+        // グループ内のルートタスク（依存元がないタスク）を特定
+        let roots: Vec<_> = group_tasks
+            .iter()
+            .filter(|task| task.deps.is_empty())
+            .collect();
+
+        for (i, root) in roots.iter().enumerate() {
+            if i > 0 {
+                lines.push(Line::from("")); // ルート間に空行を挿入
+            }
+            render_task_tree(root, &children, app, "", true, &mut lines, now);
+        }
+
+        // ルートがないがグループ内にタスクがある場合（循環依存またはグループ外依存）
+        if roots.is_empty() && !group_tasks.is_empty() {
+            for task in group_tasks {
+                let status = app.task_status(&task.id);
+                let duration = app.task_duration(&task.id, now);
+                let group_label = task.group.as_deref().map(|g| format!(" [{g}]")).unwrap_or_default();
+                let line_text = format!("* {}{} [{:?}] {}", task.id, group_label, status, duration);
+                lines.push(Line::from(line_text).style(status_style(status)));
+            }
+        }
+    }
+
+    if lines.is_empty() {
+        return vec![Line::from("no tasks found")];
     }
 
     lines

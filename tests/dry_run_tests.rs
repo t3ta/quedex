@@ -18,6 +18,7 @@ fn create_test_plan(tasks: Vec<Task>) -> Plan {
             notifications: None,
         },
         variables: HashMap::new(),
+        groups: HashMap::new(),
         tasks,
     }
 }
@@ -27,6 +28,7 @@ fn create_task(id: &str, deps: Vec<&str>, locks: Vec<&str>) -> Task {
         id: id.to_string(),
         title: None,
         mode: TaskMode::Implement,
+        group: None,
         deps: deps.into_iter().map(|s| s.to_string()).collect(),
         locks: locks.into_iter().map(|s| s.to_string()).collect(),
         timeout_sec: None,

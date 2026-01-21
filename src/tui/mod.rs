@@ -145,6 +145,7 @@ fn apply_action(app: &mut App, action: Action) -> Result<()> {
             }
         }
         Action::ToggleGraph => app.graph_mode = !app.graph_mode,
+        Action::ToggleGroupCollapse => app.toggle_selected_group_collapse(),
     }
 
     if refresh_logs {
