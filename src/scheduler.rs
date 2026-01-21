@@ -433,7 +433,7 @@ fn evaluate_condition(
                 (_, _, Some(should_exist)) => value.is_some() == *should_exist,
                 _ => value.is_some(),
             };
-            let desc = format!("env {} = {:?}", env, value);
+            let desc = format!("env {env} = {value:?}");
             (result, desc)
         }
         TaskCondition::TaskResult(TaskResultCondition { task, status }) => {
@@ -443,7 +443,7 @@ fn evaluate_condition(
                 ConditionStatus::Failed => TaskStatus::Failed,
             };
             let result = actual_status == Some(expected);
-            let desc = format!("task {} status = {:?}, expected {:?}", task, actual_status, expected);
+            let desc = format!("task {task} status = {actual_status:?}, expected {expected:?}");
             (result, desc)
         }
     }

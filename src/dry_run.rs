@@ -207,7 +207,7 @@ pub fn detect_lock_conflicts(plan: &Plan) -> Vec<LockConflict> {
         if !unordered_pairs.is_empty() {
             let notes = if unordered_pairs.len() == 1 {
                 let (a, b) = unordered_pairs[0];
-                format!("{} and {} have no dependency relationship", a, b)
+                format!("{a} and {b} have no dependency relationship")
             } else {
                 format!(
                     "{} task pairs have no dependency relationship",
@@ -245,6 +245,7 @@ mod tests {
                 notifications: None,
             },
             variables: std::collections::HashMap::new(),
+            groups: std::collections::HashMap::new(),
             tasks,
         }
     }
@@ -254,6 +255,7 @@ mod tests {
             id: id.to_string(),
             title: None,
             mode: TaskMode::Implement,
+            group: None,
             deps: deps.into_iter().map(|s| s.to_string()).collect(),
             locks: locks.into_iter().map(|s| s.to_string()).collect(),
             timeout_sec: None,

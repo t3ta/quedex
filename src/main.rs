@@ -94,7 +94,7 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             recovery,
             run_id,
         } => handle_start(&cli.global, &effective, &plan, recovery, run_id).await,
-        Commands::Status { run_id, json } => handle_status(&effective, run_id, json),
+        Commands::Status { run_id, group, json } => handle_status(&effective, run_id, group, json),
         Commands::Tui { run_id } => handle_tui(&effective, run_id),
         Commands::Logs {
             run_id,
@@ -105,9 +105,10 @@ async fn dispatch(cli: Cli) -> Result<i32> {
         Commands::Retry {
             run_id,
             task_id,
+            group,
             reload_plan,
-        } => handle_retry(&cli.global, &effective, &run_id, &task_id, reload_plan).await,
-        Commands::Cancel { run_id, task_id } => handle_cancel(&effective, &run_id, task_id),
+        } => handle_retry(&cli.global, &effective, &run_id, task_id, group, reload_plan).await,
+        Commands::Cancel { run_id, task_id, group } => handle_cancel(&effective, &run_id, task_id, group),
         Commands::Clean {
             run_id,
             all,
@@ -300,6 +301,12 @@ fn handle_dry_run_extended(
     println!("Plan: {}", plan.run.name.as_deref().unwrap_or("(unnamed)"));
     println!("Tasks: {}", plan.tasks.len());
 
+    // Show group count if any groups exist
+    let groups = plan.resolve_groups();
+    if !groups.is_empty() {
+        println!("Groups: {}", groups.len());
+    }
+
     let max_concurrency = plan
         .run
         .max_concurrency
@@ -307,7 +314,7 @@ fn handle_dry_run_extended(
         .unwrap_or(1);
 
     if global.verbose {
-        eprintln!("[verbose] Max concurrency: {}", max_concurrency);
+        eprintln!("[verbose] Max concurrency: {max_concurrency}");
         eprintln!("[verbose] Fail fast: {:?}", plan.run.fail_fast);
     }
 
@@ -321,12 +328,30 @@ fn handle_dry_run_extended(
     // Generate waves for execution order analysis
     let waves = generate_execution_waves(&plan, max_concurrency);
 
+    // Build task_id -> group_name mapping for display
+    let mut task_to_group: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for (group_name, task_ids) in &groups {
+        for task_id in task_ids {
+            task_to_group.insert(task_id.as_str(), group_name.as_str());
+        }
+    }
+
     // Show execution order in waves
     if show_order || show_basic {
         println!();
-        println!("Execution order (max_concurrency={}):", max_concurrency);
+        println!("Execution order (max_concurrency={max_concurrency}):");
         for (wave_idx, wave) in waves.iter().enumerate() {
-            let task_ids: Vec<&str> = wave.iter().map(|s| s.as_str()).collect();
+            // Format task IDs with group prefix if groups exist
+            let task_display: Vec<String> = wave
+                .iter()
+                .map(|task_id| {
+                    if let Some(group) = task_to_group.get(task_id.as_str()) {
+                        format!("[{group}]{task_id}")
+                    } else {
+                        task_id.clone()
+                    }
+                })
+                .collect();
 
             // Collect dependencies for all tasks in this wave
             let all_deps: Vec<String> = wave
@@ -356,7 +381,7 @@ fn handle_dry_run_extended(
                 String::new()
             };
 
-            println!("  Wave {}: [{}]{}", wave_idx + 1, task_ids.join(", "), annotation);
+            println!("  Wave {}: [{}]{}", wave_idx + 1, task_display.join(", "), annotation);
 
             // Show dependencies for each task in verbose mode
             if global.verbose {
@@ -372,7 +397,7 @@ fn handle_dry_run_extended(
                         } else {
                             task.locks.join(", ")
                         };
-                        eprintln!("    [verbose] {} - deps: [{}], locks: [{}]", task_id, deps_str, locks_str);
+                        eprintln!("    [verbose] {task_id} - deps: [{deps_str}], locks: [{locks_str}]");
                     }
                 }
             }
@@ -499,7 +524,7 @@ fn parse_duration(s: &str) -> Result<chrono::Duration> {
     let (num_str, unit) = s.split_at(s.len() - 1);
     let num: i64 = num_str
         .parse()
-        .with_context(|| format!("Invalid duration number: {}", num_str))?;
+        .with_context(|| format!("Invalid duration number: {num_str}"))?;
 
     match unit {
         "s" => Ok(chrono::Duration::seconds(num)),
@@ -508,8 +533,7 @@ fn parse_duration(s: &str) -> Result<chrono::Duration> {
         "d" => Ok(chrono::Duration::days(num)),
         "w" => Ok(chrono::Duration::weeks(num)),
         _ => Err(anyhow!(
-            "Invalid duration format: {}. Use s, m, h, d, or w suffix",
-            s
+            "Invalid duration format: {s}. Use s, m, h, d, or w suffix"
         )),
     }
 }
@@ -517,22 +541,22 @@ fn parse_duration(s: &str) -> Result<chrono::Duration> {
 /// Format duration in human-readable format (e.g., "2m 34s")
 fn format_duration(seconds: i64) -> String {
     if seconds < 60 {
-        format!("{}s", seconds)
+        format!("{seconds}s")
     } else if seconds < 3600 {
         let mins = seconds / 60;
         let secs = seconds % 60;
         if secs > 0 {
-            format!("{}m {}s", mins, secs)
+            format!("{mins}m {secs}s")
         } else {
-            format!("{}m", mins)
+            format!("{mins}m")
         }
     } else {
         let hours = seconds / 3600;
         let mins = (seconds % 3600) / 60;
         if mins > 0 {
-            format!("{}h {}m", hours, mins)
+            format!("{hours}h {mins}m")
         } else {
-            format!("{}h", hours)
+            format!("{hours}h")
         }
     }
 }
@@ -663,16 +687,15 @@ fn handle_stats(
     } else {
         // Text output
         let period_str = if let Some(ref s) = since {
-            format!("last {}", s)
+            format!("last {s}")
         } else {
             "all time".to_string()
         };
-        println!("Execution Statistics ({})", period_str);
+        println!("Execution Statistics ({period_str})");
         println!("{}", "=".repeat(40));
-        println!("Total runs:       {}", total_runs);
+        println!("Total runs:       {total_runs}");
         println!(
-            "Success rate:     {:.1}% ({}/{})",
-            success_rate, successful_runs, total_runs
+            "Success rate:     {success_rate:.1}% ({successful_runs}/{total_runs})"
         );
         if let Some(avg) = avg_duration {
             println!("Avg duration:     {}", format_duration(avg));
@@ -1084,10 +1107,32 @@ async fn handle_start(
     Ok(0)
 }
 
-fn handle_status(effective: &EffectiveOptions, run_id: Option<String>, json: bool) -> Result<i32> {
+fn handle_status(
+    effective: &EffectiveOptions,
+    run_id: Option<String>,
+    group: Option<String>,
+    json: bool,
+) -> Result<i32> {
     let store_root = resolve_store_path(effective.store.as_ref())?;
     if let Some(run_id) = run_id {
-        let state = read_state(&store_root, &run_id)?;
+        let mut state = read_state(&store_root, &run_id)?;
+
+        // Filter by group if specified
+        if let Some(ref group_name) = group {
+            let plan = load_plan_snapshot(&store_root, &run_id)?;
+            let resolved_groups = plan.resolve_groups();
+            let group_task_ids = resolved_groups.get(group_name).ok_or_else(|| {
+                anyhow!(
+                    "group '{}' not found. Available groups: {:?}",
+                    group_name,
+                    resolved_groups.keys().collect::<Vec<_>>()
+                )
+            })?;
+
+            let group_set: std::collections::HashSet<_> = group_task_ids.iter().collect();
+            state.tasks.retain(|task_id, _| group_set.contains(task_id));
+        }
+
         if json {
             let text = serde_json::to_string_pretty(&state)?;
             println!("{text}");
@@ -1095,6 +1140,11 @@ fn handle_status(effective: &EffectiveOptions, run_id: Option<String>, json: boo
             print_state(&state);
         }
         return Ok(0);
+    }
+
+    // run_id未指定時はグループフィルタは無視
+    if group.is_some() {
+        eprintln!("Warning: --group requires run_id, ignoring");
     }
 
     let mut states = list_states(&store_root)?;
@@ -1164,9 +1214,15 @@ async fn handle_retry(
     _global: &GlobalOptions,
     effective: &EffectiveOptions,
     run_id: &str,
-    task_id: &str,
+    task_id: Option<String>,
+    group: Option<String>,
     reload_plan: bool,
 ) -> Result<i32> {
+    // Validate that either task_id or group is provided
+    if task_id.is_none() && group.is_none() {
+        return Err(anyhow!("either task_id or --group must be specified"));
+    }
+
     let store_root = resolve_store_path(effective.store.as_ref())?;
 
     if reload_plan {
@@ -1175,66 +1231,119 @@ async fn handle_retry(
         );
     }
     let plan = load_plan_snapshot(&store_root, run_id)?;
-    let task = plan
-        .tasks
-        .iter()
-        .find(|task| task.id == task_id)
-        .cloned()
-        .ok_or_else(|| anyhow!("task {task_id} not found in run {run_id}"))?;
-
-    if matches!(task.kind.as_deref(), Some("codex")) || task.codex.is_some() {
-        check_codex_available()?;
-    }
-    if matches!(task.kind.as_deref(), Some("claude_code")) || task.claude_code.is_some() {
-        check_claude_code_available()?;
-    }
-    if matches!(task.kind.as_deref(), Some("opencode")) || task.opencode.is_some() {
-        check_opencode_available()?;
-    }
-
     let mut state = read_state(&store_root, run_id)?;
+
     if state.status == RunStatus::Running {
         return Err(anyhow!("run {run_id} is still running"));
     }
-    let Some(task_state) = state.tasks.get(task_id) else {
-        return Err(anyhow!(
-            "task {task_id} not found in state for run {run_id}"
-        ));
+
+    // Resolve target tasks from task_id or group
+    let target_task_ids: Vec<String> = if let Some(ref group_name) = group {
+        let resolved_groups = plan.resolve_groups();
+        let group_task_ids = resolved_groups.get(group_name).ok_or_else(|| {
+            anyhow!(
+                "group '{}' not found. Available groups: {:?}",
+                group_name,
+                resolved_groups.keys().collect::<Vec<_>>()
+            )
+        })?;
+        group_task_ids.clone()
+    } else {
+        vec![task_id.unwrap()]
     };
-    if !matches!(task_state.status, TaskStatus::Failed | TaskStatus::Canceled | TaskStatus::Skipped) {
-        return Err(anyhow!(
-            "task {} must be Failed, Canceled or Skipped to retry (current: {:?})",
-            task_id,
-            task_state.status
-        ));
+
+    // Collect tasks to retry (Failed/Canceled/Skipped with satisfied dependencies)
+    let mut tasks_to_retry: Vec<Task> = Vec::new();
+
+    for tid in &target_task_ids {
+        let task = plan
+            .tasks
+            .iter()
+            .find(|t| &t.id == tid)
+            .ok_or_else(|| anyhow!("task {tid} not found in plan"))?;
+
+        let task_state = state
+            .tasks
+            .get(tid)
+            .ok_or_else(|| anyhow!("task {tid} not found in state for run {run_id}"))?;
+
+        // Check if task is in a retryable state
+        if !matches!(
+            task_state.status,
+            TaskStatus::Failed | TaskStatus::Canceled | TaskStatus::Skipped
+        ) {
+            if group.is_some() {
+                // For group mode, skip non-retryable tasks silently
+                continue;
+            }
+            return Err(anyhow!(
+                "task {} must be Failed, Canceled or Skipped to retry (current: {:?})",
+                tid,
+                task_state.status
+            ));
+        }
+
+        // Check dependencies are satisfied
+        let mut deps_satisfied = true;
+        for dep in &task.deps {
+            let dep_state = state.tasks.get(dep).ok_or_else(|| {
+                anyhow!("task {tid} dependency {dep} not found in state")
+            })?;
+            if dep_state.status != TaskStatus::Succeeded {
+                if group.is_some() {
+                    deps_satisfied = false;
+                    break;
+                }
+                return Err(anyhow!(
+                    "task {} dependency {} not satisfied (current: {:?})",
+                    tid,
+                    dep,
+                    dep_state.status
+                ));
+            }
+        }
+
+        if !deps_satisfied {
+            continue;
+        }
+
+        tasks_to_retry.push(task.clone());
     }
-    for dep in &task.deps {
-        let Some(dep_state) = state.tasks.get(dep) else {
-            return Err(anyhow!(
-                "task {task_id} dependency {dep} not found in state"
-            ));
-        };
-        if dep_state.status != TaskStatus::Succeeded {
-            return Err(anyhow!(
-                "task {} dependency {} not satisfied (current: {:?})",
-                task_id,
-                dep,
-                dep_state.status
-            ));
+
+    if tasks_to_retry.is_empty() {
+        if group.is_some() {
+            println!(
+                "No retryable tasks found in group '{}'",
+                group.as_ref().unwrap()
+            );
+            return Ok(0);
+        }
+        return Err(anyhow!("no tasks to retry"));
+    }
+
+    // Check runner availability for all tasks
+    for task in &tasks_to_retry {
+        if matches!(task.kind.as_deref(), Some("codex")) || task.codex.is_some() {
+            check_codex_available()?;
+        }
+        if matches!(task.kind.as_deref(), Some("claude_code")) || task.claude_code.is_some() {
+            check_claude_code_available()?;
+        }
+        if matches!(task.kind.as_deref(), Some("opencode")) || task.opencode.is_some() {
+            check_opencode_available()?;
         }
     }
 
-    let Some(task_state) = state.tasks.get_mut(task_id) else {
-        return Err(anyhow!(
-            "task {task_id} not found in state for run {run_id}"
-        ));
-    };
-    task_state.status = TaskStatus::Pending;
-    task_state.exit_code = None;
-    task_state.stderr_tail = None;
-    task_state.started_at = None;
-    task_state.completed_at = None;
-    task_state.pid = None;
+    // Reset task states
+    for task in &tasks_to_retry {
+        let task_state = state.tasks.get_mut(&task.id).unwrap();
+        task_state.status = TaskStatus::Pending;
+        task_state.exit_code = None;
+        task_state.stderr_tail = None;
+        task_state.started_at = None;
+        task_state.completed_at = None;
+        task_state.pid = None;
+    }
     state.status = RunStatus::Running;
     state.completed_at = None;
 
@@ -1270,14 +1379,20 @@ async fn handle_retry(
     let cancel = CancelHandle::new();
     spawn_cancel_listener(cancel.clone());
 
+    // Build task map and specs for all tasks to retry
     let mut tasks_map = HashMap::new();
-    tasks_map.insert(task.id.clone(), task.clone());
-    let task_specs = vec![TaskSpec {
-        id: task.id.clone(),
-        deps: Vec::new(),
-        locks: task.locks.clone(),
-        condition: task.condition.clone(),
-    }];
+    let mut task_specs = Vec::new();
+    for task in &tasks_to_retry {
+        tasks_map.insert(task.id.clone(), task.clone());
+        task_specs.push(TaskSpec {
+            id: task.id.clone(),
+            deps: Vec::new(), // Dependencies already satisfied
+            locks: task.locks.clone(),
+            condition: task.condition.clone(),
+        });
+    }
+
+    println!("Retrying {} task(s)...", tasks_to_retry.len());
 
     let max_concurrency = plan
         .run
@@ -1287,7 +1402,7 @@ async fn handle_retry(
     let fail_fast = plan.run.fail_fast.unwrap_or(effective.fail_fast);
     let default_timeout_sec = plan.run.default_timeout_sec.or(effective.default_timeout_sec);
 
-    // Notifier for retry (no notifications for single task retry)
+    // Notifier for retry (no notifications for retry operations)
     let runner = PlanTaskRunner::new(
         Arc::new(tasks_map),
         ctx,
@@ -1319,8 +1434,60 @@ async fn handle_retry(
     Ok(exit_code)
 }
 
-fn handle_cancel(effective: &EffectiveOptions, run_id: &str, task_id: Option<String>) -> Result<i32> {
+fn handle_cancel(
+    effective: &EffectiveOptions,
+    run_id: &str,
+    task_id: Option<String>,
+    group: Option<String>,
+) -> Result<i32> {
+    // Validate that task_id and group are not both specified
+    if task_id.is_some() && group.is_some() {
+        return Err(anyhow!("cannot specify both task_id and --group"));
+    }
+
     let store_root = resolve_store_path(effective.store.as_ref())?;
+
+    // Handle --group option
+    if let Some(ref group_name) = group {
+        let plan = load_plan_snapshot(&store_root, run_id)?;
+        let resolved_groups = plan.resolve_groups();
+        let group_task_ids = resolved_groups.get(group_name).ok_or_else(|| {
+            anyhow!(
+                "group '{}' not found. Available groups: {:?}",
+                group_name,
+                resolved_groups.keys().collect::<Vec<_>>()
+            )
+        })?;
+
+        let state = read_state(&store_root, run_id)?;
+        let group_task_set: std::collections::HashSet<_> = group_task_ids.iter().collect();
+
+        let mut cancelled_count = 0;
+        for (tid, task_state) in &state.tasks {
+            if !group_task_set.contains(tid) {
+                continue;
+            }
+            // Only cancel Running tasks (which have a pid)
+            if task_state.status == TaskStatus::Running {
+                if let Some(pid) = task_state.pid {
+                    if let Err(err) = terminate_pid(pid) {
+                        eprintln!("Warning: failed to terminate pid {pid} for task {tid}: {err}");
+                    } else {
+                        cancelled_count += 1;
+                    }
+                }
+            }
+        }
+
+        if cancelled_count == 0 {
+            println!("No cancellable tasks found in group '{group_name}'");
+        } else {
+            println!("Cancelled {cancelled_count} task(s) in group '{group_name}'");
+        }
+        return Ok(0);
+    }
+
+    // Handle single task cancel
     if let Some(task_id) = task_id {
         let state = read_state(&store_root, run_id)?;
         if let Some(task_state) = state.tasks.get(&task_id) {
@@ -1333,6 +1500,7 @@ fn handle_cancel(effective: &EffectiveOptions, run_id: &str, task_id: Option<Str
         return Err(anyhow!("task {task_id} not found in run {run_id}"));
     }
 
+    // Cancel entire run
     let pid_path = run_pid_path(&store_root, run_id);
     if pid_path.exists() {
         let pid = fs::read_to_string(&pid_path)
@@ -2111,10 +2279,46 @@ fn finalize_run_status(state: &State) -> (RunStatus, i32) {
 
 fn print_mermaid_graph(plan: &Plan) {
     println!("graph TD");
-    for task in &plan.tasks {
-        if task.deps.is_empty() {
-            println!("  {};", task.id);
+
+    // Resolve groups: merge Plan.groups and Task.group
+    let groups = plan.resolve_groups();
+
+    // Build set of grouped task IDs
+    let grouped_task_ids: std::collections::HashSet<&str> = groups
+        .values()
+        .flat_map(|ids| ids.iter().map(String::as_str))
+        .collect();
+
+    // Output subgraphs for each group
+    let mut group_names: Vec<_> = groups.keys().collect();
+    group_names.sort(); // Deterministic output
+    for group_name in &group_names {
+        if let Some(task_ids) = groups.get(*group_name) {
+            // Sanitize group name for Mermaid ID (replace non-alphanumeric with underscore)
+            let sanitized_id: String = group_name
+                .chars()
+                .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+                .collect();
+            println!("  subgraph {sanitized_id} [{group_name}]");
+            let mut sorted_ids: Vec<_> = task_ids.iter().collect();
+            sorted_ids.sort();
+            for task_id in sorted_ids {
+                println!("    {task_id}");
+            }
+            println!("  end");
         }
+    }
+
+    // Output ungrouped tasks (tasks with no group)
+    for task in &plan.tasks {
+        if !grouped_task_ids.contains(task.id.as_str())
+            && task.deps.is_empty() {
+                println!("  {};", task.id);
+            }
+    }
+
+    // Output all dependency edges
+    for task in &plan.tasks {
         for dep in &task.deps {
             println!("  {} --> {};", dep, task.id);
         }
@@ -2122,12 +2326,77 @@ fn print_mermaid_graph(plan: &Plan) {
 }
 
 fn print_ascii_graph(plan: &Plan) {
-    for task in &plan.tasks {
-        if task.deps.is_empty() {
-            println!("{}", task.id);
+    // Resolve groups: merge Plan.groups and Task.group
+    let groups = plan.resolve_groups();
+
+    // Build task_id -> group_name mapping
+    let mut task_to_group: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for (group_name, task_ids) in &groups {
+        for task_id in task_ids {
+            task_to_group.insert(task_id.as_str(), group_name.as_str());
         }
-        for dep in &task.deps {
-            println!("{} -> {}", dep, task.id);
+    }
+
+    // Collect ungrouped tasks
+    let ungrouped: Vec<&Task> = plan
+        .tasks
+        .iter()
+        .filter(|t| !task_to_group.contains_key(t.id.as_str()))
+        .collect();
+
+    // Sort group names for deterministic output
+    let mut group_names: Vec<_> = groups.keys().collect();
+    group_names.sort();
+
+    let mut first_section = true;
+
+    // Output each group
+    for group_name in &group_names {
+        if let Some(task_ids) = groups.get(*group_name) {
+            if !first_section {
+                println!();
+            }
+            first_section = false;
+
+            println!("=== {group_name} ===");
+            let mut sorted_ids: Vec<_> = task_ids.iter().collect();
+            sorted_ids.sort();
+            for task_id in sorted_ids {
+                if let Some(task) = plan.tasks.iter().find(|t| t.id == *task_id) {
+                    if task.deps.is_empty() {
+                        println!("  {}", task.id);
+                    }
+                    for dep in &task.deps {
+                        println!("  {} -> {}", dep, task.id);
+                    }
+                }
+            }
+        }
+    }
+
+    // Output ungrouped tasks
+    if !ungrouped.is_empty() {
+        if !first_section {
+            println!();
+        }
+        println!("=== (ungrouped) ===");
+        for task in &ungrouped {
+            if task.deps.is_empty() {
+                println!("  {}", task.id);
+            }
+            for dep in &task.deps {
+                println!("  {} -> {}", dep, task.id);
+            }
+        }
+    } else if groups.is_empty() {
+        // No groups at all - output simple format
+        for task in &plan.tasks {
+            if task.deps.is_empty() {
+                println!("{}", task.id);
+            }
+            for dep in &task.deps {
+                println!("{} -> {}", dep, task.id);
+            }
         }
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -18,6 +18,7 @@ pub struct TaskInfo {
     pub title: String,
     pub deps: Vec<String>,
     pub locks: Vec<String>,
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -26,6 +27,13 @@ pub struct Stats {
     pub total: usize,
     pub running: usize,
     pub failed: usize,
+}
+
+/// Represents a row in the task list (either a group header or a task).
+#[derive(Debug, Clone)]
+pub enum DisplayRow {
+    GroupHeader { name: String, task_count: usize },
+    Task(TaskInfo),
 }
 
 pub struct App {
@@ -43,6 +51,10 @@ pub struct App {
     pub graph_mode: bool,
     pub status_message: Option<String>,
     pub should_quit: bool,
+    /// Collapsed groups (group names that are currently collapsed).
+    pub collapsed_groups: HashSet<String>,
+    /// Display rows (computed from tasks and collapse state).
+    pub display_rows: Vec<DisplayRow>,
     store: FsStore,
     log_path: PathBuf,
 }
@@ -51,17 +63,36 @@ impl App {
     pub fn new(store_root: PathBuf, run_id: String, plan: Plan) -> Result<Self> {
         let store = FsStore::new(&store_root, &run_id)?;
         let state = store.read_state()?;
+
+        // Build a map from task ID to group name using Plan.groups
+        let mut task_to_group: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::new();
+        for (group_name, task_ids) in &plan.groups {
+            for task_id in task_ids {
+                task_to_group.insert(task_id.as_str(), group_name.as_str());
+            }
+        }
+
         let tasks = plan
             .tasks
             .iter()
-            .map(|task| TaskInfo {
-                id: task.id.clone(),
-                title: task
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| task.id.clone()),
-                deps: task.deps.clone(),
-                locks: task.locks.clone(),
+            .map(|task| {
+                // Task.group takes precedence over Plan.groups
+                let group = task.group.clone().or_else(|| {
+                    task_to_group
+                        .get(task.id.as_str())
+                        .map(|s| s.to_string())
+                });
+                TaskInfo {
+                    id: task.id.clone(),
+                    title: task
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| task.id.clone()),
+                    deps: task.deps.clone(),
+                    locks: task.locks.clone(),
+                    group,
+                }
             })
             .collect::<Vec<_>>();
 
@@ -84,9 +115,12 @@ impl App {
             graph_mode: false,
             status_message: None,
             should_quit: false,
+            collapsed_groups: HashSet::new(),
+            display_rows: Vec::new(),
             store,
             log_path: PathBuf::new(),
         };
+        app.rebuild_display_rows();
         app.sync_log_path();
         app.refresh_logs()?;
         Ok(app)
@@ -131,21 +165,31 @@ impl App {
     }
 
     pub fn selected_task(&self) -> Option<&TaskInfo> {
-        self.list_state
-            .selected()
-            .and_then(|idx| self.tasks.get(idx))
+        self.list_state.selected().and_then(|idx| {
+            match self.display_rows.get(idx) {
+                Some(DisplayRow::Task(task)) => Some(task),
+                _ => None,
+            }
+        })
     }
 
     pub fn selected_task_id(&self) -> Option<&str> {
         self.selected_task().map(|task| task.id.as_str())
     }
 
+    /// Returns the currently selected display row.
+    pub fn selected_display_row(&self) -> Option<&DisplayRow> {
+        self.list_state
+            .selected()
+            .and_then(|idx| self.display_rows.get(idx))
+    }
+
     pub fn select_next(&mut self) -> bool {
-        if self.tasks.is_empty() {
+        if self.display_rows.is_empty() {
             return false;
         }
         let next = match self.list_state.selected() {
-            Some(idx) => (idx + 1) % self.tasks.len(),
+            Some(idx) => (idx + 1) % self.display_rows.len(),
             None => 0,
         };
         self.list_state.select(Some(next));
@@ -153,15 +197,97 @@ impl App {
     }
 
     pub fn select_prev(&mut self) -> bool {
-        if self.tasks.is_empty() {
+        if self.display_rows.is_empty() {
             return false;
         }
         let next = match self.list_state.selected() {
-            Some(0) | None => self.tasks.len() - 1,
+            Some(0) | None => self.display_rows.len() - 1,
             Some(idx) => idx - 1,
         };
         self.list_state.select(Some(next));
         true
+    }
+
+    /// Toggle collapse state for a group.
+    pub fn toggle_group_collapse(&mut self, group: &str) {
+        if self.collapsed_groups.contains(group) {
+            self.collapsed_groups.remove(group);
+        } else {
+            self.collapsed_groups.insert(group.to_string());
+        }
+        self.rebuild_display_rows();
+    }
+
+    /// Toggle collapse for the currently selected row's group.
+    /// If a group header is selected, toggle that group.
+    /// If a task is selected and belongs to a group, toggle that group.
+    pub fn toggle_selected_group_collapse(&mut self) {
+        let group_name = match self.selected_display_row() {
+            Some(DisplayRow::GroupHeader { name, .. }) => Some(name.clone()),
+            Some(DisplayRow::Task(task)) => task.group.clone(),
+            None => None,
+        };
+        if let Some(name) = group_name {
+            self.toggle_group_collapse(&name);
+        }
+    }
+
+    /// Rebuild display_rows based on current tasks and collapsed state.
+    pub fn rebuild_display_rows(&mut self) {
+        use std::collections::HashMap;
+
+        let mut rows = Vec::new();
+
+        // Group tasks by their group name
+        let mut grouped: HashMap<Option<String>, Vec<&TaskInfo>> = HashMap::new();
+        for task in &self.tasks {
+            grouped.entry(task.group.clone()).or_default().push(task);
+        }
+
+        // Collect and sort group names (Some groups first, then None)
+        let mut group_names: Vec<Option<String>> = grouped.keys().cloned().collect();
+        group_names.sort_by(|a, b| match (a, b) {
+            (Some(a_name), Some(b_name)) => a_name.cmp(b_name),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
+
+        for group_name in group_names {
+            let tasks = grouped.get(&group_name).unwrap();
+            if let Some(ref name) = group_name {
+                // Add group header
+                rows.push(DisplayRow::GroupHeader {
+                    name: name.clone(),
+                    task_count: tasks.len(),
+                });
+                // Add tasks if not collapsed
+                if !self.collapsed_groups.contains(name) {
+                    for task in tasks {
+                        rows.push(DisplayRow::Task((*task).clone()));
+                    }
+                }
+            } else {
+                // Ungrouped tasks (no header)
+                for task in tasks {
+                    rows.push(DisplayRow::Task((*task).clone()));
+                }
+            }
+        }
+
+        self.display_rows = rows;
+
+        // Adjust selection if it's now out of bounds
+        if let Some(selected) = self.list_state.selected() {
+            if selected >= self.display_rows.len() {
+                let new_selection = self.display_rows.len().saturating_sub(1);
+                self.list_state.select(if self.display_rows.is_empty() {
+                    None
+                } else {
+                    Some(new_selection)
+                });
+            }
+        }
     }
 
     pub fn toggle_log_focus(&mut self) {

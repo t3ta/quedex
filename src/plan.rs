@@ -69,6 +69,10 @@ pub struct Plan {
     /// Use ${env.VAR} to reference environment variables.
     #[serde(default)]
     pub variables: HashMap<String, String>,
+    /// Task groups for logical organization.
+    /// Maps group name to list of task IDs belonging to that group.
+    #[serde(default)]
+    pub groups: HashMap<String, Vec<String>>,
     pub tasks: Vec<Task>,
 }
 
@@ -166,6 +170,10 @@ pub struct Task {
     #[serde(default)]
     pub title: Option<String>,
     pub mode: TaskMode,
+    /// Optional group this task belongs to.
+    /// If specified, should match a key in Plan.groups.
+    #[serde(default)]
+    pub group: Option<String>,
     #[serde(default)]
     pub deps: Vec<String>,
     #[serde(default)]
@@ -324,6 +332,44 @@ impl Plan {
             }
         }
 
+        // Validate group names contain only safe characters
+        for group_name in self.groups.keys() {
+            if !group_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                bail!(
+                    "group name '{group_name}' contains invalid characters (only alphanumeric, underscore, and hyphen allowed)"
+                );
+            }
+        }
+
+        // Validate groups reference existing tasks
+        for (group_name, task_list) in &self.groups {
+            for task_id in task_list {
+                if !ids.contains(task_id.as_str()) {
+                    bail!(
+                        "group '{group_name}' references non-existent task '{task_id}'"
+                    );
+                }
+            }
+        }
+
+        // Validate no task is in multiple groups (via Plan.groups)
+        let mut task_to_groups: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (group_name, task_list) in &self.groups {
+            for task_id in task_list {
+                task_to_groups
+                    .entry(task_id.as_str())
+                    .or_default()
+                    .push(group_name.as_str());
+            }
+        }
+        for (task_id, groups) in &task_to_groups {
+            if groups.len() > 1 {
+                bail!(
+                    "task '{task_id}' is listed in multiple groups: {groups:?}"
+                );
+            }
+        }
+
         let mut graph = DiGraphMap::<&str, ()>::new();
         for task in &self.tasks {
             graph.add_node(task.id.as_str());
@@ -338,6 +384,48 @@ impl Plan {
         }
 
         Ok(())
+    }
+
+    /// Returns task IDs belonging to a specific group (from Plan.groups only).
+    pub fn get_group_tasks(&self, group: &str) -> Vec<&str> {
+        self.groups
+            .get(group)
+            .map(|ids| ids.iter().map(String::as_str).collect())
+            .unwrap_or_default()
+    }
+
+    /// Returns the group name for a task ID (from Task.group field).
+    pub fn get_task_group(&self, task_id: &str) -> Option<&str> {
+        self.tasks
+            .iter()
+            .find(|t| t.id == task_id)
+            .and_then(|t| t.group.as_deref())
+    }
+
+    /// Resolves all group memberships from both Plan.groups and Task.group fields.
+    /// Returns a HashMap mapping group names to their member task IDs.
+    pub fn resolve_groups(&self) -> HashMap<String, Vec<String>> {
+        let mut resolved: HashMap<String, Vec<String>> = HashMap::new();
+
+        // Add tasks from Plan.groups
+        for (group_name, task_ids) in &self.groups {
+            resolved
+                .entry(group_name.clone())
+                .or_default()
+                .extend(task_ids.clone());
+        }
+
+        // Add tasks from Task.group fields
+        for task in &self.tasks {
+            if let Some(ref group) = task.group {
+                let entry = resolved.entry(group.clone()).or_default();
+                if !entry.contains(&task.id) {
+                    entry.push(task.id.clone());
+                }
+            }
+        }
+
+        resolved
     }
 }
 

@@ -62,6 +62,9 @@ pub enum Commands {
     /// Show run status
     Status {
         run_id: Option<String>,
+        /// Filter by group name
+        #[arg(long)]
+        group: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -81,14 +84,24 @@ pub enum Commands {
     /// Retry a failed task
     Retry {
         run_id: String,
-        task_id: String,
+        /// Task ID to retry (conflicts with --group)
+        #[arg(conflicts_with = "group")]
+        task_id: Option<String>,
+        /// Group name to retry all failed/canceled/skipped tasks
+        #[arg(long, conflicts_with = "task_id")]
+        group: Option<String>,
         #[arg(long, help = "Reload plan from the run directory before retrying")]
         reload_plan: bool,
     },
     /// Cancel a running task or run
     Cancel {
         run_id: String,
+        /// Task ID to cancel (conflicts with --group)
+        #[arg(conflicts_with = "group")]
         task_id: Option<String>,
+        /// Group name to cancel all running/pending tasks
+        #[arg(long, conflicts_with = "task_id")]
+        group: Option<String>,
     },
     /// Clean up run directories
     Clean {
