@@ -130,8 +130,7 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             mermaid,
         } => handle_dry_run_extended(&cli.global, &effective, &plan, show_order, check_locks, mermaid),
         Commands::Serve { run_id, port, host } => {
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(handle_serve(&cli.global, run_id, host, port, &config))
+            handle_serve(&cli.global, run_id, host, port, &config).await
         }
     }
 }

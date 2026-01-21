@@ -35,11 +35,10 @@ pub fn start_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
         Config::default().with_poll_interval(Duration::from_millis(500)),
     )?;
 
-    // Watch the runs directory
+    // Ensure runs directory exists and watch it
     let runs_dir = store_root.join("runs");
-    if runs_dir.exists() {
-        watcher.watch(&runs_dir, RecursiveMode::Recursive)?;
-    }
+    std::fs::create_dir_all(&runs_dir)?;
+    watcher.watch(&runs_dir, RecursiveMode::Recursive)?;
 
     // Spawn task to process file events
     tokio::spawn(async move {
