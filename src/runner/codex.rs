@@ -32,7 +32,7 @@ impl Runner for CodexRunner {
             .context("codex config missing")?;
 
         // Expand template variables in the prompt
-        let mut prompt = expand_prompt(&config.prompt, &ctx.variables)
+        let mut prompt = expand_prompt(&config.prompt, &ctx.variables, ctx.store.as_ref())
             .with_context(|| format!("expand prompt for task {}", task.id))?;
         if matches!(task.mode, TaskMode::Implement) && config.verify_after {
             prompt.push_str("\n\n");

@@ -81,6 +81,13 @@ pub enum Commands {
         #[arg(long)]
         stderr: bool,
     },
+    /// Show task output files
+    Outputs {
+        run_id: String,
+        /// Filter by task ID
+        #[arg(long = "task", value_name = "TASK_ID")]
+        task_id: Option<String>,
+    },
     /// Retry a failed task
     Retry {
         run_id: String,

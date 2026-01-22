@@ -3,7 +3,7 @@ mod cli;
 use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File};
-use std::io::{self, Read, Seek, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -103,6 +103,7 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             follow,
             stderr,
         } => handle_logs(&effective, &run_id, &task_id, follow, stderr),
+        Commands::Outputs { run_id, task_id } => handle_outputs(&effective, &run_id, task_id),
         Commands::Retry {
             run_id,
             task_id,
@@ -872,6 +873,7 @@ async fn handle_run(
                     stderr_tail: None,
                     started_at: None,
                     completed_at: None,
+                    output_files: None,
                     pid: None,
                     skip_reason: None,
                 },
@@ -913,6 +915,7 @@ async fn handle_run(
             id: task.id.clone(),
             deps: task.deps.clone(),
             locks: task.locks.clone(),
+            output_files: task.output_files.clone(),
             condition: task.condition.clone(),
         })
         .collect();
@@ -1215,6 +1218,152 @@ fn handle_logs(
     Ok(0)
 }
 
+const OUTPUT_PREVIEW_LINES: usize = 5;
+
+fn handle_outputs(
+    effective: &EffectiveOptions,
+    run_id: &str,
+    task_id: Option<String>,
+) -> Result<i32> {
+    let store_root = resolve_store_path(effective.store.as_ref())?;
+    let run_root = run_dir(&store_root, run_id);
+    if !run_root.exists() {
+        return Err(anyhow!("run {run_id} not found"));
+    }
+
+    let outputs_root = run_root.join("outputs");
+    if !outputs_root.exists() {
+        println!("no outputs found");
+        return Ok(0);
+    }
+
+    let tasks = resolve_output_tasks(&outputs_root, task_id.as_deref())?;
+    if tasks.is_empty() {
+        println!("no outputs found");
+        return Ok(0);
+    }
+
+    let mut printed_header = false;
+    let mut any_files = false;
+
+    for (task_id, task_dir) in tasks {
+        let mut files = collect_output_files(&task_dir)?;
+        files.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
+        if files.is_empty() {
+            continue;
+        }
+
+        if !printed_header {
+            println!("{:<16} {:<40} {:>10}", "task", "file", "size");
+            printed_header = true;
+        }
+
+        for path in files {
+            let relative = path.strip_prefix(&task_dir).unwrap_or(&path);
+            let size = fs::metadata(&path)
+                .with_context(|| format!("stat {}", path.display()))?
+                .len();
+            println!(
+                "{:<16} {:<40} {:>10}",
+                task_id,
+                relative.display(),
+                size
+            );
+            let preview = read_preview_lines(&path, OUTPUT_PREVIEW_LINES)?;
+            for line in preview {
+                println!("  {}", line);
+            }
+            any_files = true;
+        }
+    }
+
+    if !any_files {
+        println!("no outputs found");
+    }
+
+    Ok(0)
+}
+
+fn resolve_output_tasks(
+    outputs_root: &Path,
+    task_id: Option<&str>,
+) -> Result<Vec<(String, PathBuf)>> {
+    if let Some(task_id) = task_id {
+        let task_dir = outputs_root.join(task_id);
+        if !task_dir.exists() {
+            return Err(anyhow!("outputs for task {task_id} not found"));
+        }
+        return Ok(vec![(task_id.to_string(), task_dir)]);
+    }
+
+    let mut tasks = Vec::new();
+    for entry in fs::read_dir(outputs_root)
+        .with_context(|| format!("read {}", outputs_root.display()))?
+    {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            tasks.push((name, entry.path()));
+        }
+    }
+    tasks.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(tasks)
+}
+
+fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    if !dir.exists() {
+        return Ok(files);
+    }
+
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        for entry in fs::read_dir(&current)
+            .with_context(|| format!("read {}", current.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if file_type.is_file() {
+                files.push(path);
+                continue;
+            }
+            if file_type.is_symlink() {
+                if let Ok(metadata) = fs::metadata(&path) {
+                    if metadata.is_file() {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+    }
+    Ok(files)
+}
+
+fn read_preview_lines(path: &Path, max_lines: usize) -> Result<Vec<String>> {
+    let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut lines = Vec::new();
+    let mut buffer = Vec::new();
+
+    while lines.len() < max_lines {
+        buffer.clear();
+        let bytes = reader.read_until(b'\n', &mut buffer)?;
+        if bytes == 0 {
+            break;
+        }
+        let text = String::from_utf8_lossy(&buffer);
+        lines.push(text.trim_end_matches(['\n', '\r']).to_string());
+    }
+
+    Ok(lines)
+}
+
 async fn handle_retry(
     _global: &GlobalOptions,
     effective: &EffectiveOptions,
@@ -1393,6 +1542,7 @@ async fn handle_retry(
             id: task.id.clone(),
             deps: Vec::new(), // Dependencies already satisfied
             locks: task.locks.clone(),
+            output_files: task.output_files.clone(),
             condition: task.condition.clone(),
         });
     }
@@ -2608,6 +2758,14 @@ impl StateHandle {
         Ok(())
     }
 
+    fn task_outputs_saved(&self, task_id: &str, outputs: Vec<String>) -> Result<()> {
+        self.update(|state| {
+            if let Some(task) = state.tasks.get_mut(task_id) {
+                task.output_files = Some(outputs);
+            }
+        })
+    }
+
     fn update_run_status(&self, status: RunStatus) -> Result<()> {
         let now = Utc::now();
         self.update(|state| {
@@ -2759,6 +2917,7 @@ impl TaskRunner for PlanTaskRunner {
             };
 
             let task_id = task.id.clone();
+            let output_files = task_spec.output_files.clone();
             let retry_count = task.retry_count;
             let retry_delay_sec = task.retry_delay_sec;
 
@@ -2796,6 +2955,7 @@ impl TaskRunner for PlanTaskRunner {
             };
             let mut attempt = 0u32;
             let max_attempts = retry_count + 1; // Original attempt + retries
+            let mut executed = false;
 
             let result = loop {
                 attempt += 1;
@@ -2825,7 +2985,10 @@ impl TaskRunner for PlanTaskRunner {
                     opencode.spawn(task, &task_ctx)
                 };
                 let child = match child {
-                    Ok(child) => child,
+                    Ok(child) => {
+                        executed = true;
+                        child
+                    }
                     Err(err) => {
                         eprintln!("task {task_id} spawn error: {err:#}");
                         if attempt >= max_attempts {
@@ -2912,6 +3075,73 @@ impl TaskRunner for PlanTaskRunner {
                 let _ = state.task_finished(&task_id, result.status, result.exit_code);
                 break result;
             };
+
+            if executed && result.status != TaskStatus::Canceled {
+                if let Some(output_files) = output_files.as_ref() {
+                    let mut saved_outputs = Vec::new();
+                    for output_file in output_files {
+                        let output_path = Path::new(output_file);
+                        let source_path = if output_path.is_absolute() {
+                            output_path.to_path_buf()
+                        } else {
+                            task_ctx.cwd.join(output_path)
+                        };
+
+                        if !source_path.exists() {
+                            eprintln!(
+                                "task {task_id} output file missing: {}",
+                                source_path.display()
+                            );
+                            continue;
+                        }
+
+                        let metadata = match fs::metadata(&source_path) {
+                            Ok(metadata) => metadata,
+                            Err(err) => {
+                                eprintln!(
+                                    "task {task_id} output file stat error for {}: {err}",
+                                    source_path.display()
+                                );
+                                continue;
+                            }
+                        };
+
+                        if !metadata.is_file() {
+                            eprintln!(
+                                "task {task_id} output path is not a file: {}",
+                                source_path.display()
+                            );
+                            continue;
+                        }
+
+                        let content = match fs::read(&source_path) {
+                            Ok(content) => content,
+                            Err(err) => {
+                                eprintln!(
+                                    "task {task_id} output file read error for {}: {err}",
+                                    source_path.display()
+                                );
+                                continue;
+                            }
+                        };
+
+                        match task_ctx.store.save_output(&task_id, output_file, &content) {
+                            Ok(_) => saved_outputs.push(output_file.clone()),
+                            Err(err) => {
+                                eprintln!(
+                                    "task {task_id} output save error for {output_file}: {err:#}"
+                                );
+                            }
+                        }
+                    }
+
+                    if !saved_outputs.is_empty() {
+                        if let Err(err) = state.task_outputs_saved(&task_id, saved_outputs) {
+                            eprintln!("task {task_id} output state update error: {err:#}");
+                        }
+                    }
+                }
+            }
 
             if let Some(manager) = &ctx.worktree_manager {
                 if result.status == TaskStatus::Succeeded {

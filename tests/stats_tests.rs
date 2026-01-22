@@ -39,6 +39,7 @@ fn create_test_state(
                 stderr_tail: None,
                 started_at: task_started,
                 completed_at: task_completed,
+                output_files: None,
                 pid: None,
                 skip_reason: None,
             },

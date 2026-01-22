@@ -102,6 +102,8 @@ pub struct TaskState {
     pub stderr_tail: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_files: Option<Vec<String>>,
     #[serde(default)]
     pub pid: Option<u32>,
     /// Reason for why this task was skipped (if status is Skipped)
@@ -115,4 +117,12 @@ pub trait Store: Send + Sync {
     fn read_state(&self) -> Result<State>;
     fn open_log(&self, task_id: &str, stream: LogStream) -> Result<File>;
     fn log_path(&self, task_id: &str, stream: LogStream) -> PathBuf;
+    /// Path to the output directory for a task.
+    fn output_dir(&self, task_id: &str) -> PathBuf;
+    /// Save output content for a task under a relative filename.
+    fn save_output(&self, task_id: &str, filename: &str, content: &[u8]) -> Result<PathBuf>;
+    /// Load output content for a task from a relative filename.
+    fn get_output(&self, task_id: &str, filename: &str) -> Result<Vec<u8>>;
+    /// List output files for a task as relative paths.
+    fn list_outputs(&self, task_id: &str) -> Result<Vec<String>>;
 }

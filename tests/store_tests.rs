@@ -34,6 +34,7 @@ fn fs_store_appends_events_and_writes_state() -> Result<()> {
             stderr_tail: None,
             started_at: Some(ts),
             completed_at: None,
+            output_files: None,
             pid: Some(42),
             skip_reason: None,
         },
