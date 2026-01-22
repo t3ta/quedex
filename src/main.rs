@@ -826,9 +826,15 @@ async fn handle_run(
             None
         }
     });
+
+    // Merge system environment variables with plan.run.env
+    // plan.run.env takes precedence over system env vars
+    let mut env: HashMap<String, String> = std::env::vars().collect();
+    env.extend(plan.run.env.clone());
+
     let ctx = RunContext {
         cwd,
-        env: plan.run.env.clone(),
+        env,
         store: store.clone(),
         worktree_manager,
         variables: plan.variables.clone(),
@@ -1372,9 +1378,15 @@ async fn handle_retry(
             None
         }
     });
+
+    // Merge system environment variables with plan.run.env
+    // plan.run.env takes precedence over system env vars
+    let mut env: HashMap<String, String> = std::env::vars().collect();
+    env.extend(plan.run.env.clone());
+
     let ctx = RunContext {
         cwd,
-        env: plan.run.env.clone(),
+        env,
         store: store.clone(),
         worktree_manager,
         variables: plan.variables.clone(),
