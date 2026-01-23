@@ -318,6 +318,22 @@ impl Plan {
                     if path.trim().is_empty() {
                         bail!("task {} output_files contains empty path", task.id);
                     }
+                    // Reject absolute paths
+                    if path.starts_with('/') || path.starts_with('\\') {
+                        bail!(
+                            "task {} output_files contains absolute path: {}",
+                            task.id,
+                            path
+                        );
+                    }
+                    // Reject parent directory references
+                    if path.contains("..") {
+                        bail!(
+                            "task {} output_files contains '..': {}",
+                            task.id,
+                            path
+                        );
+                    }
                 }
             }
             if let Some(codex) = task.codex.as_ref() {

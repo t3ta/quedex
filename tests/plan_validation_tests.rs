@@ -390,3 +390,21 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "multiple runner configs");
 }
+
+#[test]
+fn plan_rejects_absolute_path_in_output_files() {
+    let mut task = codex_task("test", vec![]);
+    task.output_files = Some(vec!["/tmp/result.txt".to_string()]);
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "contains absolute path");
+}
+
+#[test]
+fn plan_rejects_parent_dir_in_output_files() {
+    let mut task = codex_task("test", vec![]);
+    task.output_files = Some(vec!["../out.txt".to_string()]);
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "contains '..'");
+}
