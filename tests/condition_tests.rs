@@ -99,6 +99,7 @@ async fn env_condition_equals_match() {
         id: "task1".to_string(),
         deps: vec![],
         locks: vec![],
+        output_files: None,
         condition: Some(TaskCondition::Env(EnvCondition {
             env: "MY_VAR".to_string(),
             equals: Some("expected_value".to_string()),
@@ -122,6 +123,7 @@ async fn env_condition_equals_no_match() {
         id: "task1".to_string(),
         deps: vec![],
         locks: vec![],
+        output_files: None,
         condition: Some(TaskCondition::Env(EnvCondition {
             env: "MY_VAR".to_string(),
             equals: Some("expected_value".to_string()),
@@ -146,6 +148,7 @@ async fn env_condition_equals_missing_var() {
         id: "task1".to_string(),
         deps: vec![],
         locks: vec![],
+        output_files: None,
         condition: Some(TaskCondition::Env(EnvCondition {
             env: "MY_VAR".to_string(),
             equals: Some("expected_value".to_string()),
@@ -169,6 +172,7 @@ async fn env_condition_not_equals_match() {
         id: "task1".to_string(),
         deps: vec![],
         locks: vec![],
+        output_files: None,
         condition: Some(TaskCondition::Env(EnvCondition {
             env: "MY_VAR".to_string(),
             equals: None,
@@ -192,6 +196,7 @@ async fn env_condition_not_equals_no_match() {
         id: "task1".to_string(),
         deps: vec![],
         locks: vec![],
+        output_files: None,
         condition: Some(TaskCondition::Env(EnvCondition {
             env: "MY_VAR".to_string(),
             equals: None,
@@ -215,6 +220,7 @@ async fn env_condition_exists_true() {
         id: "task1".to_string(),
         deps: vec![],
         locks: vec![],
+        output_files: None,
         condition: Some(TaskCondition::Env(EnvCondition {
             env: "MY_VAR".to_string(),
             equals: None,
@@ -238,6 +244,7 @@ async fn env_condition_exists_false() {
         id: "task1".to_string(),
         deps: vec![],
         locks: vec![],
+        output_files: None,
         condition: Some(TaskCondition::Env(EnvCondition {
             env: "MY_VAR".to_string(),
             equals: None,
@@ -265,12 +272,14 @@ async fn task_condition_succeeded_match() {
             id: "check".to_string(),
             deps: vec![],
             locks: vec![],
+            output_files: None,
             condition: None,
         },
         TaskSpec {
             id: "main".to_string(),
             deps: vec!["check".to_string()],
             locks: vec![],
+            output_files: None,
             condition: Some(TaskCondition::TaskResult(TaskResultCondition {
                 task: "check".to_string(),
                 status: ConditionStatus::Succeeded,
@@ -295,12 +304,14 @@ async fn task_condition_failed_match() {
             id: "check".to_string(),
             deps: vec![],
             locks: vec![],
+            output_files: None,
             condition: None,
         },
         TaskSpec {
             id: "fix".to_string(),
             deps: vec!["check".to_string()],
             locks: vec![],
+            output_files: None,
             condition: Some(TaskCondition::TaskResult(TaskResultCondition {
                 task: "check".to_string(),
                 status: ConditionStatus::Failed,
@@ -325,12 +336,14 @@ async fn task_condition_failed_no_match_when_succeeded() {
             id: "check".to_string(),
             deps: vec![],
             locks: vec![],
+            output_files: None,
             condition: None,
         },
         TaskSpec {
             id: "fix".to_string(),
             deps: vec!["check".to_string()],
             locks: vec![],
+            output_files: None,
             condition: Some(TaskCondition::TaskResult(TaskResultCondition {
                 task: "check".to_string(),
                 status: ConditionStatus::Failed,
@@ -357,6 +370,7 @@ async fn condition_skip_does_not_propagate_as_failure() {
             id: "conditional".to_string(),
             deps: vec![],
             locks: vec![],
+            output_files: None,
             condition: Some(TaskCondition::Env(EnvCondition {
                 env: "SKIP_ME".to_string(),
                 equals: Some("false".to_string()),
@@ -368,6 +382,7 @@ async fn condition_skip_does_not_propagate_as_failure() {
             id: "dependent".to_string(),
             deps: vec!["conditional".to_string()],
             locks: vec![],
+            output_files: None,
             condition: None,
         },
     ];
@@ -396,12 +411,14 @@ async fn dependency_failure_skip_does_propagate() {
             id: "failing".to_string(),
             deps: vec![],
             locks: vec![],
+            output_files: None,
             condition: None,
         },
         TaskSpec {
             id: "dependent".to_string(),
             deps: vec!["failing".to_string()],
             locks: vec![],
+            output_files: None,
             condition: None,
         },
     ];
@@ -436,6 +453,7 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
         timeout_sec: None,
         no_worktree: false,
         kind: None,
+        output_files: None,
         codex: Some(CodexConfig {
             prompt: "test".to_string(),
             output_last_message: None,
@@ -484,6 +502,7 @@ fn plan_rejects_condition_referencing_self() {
         timeout_sec: None,
         no_worktree: false,
         kind: None,
+        output_files: None,
         codex: Some(CodexConfig {
             prompt: "test".to_string(),
             output_last_message: None,

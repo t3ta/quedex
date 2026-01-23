@@ -15,6 +15,7 @@ pub struct TaskSpec {
     pub id: TaskId,
     pub deps: Vec<TaskId>,
     pub locks: Vec<String>,
+    pub output_files: Option<Vec<String>>,
     pub condition: Option<TaskCondition>,
 }
 

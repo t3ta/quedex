@@ -221,6 +221,8 @@ pub struct Task {
     pub no_worktree: bool,
     #[serde(default)]
     pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_files: Option<Vec<String>>,
     #[serde(default)]
     pub codex: Option<CodexConfig>,
     #[serde(default)]
@@ -306,6 +308,32 @@ impl Plan {
                         }
                     }
                     _ => bail!("task {} has unknown kind {}", task.id, kind),
+                }
+            }
+            if let Some(output_files) = task.output_files.as_ref() {
+                if output_files.is_empty() {
+                    bail!("task {} output_files is empty", task.id);
+                }
+                for path in output_files {
+                    if path.trim().is_empty() {
+                        bail!("task {} output_files contains empty path", task.id);
+                    }
+                    // Reject absolute paths
+                    if path.starts_with('/') || path.starts_with('\\') {
+                        bail!(
+                            "task {} output_files contains absolute path: {}",
+                            task.id,
+                            path
+                        );
+                    }
+                    // Reject parent directory references
+                    if path.contains("..") {
+                        bail!(
+                            "task {} output_files contains '..': {}",
+                            task.id,
+                            path
+                        );
+                    }
                 }
             }
             if let Some(codex) = task.codex.as_ref() {

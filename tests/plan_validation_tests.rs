@@ -12,6 +12,7 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
         timeout_sec: None,
         no_worktree: false,
         kind: None,
+        output_files: None,
         codex: Some(CodexConfig {
             prompt: "test prompt".to_string(),
             output_last_message: None,
@@ -40,6 +41,7 @@ fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
         timeout_sec: None,
         no_worktree: false,
         kind: None,
+        output_files: None,
         codex: None,
         claude_code: None,
         opencode: Some(OpencodeConfig {
@@ -102,6 +104,7 @@ fn plan_rejects_empty_codex_prompt() {
         timeout_sec: None,
         no_worktree: false,
         kind: None,
+        output_files: None,
         codex: Some(CodexConfig {
             prompt: " ".to_string(),
             output_last_message: None,
@@ -133,6 +136,7 @@ fn plan_rejects_empty_claude_code_prompt() {
         timeout_sec: None,
         no_worktree: false,
         kind: None,
+        output_files: None,
         codex: None,
         claude_code: Some(ClaudeCodeConfig {
             prompt: " ".to_string(),
@@ -161,6 +165,7 @@ fn plan_rejects_multiple_runner_configs() {
         timeout_sec: None,
         no_worktree: false,
         kind: None,
+        output_files: None,
         codex: Some(CodexConfig {
             prompt: "test".to_string(),
             output_last_message: None,
@@ -196,6 +201,7 @@ fn plan_accepts_valid_claude_code_task() {
         timeout_sec: None,
         no_worktree: false,
         kind: Some("claude_code".to_string()),
+        output_files: None,
         codex: None,
         claude_code: Some(ClaudeCodeConfig {
             prompt: "implement feature".to_string(),
@@ -224,6 +230,7 @@ fn plan_rejects_kind_mismatch_claude_code() {
         timeout_sec: None,
         no_worktree: false,
         kind: Some("claude_code".to_string()),
+        output_files: None,
         codex: Some(CodexConfig {
             prompt: "test".to_string(),
             output_last_message: None,
@@ -255,6 +262,7 @@ fn plan_rejects_empty_opencode_prompt() {
         timeout_sec: None,
         no_worktree: false,
         kind: None,
+        output_files: None,
         codex: None,
         claude_code: None,
         opencode: Some(OpencodeConfig {
@@ -272,6 +280,24 @@ fn plan_rejects_empty_opencode_prompt() {
 }
 
 #[test]
+fn plan_rejects_empty_output_files() {
+    let mut task = codex_task("output", vec![]);
+    task.output_files = Some(vec![]);
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "output_files is empty");
+}
+
+#[test]
+fn plan_rejects_blank_output_file_path() {
+    let mut task = codex_task("output", vec![]);
+    task.output_files = Some(vec!["  ".to_string()]);
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "output_files contains empty path");
+}
+
+#[test]
 fn plan_accepts_valid_opencode_task() {
     let task = Task {
         id: "opencode".to_string(),
@@ -283,6 +309,7 @@ fn plan_accepts_valid_opencode_task() {
         timeout_sec: None,
         no_worktree: false,
         kind: Some("opencode".to_string()),
+        output_files: None,
         codex: None,
         claude_code: None,
         opencode: Some(OpencodeConfig {
@@ -311,6 +338,7 @@ fn plan_rejects_kind_mismatch_opencode() {
         timeout_sec: None,
         no_worktree: false,
         kind: Some("opencode".to_string()),
+        output_files: None,
         codex: Some(CodexConfig {
             prompt: "test".to_string(),
             output_last_message: None,
@@ -342,6 +370,7 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
         timeout_sec: None,
         no_worktree: false,
         kind: None,
+        output_files: None,
         codex: None,
         claude_code: Some(ClaudeCodeConfig {
             prompt: "test".to_string(),
@@ -360,4 +389,22 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "multiple runner configs");
+}
+
+#[test]
+fn plan_rejects_absolute_path_in_output_files() {
+    let mut task = codex_task("test", vec![]);
+    task.output_files = Some(vec!["/tmp/result.txt".to_string()]);
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "contains absolute path");
+}
+
+#[test]
+fn plan_rejects_parent_dir_in_output_files() {
+    let mut task = codex_task("test", vec![]);
+    task.output_files = Some(vec!["../out.txt".to_string()]);
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "contains '..'");
 }

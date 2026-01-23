@@ -30,7 +30,7 @@ impl Runner for OpencodeRunner {
             .context("opencode config missing")?;
 
         // Expand template variables in the prompt
-        let prompt = expand_prompt(&config.prompt, &ctx.variables)
+        let prompt = expand_prompt(&config.prompt, &ctx.variables, ctx.store.as_ref())
             .with_context(|| format!("expand prompt for task {}", task.id))?;
 
         let stdout_path = ctx.store.log_path(&task.id, LogStream::Stdout);

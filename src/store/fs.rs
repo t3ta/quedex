@@ -1,8 +1,8 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use super::{Event, LogStream, State, Store};
 
@@ -40,6 +40,36 @@ impl FsStore {
 
     fn state_path(&self) -> PathBuf {
         self.run_dir().join("state.json")
+    }
+
+    fn outputs_dir(&self) -> PathBuf {
+        self.run_dir().join("outputs")
+    }
+
+    fn output_task_dir(&self, task_id: &str) -> PathBuf {
+        self.outputs_dir().join(task_id)
+    }
+
+    fn output_path(&self, task_id: &str, filename: &str) -> Result<PathBuf> {
+        if filename.trim().is_empty() {
+            bail!("output filename is empty");
+        }
+        let path = Path::new(filename);
+        if path.is_absolute() {
+            bail!("output filename must be relative: {filename}");
+        }
+        for component in path.components() {
+            match component {
+                Component::ParentDir => {
+                    bail!("output filename must not contain '..': {filename}");
+                }
+                Component::RootDir | Component::Prefix(_) => {
+                    bail!("output filename must be relative: {filename}");
+                }
+                Component::CurDir | Component::Normal(_) => {}
+            }
+        }
+        Ok(self.output_task_dir(task_id).join(path))
     }
 }
 
@@ -97,5 +127,84 @@ impl Store for FsStore {
 
     fn log_path(&self, task_id: &str, stream: LogStream) -> PathBuf {
         self.tasks_dir().join(task_id).join(stream.file_name())
+    }
+
+    fn output_dir(&self, task_id: &str) -> PathBuf {
+        self.output_task_dir(task_id)
+    }
+
+    fn save_output(&self, task_id: &str, filename: &str, content: &[u8]) -> Result<PathBuf> {
+        let output_path = self.output_path(task_id, filename)?;
+        let parent = output_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("output path missing parent for {filename}"))?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create output dir {}", parent.display()))?;
+        let tmp_path = output_path.with_extension("tmp");
+        {
+            let mut file = File::create(&tmp_path)
+                .with_context(|| format!("open {}", tmp_path.display()))?;
+            file.write_all(content)
+                .with_context(|| format!("write output {}", output_path.display()))?;
+            file.sync_all()
+                .with_context(|| format!("sync output {}", output_path.display()))?;
+        }
+        fs::rename(&tmp_path, &output_path).with_context(|| {
+            format!(
+                "rename {} -> {}",
+                tmp_path.display(),
+                output_path.display()
+            )
+        })?;
+        Ok(output_path)
+    }
+
+    fn get_output(&self, task_id: &str, filename: &str) -> Result<Vec<u8>> {
+        let output_path = self.output_path(task_id, filename)?;
+        fs::read(&output_path).with_context(|| format!("read output {}", output_path.display()))
+    }
+
+    fn list_outputs(&self, task_id: &str) -> Result<Vec<String>> {
+        let output_dir = self.output_dir(task_id);
+        if !output_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut files = Vec::new();
+        let mut stack = vec![output_dir.clone()];
+        while let Some(current) = stack.pop() {
+            for entry in fs::read_dir(&current)
+                .with_context(|| format!("read {}", current.display()))?
+            {
+                let entry = entry?;
+                let path = entry.path();
+                let file_type = entry.file_type()?;
+                if file_type.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if file_type.is_file() {
+                    files.push(path);
+                    continue;
+                }
+                if file_type.is_symlink() {
+                    if let Ok(metadata) = fs::metadata(&path) {
+                        if metadata.is_file() {
+                            files.push(path);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut outputs = Vec::new();
+        for path in files {
+            let relative = path
+                .strip_prefix(&output_dir)
+                .with_context(|| format!("strip prefix {}", output_dir.display()))?;
+            outputs.push(relative.to_string_lossy().to_string());
+        }
+        outputs.sort();
+        Ok(outputs)
     }
 }
