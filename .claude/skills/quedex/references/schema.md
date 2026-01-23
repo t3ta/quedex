@@ -9,6 +9,8 @@ Plan files define DAG-based task execution for quedex. This reference covers all
 ```json
 {
   "version": 1,
+  "variables": { "key": "value" },
+  "groups": { "group-name": ["task-a", "task-b"] },
   "run": { /* RunConfig */ },
   "tasks": [ /* Task[] */ ]
 }
@@ -18,7 +20,20 @@ Plan files define DAG-based task execution for quedex. This reference covers all
 
 - **Type**: `number`
 - **Value**: Must be `1`
-- **Validation**: Only version 1 is supported
+
+### variables (optional)
+
+- **Type**: `object`
+- **Purpose**: Template variables for prompt expansion
+- **Usage**: Reference with `${variable}` in prompts
+- **Environment variables**: Use `${env.VAR}` syntax
+
+### groups (optional)
+
+- **Type**: `object`
+- **Purpose**: Logical grouping of tasks for batch operations
+- **Format**: `{ "group-name": ["task-id-1", "task-id-2"] }`
+- **Validation**: All referenced task IDs must exist; task cannot be in multiple groups
 
 ### run (required)
 
@@ -39,7 +54,9 @@ Array of Task objects. Must contain at least one task.
   "env": { "KEY": "value" },
   "max_concurrency": 2,
   "fail_fast": true,
-  "default_timeout_sec": 3600
+  "default_timeout_sec": 3600,
+  "worktree": { "enabled": true },
+  "notifications": { "url": "https://hooks.slack.com/..." }
 }
 ```
 
@@ -58,25 +75,41 @@ Array of Task objects. Must contain at least one task.
 
 - **Type**: `object`
 - **Purpose**: Additional environment variables
-- **Format**: Key-value pairs
 
 ### max_concurrency (optional)
 
 - **Type**: `number`
-- **Purpose**: Maximum number of tasks running simultaneously
+- **Purpose**: Maximum tasks running simultaneously
 - **Default**: Unlimited
 
 ### fail_fast (optional)
 
 - **Type**: `boolean`
-- **Purpose**: Stop execution immediately when any task fails
+- **Purpose**: Stop scheduling new tasks when any task fails
 - **Default**: `false`
 
 ### default_timeout_sec (optional)
 
 - **Type**: `number`
 - **Purpose**: Default timeout for tasks in seconds
-- **Default**: No timeout
+
+### worktree (optional)
+
+- **Type**: `object`
+- **Purpose**: Git worktree configuration for isolated execution
+- **Fields**:
+  - `enabled`: Enable worktree mode
+  - `base_dir`: Base directory for worktrees
+  - `shallow_depth`: Shallow clone depth
+
+### notifications (optional)
+
+- **Type**: `object`
+- **Purpose**: Webhook notification configuration
+- **Fields**:
+  - `url`: Webhook URL (Slack/Discord compatible)
+  - `events`: Array of events (`"on_start"`, `"on_task_complete"`, `"on_complete"`, `"on_failure"`)
+  - `username`: Custom username for notifications
 
 ---
 
@@ -87,22 +120,26 @@ Array of Task objects. Must contain at least one task.
   "id": "task-a",
   "title": "Research existing implementation",
   "mode": "research",
+  "group": "backend",
   "deps": ["task-b"],
   "locks": ["workspace"],
   "timeout_sec": 1800,
+  "retry_count": 2,
+  "retry_delay_sec": 30,
+  "output_files": ["artifacts/report.md"],
+  "condition": { "env": "CI", "equals": "true" },
+  "no_worktree": false,
   "kind": "codex",
   "codex": { /* CodexConfig */ },
-  "shell": { /* ShellConfig */ }
+  "claude_code": { /* ClaudeCodeConfig */ },
+  "opencode": { /* OpencodeConfig */ }
 }
 ```
 
 ### id (required)
 
 - **Type**: `string`
-- **Validation**:
-  - Must not be empty
-  - Must be unique across all tasks
-  - Cannot depend on itself
+- **Validation**: Must be unique, non-empty, alphanumeric with `_` and `-` only
 
 ### title (optional)
 
@@ -112,51 +149,96 @@ Array of Task objects. Must contain at least one task.
 ### mode (required)
 
 - **Type**: `"research" | "implement" | "verify"`
-- **Purpose**: Determines execution context
+- **Behaviors**:
+  - `research`: Sandboxed exploration, saves output to file
+  - `implement`: Full write access, automated code changes
+  - `verify`: Full access for testing/validation
 
-**Mode behaviors:**
-- `research`: Sandboxed exploration, saves output to file
-- `implement`: Full write access, automated code changes
-- `verify`: Full access for testing/validation
+### group (optional)
+
+- **Type**: `string`
+- **Purpose**: Group this task belongs to (alternative to Plan.groups)
 
 ### deps (optional)
 
 - **Type**: `string[]`
 - **Purpose**: Task IDs that must complete before this task starts
-- **Validation**:
-  - All referenced task IDs must exist
-  - No circular dependencies allowed
-  - DAG structure enforced
+- **Validation**: All IDs must exist, no circular dependencies
 
 ### locks (optional)
 
 - **Type**: `string[]`
-- **Purpose**: Exclusive resource names (prevents parallel execution of tasks with same lock)
+- **Purpose**: Exclusive resource names (prevents parallel execution)
 - **Example**: `["workspace", "db-migrate"]`
 
 ### timeout_sec (optional)
 
+- **Type**: `number | "auto" | "2x_average"`
+- **Purpose**: Task-specific timeout
+- **Dynamic options**:
+  - `"auto"`: Calculate as average + 2σ from history
+  - `"2x_average"`: Calculate as 2× average from history
+
+### retry_count (optional)
+
 - **Type**: `number`
-- **Purpose**: Task-specific timeout in seconds
-- **Overrides**: `run.default_timeout_sec`
+- **Purpose**: Number of automatic retry attempts on failure
+- **Default**: `0` (no retry)
+
+### retry_delay_sec (optional)
+
+- **Type**: `number`
+- **Purpose**: Delay between retry attempts in seconds
+- **Default**: `0`
+
+### output_files (optional)
+
+- **Type**: `string[]`
+- **Purpose**: Files to capture as task outputs
+- **Validation**: Relative paths only, no `..` or absolute paths
+- **Usage**: View with `quedex outputs <run_id> --task <task_id>`
+
+### condition (optional)
+
+- **Type**: `object`
+- **Purpose**: Conditional execution based on environment or task result
+
+**Environment condition:**
+```json
+{
+  "env": "CI",
+  "equals": "true"
+}
+```
+- `env`: Environment variable name
+- `equals`: Value to match (optional)
+- `not_equals`: Value to not match (optional)
+- `exists`: Check existence (optional, boolean)
+
+**Task result condition:**
+```json
+{
+  "task": "build",
+  "status": "succeeded"
+}
+```
+- `task`: Task ID to check (must be in deps)
+- `status`: `"succeeded"` or `"failed"`
+
+### no_worktree (optional)
+
+- **Type**: `boolean`
+- **Purpose**: Disable worktree for this task even if enabled globally
+- **Default**: `false`
 
 ### kind (optional)
 
-- **Type**: `"codex" | "shell"`
-- **Validation**:
-  - If `"codex"`, `codex` config must be present
-  - If `"shell"`, `shell` config must be present
+- **Type**: `"codex" | "claude_code" | "opencode"`
 - **Note**: Inferred from which config is present if omitted
 
-### codex (conditional)
+### Runner configs (one required)
 
-CodexConfig object. Required if `shell` is not present.
-
-### shell (conditional)
-
-ShellConfig object. Required if `codex` is not present.
-
-**Constraint**: Cannot specify both `codex` and `shell`.
+Exactly one of `codex`, `claude_code`, or `opencode` must be present.
 
 ---
 
@@ -168,7 +250,6 @@ ShellConfig object. Required if `codex` is not present.
   "output_last_message": "artifacts/research.md",
   "verify_after": true,
   "sandbox": "workspace-write",
-  "ask_for_approval": "never",
   "json": true
 }
 ```
@@ -176,86 +257,98 @@ ShellConfig object. Required if `codex` is not present.
 ### prompt (required)
 
 - **Type**: `string`
-- **Validation**: Must not be empty (after trimming)
-- **Purpose**: Instruction for Codex CLI
+- **Validation**: Must not be empty
 
-**Auto-appended for implement mode with verify_after:**
-```
-実装後 build→lint→test を実行し、エラーがあれば修正して
-```
+### output_last_message (optional)
 
-### output_last_message (conditional)
-
-- **Type**: `string` (file path)
-- **Purpose**: Save Codex's final message to file
+- **Type**: `string`
+- **Purpose**: Save final message to file
 - **Validation**: Only allowed for `mode: "research"`
 
 ### verify_after (optional)
 
 - **Type**: `boolean`
-- **Purpose**: For `mode: "implement"`, auto-append verification instruction to prompt
-- **Default**: `false`
+- **Purpose**: Auto-append build/lint/test instruction
+- **Default**: `true`
 
 ### sandbox (optional)
 
 - **Type**: `string`
 - **Purpose**: Sandbox mode for research tasks
 - **Common values**: `"workspace-write"`, `"danger-full-access"`
-- **Behavior**: Only used for `mode: "research"`. For `implement`/`verify`, `--dangerously-bypass-approvals-and-sandbox` is always used.
-
-### ask_for_approval (optional)
-
-- **Type**: `string`
-- **Purpose**: Approval strategy
-- **Note**: Currently unused in quedex implementation
+- **Note**: Only used for `mode: "research"`
 
 ### json (optional)
 
 - **Type**: `boolean`
 - **Default**: `true`
-- **Purpose**: Pass `--json` to Codex CLI for JSONL event output (recommended for TUI monitoring)
+- **Purpose**: JSONL event output for TUI monitoring
 
 ---
 
-## ShellConfig
+## ClaudeCodeConfig
 
 ```json
 {
-  "command": "npm test"
+  "prompt": "Implement user authentication",
+  "model": "opus",
+  "json": true
 }
 ```
 
-### command (required)
+### prompt (required)
 
 - **Type**: `string`
-- **Purpose**: Shell command to execute
-- **Execution**: Runs in `run.cwd` with `run.env`
+- **Validation**: Must not be empty
+
+### model (optional)
+
+- **Type**: `string`
+- **Purpose**: Model to use (e.g., `"sonnet"`, `"opus"`)
+
+### json (optional)
+
+- **Type**: `boolean`
+- **Default**: `true`
+
+---
+
+## OpencodeConfig
+
+```json
+{
+  "prompt": "Implement user authentication",
+  "model": "gpt-4",
+  "json": true
+}
+```
+
+### prompt (required)
+
+- **Type**: `string`
+- **Validation**: Must not be empty
+
+### model (optional)
+
+- **Type**: `string`
+- **Purpose**: Model to use
+
+### json (optional)
+
+- **Type**: `boolean`
+- **Default**: `true`
 
 ---
 
 ## Validation Rules
 
-quedex validates plans before execution:
-
-1. **Structural validation:**
-   - Version must be 1
-   - At least one task required
-   - All task IDs must be unique and non-empty
-
-2. **Dependency validation:**
-   - All `deps` must reference existing task IDs
-   - No circular dependencies
-   - No self-dependencies
-
-3. **Config validation:**
-   - Each task must have exactly one of `codex` or `shell`
-   - If `kind` is specified, matching config must exist
-   - `codex.prompt` must not be empty
-   - `output_last_message` only for research mode
-
-4. **DAG validation:**
-   - Dependency graph must be acyclic
-   - Enforced using petgraph library
+1. **Structural**: Version must be 1, at least one task required
+2. **IDs**: Unique, non-empty, alphanumeric with `_` and `-` only
+3. **Dependencies**: All deps must exist, no cycles, no self-deps
+4. **Runners**: Exactly one of `codex`, `claude_code`, or `opencode` required
+5. **Conditions**: Referenced task must be in deps
+6. **Groups**: No task in multiple groups, all task IDs must exist
+7. **output_files**: Relative paths only, no `..` or absolute paths
 
 ---
 
@@ -273,7 +366,7 @@ quedex validates plans before execution:
 }
 ```
 
-### Parallel execution
+### Parallel with fan-in
 
 ```json
 {
@@ -285,14 +378,30 @@ quedex validates plans before execution:
 }
 ```
 
-### Exclusive resource access
+### Task groups
+
+```json
+{
+  "groups": {
+    "backend": ["api-research", "api-impl"],
+    "frontend": ["ui-research", "ui-impl"]
+  },
+  "tasks": [...]
+}
+```
+
+### Conditional execution
 
 ```json
 {
   "tasks": [
-    {"id": "migrate-1", "locks": ["db-migrate"], ...},
-    {"id": "migrate-2", "locks": ["db-migrate"], ...}
+    {"id": "build", ...},
+    {
+      "id": "deploy",
+      "deps": ["build"],
+      "condition": { "task": "build", "status": "succeeded" },
+      ...
+    }
   ]
 }
 ```
-Tasks with same lock never run simultaneously.

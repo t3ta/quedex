@@ -237,60 +237,39 @@ Complex features with staged rollout:
 
 **Use when:** Feature requires multiple distinct implementation phases.
 
-### Mixing Codex and Shell Tasks
+### Mixing Runners (Codex + Claude Code)
 
-Combine AI implementation with deterministic operations:
+Combine different runners based on task needs:
 
-```json
-{
-  "version": 1,
-  "run": {
-    "name": "deploy-pipeline",
-    "cwd": ".",
-    "max_concurrency": 1
-  },
-  "tasks": [
-    {
-      "id": "implement",
-      "mode": "implement",
-      "kind": "codex",
-      "codex": {
-        "prompt": "新機能を実装",
-        "json": true
-      }
-    },
-    {
-      "id": "build",
-      "mode": "verify",
-      "deps": ["implement"],
-      "kind": "shell",
-      "shell": {
-        "command": "npm run build"
-      }
-    },
-    {
-      "id": "test",
-      "mode": "verify",
-      "deps": ["build"],
-      "kind": "shell",
-      "shell": {
-        "command": "npm test"
-      }
-    },
-    {
-      "id": "lint",
-      "mode": "verify",
-      "deps": ["build"],
-      "kind": "shell",
-      "shell": {
-        "command": "npm run lint"
-      }
-    }
-  ]
-}
+```yaml
+version: 1
+run:
+  name: "mixed-runners"
+  max_concurrency: 2
+
+tasks:
+  - id: research
+    mode: research
+    codex:
+      prompt: "既存実装を調査して"
+      output_last_message: "artifacts/research.md"
+
+  - id: implement
+    mode: implement
+    deps: [research]
+    locks: [workspace]
+    claude_code:
+      prompt: "artifacts/research.md を参考に実装して"
+      model: opus
+
+  - id: verify
+    mode: verify
+    deps: [implement]
+    codex:
+      prompt: "npm test を実行して、失敗があれば修正"
 ```
 
-**Use when:** Need precise control over build/test commands or want parallel verification.
+**Use when:** Different tasks benefit from different models/runners.
 
 ### Database Migrations with Locks
 
@@ -492,3 +471,228 @@ Don't use locks when:
 ```
 
 Omit for unlimited concurrency (controlled only by dependencies and locks).
+
+## New Features Examples
+
+### Task Groups
+
+Organize tasks into logical groups for batch operations:
+
+```yaml
+version: 1
+groups:
+  backend: [api-research, api-impl, api-test]
+  frontend: [ui-research, ui-impl, ui-test]
+
+run:
+  name: "grouped-tasks"
+  max_concurrency: 4
+
+tasks:
+  - id: api-research
+    mode: research
+    codex:
+      prompt: "API構造を調査"
+      output_last_message: "artifacts/api.md"
+
+  - id: api-impl
+    mode: implement
+    deps: [api-research]
+    locks: [backend]
+    claude_code:
+      prompt: "API を実装"
+      model: sonnet
+
+  - id: api-test
+    mode: verify
+    deps: [api-impl]
+    codex:
+      prompt: "API テストを実行"
+
+  - id: ui-research
+    mode: research
+    codex:
+      prompt: "UI構造を調査"
+      output_last_message: "artifacts/ui.md"
+
+  - id: ui-impl
+    mode: implement
+    deps: [ui-research]
+    locks: [frontend]
+    claude_code:
+      prompt: "UI を実装"
+      model: sonnet
+
+  - id: ui-test
+    mode: verify
+    deps: [ui-impl]
+    codex:
+      prompt: "UI テストを実行"
+```
+
+**CLI usage:**
+```bash
+quedex status <run_id> --group backend
+quedex retry <run_id> --group frontend
+quedex cancel <run_id> --group backend
+```
+
+### Conditional Execution
+
+Skip tasks based on environment or previous task results:
+
+```yaml
+version: 1
+run:
+  name: "conditional"
+  max_concurrency: 2
+
+tasks:
+  - id: build
+    mode: implement
+    codex:
+      prompt: "ビルドを実行"
+
+  - id: deploy-staging
+    mode: implement
+    deps: [build]
+    condition:
+      task: build
+      status: succeeded
+    codex:
+      prompt: "ステージングにデプロイ"
+
+  - id: deploy-prod
+    mode: implement
+    deps: [deploy-staging]
+    condition:
+      env: "DEPLOY_PROD"
+      equals: "true"
+    codex:
+      prompt: "本番にデプロイ"
+
+  - id: notify-failure
+    mode: implement
+    deps: [build]
+    condition:
+      task: build
+      status: failed
+    codex:
+      prompt: "失敗を通知"
+```
+
+### Output File Capture
+
+Capture task outputs for later reference:
+
+```yaml
+version: 1
+run:
+  name: "with-outputs"
+
+tasks:
+  - id: generate-report
+    mode: implement
+    output_files:
+      - "reports/summary.md"
+      - "reports/metrics.json"
+    codex:
+      prompt: "レポートを生成して reports/ に保存"
+
+  - id: analyze
+    mode: research
+    deps: [generate-report]
+    codex:
+      prompt: "reports/summary.md を分析して"
+      output_last_message: "artifacts/analysis.md"
+```
+
+**CLI usage:**
+```bash
+quedex outputs <run_id> --task generate-report
+```
+
+### Automatic Retry
+
+Configure automatic retry for flaky tasks:
+
+```yaml
+version: 1
+run:
+  name: "with-retry"
+
+tasks:
+  - id: flaky-test
+    mode: verify
+    retry_count: 3
+    retry_delay_sec: 30
+    codex:
+      prompt: "E2E テストを実行（ネットワーク依存あり）"
+
+  - id: stable-task
+    mode: implement
+    deps: [flaky-test]
+    codex:
+      prompt: "次のステップを実行"
+```
+
+### Dynamic Timeout
+
+Use historical data for smart timeouts:
+
+```yaml
+version: 1
+run:
+  name: "dynamic-timeout"
+
+tasks:
+  - id: quick-task
+    mode: research
+    timeout_sec: 300  # Fixed 5 minutes
+    codex:
+      prompt: "簡単な調査"
+
+  - id: variable-task
+    mode: implement
+    timeout_sec: "auto"  # Average + 2σ from history
+    codex:
+      prompt: "実行時間が変動するタスク"
+
+  - id: long-task
+    mode: implement
+    timeout_sec: "2x_average"  # 2× average from history
+    codex:
+      prompt: "長時間かかる可能性があるタスク"
+```
+
+### Template Variables
+
+Use variables for reusable prompts:
+
+```yaml
+version: 1
+variables:
+  target_module: "src/auth"
+  test_command: "npm test -- --coverage"
+  output_dir: "artifacts"
+
+run:
+  name: "templated"
+
+tasks:
+  - id: research
+    mode: research
+    codex:
+      prompt: "${target_module} を調査して ${output_dir}/research.md に保存"
+      output_last_message: "${output_dir}/research.md"
+
+  - id: implement
+    mode: implement
+    deps: [research]
+    codex:
+      prompt: |
+        ${target_module} を改善して
+        完了後 ${test_command} を実行
+```
+
+Environment variables can also be used: `${env.CI}`, `${env.NODE_ENV}`
