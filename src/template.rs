@@ -142,14 +142,17 @@ fn parse_output_ref(var_name: &str) -> Result<Option<OutputRef>> {
         if let Some(path) = caps.get(2).map(|m| m.as_str()) {
             // Check for glob patterns first (wildcards)
             if contains_glob_pattern(path) {
+                if !is_safe_glob_pattern(path) {
+                    bail!("glob pattern must not contain '..' or be absolute: {}", path);
+                }
                 return Ok(Some(OutputRef::Glob(task_id.to_string(), path.to_string())));
             }
-            // Check for valid relative file path (has a recognized file extension)
-            if is_valid_relative_path(path) {
+            // Check for valid relative file path
+            if is_valid_relative_path(path) && !is_json_path(path) {
                 return Ok(Some(OutputRef::File(task_id.to_string(), path.to_string())));
             }
-            // Everything else with dots or brackets is treated as JSON path
-            if path.contains('.') || path.contains('[') {
+            // JSON paths are paths with dots or brackets but no path separators
+            if (path.contains('.') || path.contains('[')) && !path.contains('/') && !path.contains('\\') {
                 return Ok(Some(OutputRef::JsonPath(task_id.to_string(), path.to_string())));
             }
             bail!("invalid output file path: {path}");
@@ -174,22 +177,50 @@ fn is_valid_relative_path(path: &str) -> bool {
     if path.contains("..") {
         return false;
     }
-    // Reject paths that look like JSON paths (contain dots but no recognized file extension)
+    true
+}
+
+fn is_safe_glob_pattern(path: &str) -> bool {
+    if path.starts_with('/') || path.starts_with('\\') {
+        return false;
+    }
+    if path.contains("..") {
+        return false;
+    }
+    true
+}
+
+fn is_json_path(path: &str) -> bool {
+    // JSON paths have dots or brackets but don't look like file paths
+    // They shouldn't have path separators
+    if path.contains('/') || path.contains('\\') {
+        return false;
+    }
+    // They must contain at least one dot or bracket
+    if !path.contains('.') && !path.contains('[') {
+        return false;
+    }
+    // Paths with brackets are always JSON paths (array access)
+    if path.contains('[') {
+        return true;
+    }
+    // For paths with dots, check if it looks like a file with an extension
+    // Heuristic: if the last segment is a common file extension, it's a file path
     if path.contains('.') {
-        // List of common file extensions to distinguish from JSON paths
-        let valid_extensions = [
-            "txt", "md", "rs", "py", "js", "ts", "json", "yaml", "yml", "toml", "xml", "html", "css",
-            "sh", "bash", "zsh", "fish", "conf", "config", "ini", "cfg", "log", "out", "err", "tmp",
-        ];
         let parts: Vec<&str> = path.split('.').collect();
-        if let Some(ext) = parts.last() {
-            // If it's a recognized file extension, it's a valid file path
-            if valid_extensions.contains(ext) {
-                return true;
+        if parts.len() > 1 {
+            let last_part = parts.last().unwrap();
+            // Common file extensions
+            let common_extensions = [
+                "txt", "md", "rs", "py", "js", "ts", "json", "yaml", "yml", "toml", "xml", "html", "css",
+                "sh", "bash", "zsh", "fish", "conf", "config", "ini", "cfg", "log", "out", "err", "tmp",
+                "csv", "parquet", "bin", "dat", "sql", "db", "sqlite", "tar", "gz", "zip", "rar", "7z",
+            ];
+            // If the last part is a common file extension, it's a file path
+            if common_extensions.contains(&last_part) {
+                return false;
             }
         }
-        // Otherwise, treat as a JSON path
-        return false;
     }
     true
 }
@@ -265,6 +296,14 @@ fn read_output_for_task(
                 .filter_map(|entry| entry.ok())
                 .filter(|path| path.is_file())
                 .collect();
+
+            // Ensure all matched files are under output_dir
+            for path in &matched_files {
+                if !path.starts_with(&output_dir) {
+                    bail!("glob pattern '{}' matched file outside output directory: {}",
+                          pattern, path.display());
+                }
+            }
 
             if matched_files.is_empty() {
                 bail!("no files match glob pattern '{}'", pattern);
@@ -862,6 +901,87 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("invalid output file path"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_glob_pattern_with_parent_directory() {
+        let dir = temp_dir("glob-parent");
+        let store = FsStore::new(&dir, "test-run").expect("create store");
+        write_state_for(&store, "task-a", TaskStatus::Succeeded);
+
+        let vars = HashMap::new();
+        let result = expand_prompt("Output: ${output.task-a:../*}", &vars, &store);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("glob pattern must not contain '..'"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_glob_pattern_absolute_path() {
+        let dir = temp_dir("glob-absolute");
+        let store = FsStore::new(&dir, "test-run").expect("create store");
+        write_state_for(&store, "task-a", TaskStatus::Succeeded);
+
+        let vars = HashMap::new();
+        let result = expand_prompt("Output: ${output.task-a:/etc/*}", &vars, &store);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("glob pattern must not contain"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_specific_file_with_non_whitelisted_extension() {
+        let dir = temp_dir("non-whitelisted-ext");
+        let store = FsStore::new(&dir, "test-run").expect("create store");
+        write_state_for(&store, "task-a", TaskStatus::Succeeded);
+
+        let output_dir = store.output_dir("task-a");
+        fs::create_dir_all(&output_dir).expect("create output dir");
+        fs::write(output_dir.join("data.csv"), "col1,col2\nval1,val2\n").expect("write data.csv");
+
+        let vars = HashMap::new();
+        let result = expand_prompt("Output: ${output.task-a:data.csv}", &vars, &store).unwrap();
+        assert_eq!(result, "Output: col1,col2\nval1,val2\n");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_specific_file_with_parquet_extension() {
+        let dir = temp_dir("parquet-ext");
+        let store = FsStore::new(&dir, "test-run").expect("create store");
+        write_state_for(&store, "task-a", TaskStatus::Succeeded);
+
+        let output_dir = store.output_dir("task-a");
+        fs::create_dir_all(&output_dir).expect("create output dir");
+        fs::write(output_dir.join("results.parquet"), "parquet data").expect("write results.parquet");
+
+        let vars = HashMap::new();
+        let result = expand_prompt("Output: ${output.task-a:results.parquet}", &vars, &store).unwrap();
+        assert_eq!(result, "Output: parquet data");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_specific_file_with_no_extension() {
+        let dir = temp_dir("no-extension");
+        let store = FsStore::new(&dir, "test-run").expect("create store");
+        write_state_for(&store, "task-a", TaskStatus::Succeeded);
+
+        let output_dir = store.output_dir("task-a");
+        fs::create_dir_all(&output_dir).expect("create output dir");
+        fs::write(output_dir.join("README"), "readme content").expect("write README");
+
+        let vars = HashMap::new();
+        let result = expand_prompt("Output: ${output.task-a:README}", &vars, &store).unwrap();
+        assert_eq!(result, "Output: readme content");
 
         let _ = fs::remove_dir_all(dir);
     }
