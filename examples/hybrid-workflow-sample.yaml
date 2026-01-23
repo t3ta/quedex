@@ -34,8 +34,8 @@ tasks:
     group: auth
     output_files:
       - "artifacts/hybrid-workflow/auth/draft-report.md"
-    kind: codex
-    codex:
+    claude_code:
+      model: sonnet
       prompt: |
         認証機能の実装をdraftとして作成してください。
 
@@ -61,11 +61,11 @@ tasks:
     mode: verify
     group: auth
     deps: [draft-auth]
+    locks: [workspace]
     output_files:
       - "artifacts/hybrid-workflow/auth/review-report.md"
-    kind: claude_code
-    claude_code:
-      model: "sonnet"
+    codex:
+      verify_after: true
       prompt: |
         認証機能の実装をレビューしてください。
 
@@ -94,8 +94,8 @@ tasks:
     group: api
     output_files:
       - "artifacts/hybrid-workflow/api/draft-report.md"
-    kind: codex
-    codex:
+    claude_code:
+      model: sonnet
       prompt: |
         REST API機能の実装をdraftとして作成してください。
 
@@ -124,11 +124,11 @@ tasks:
     mode: verify
     group: api
     deps: [draft-api]
+    locks: [workspace]
     output_files:
       - "artifacts/hybrid-workflow/api/review-report.md"
-    kind: claude_code
-    claude_code:
-      model: "sonnet"
+    codex:
+      verify_after: true
       prompt: |
         REST API機能の実装をレビューしてください。
 
@@ -157,11 +157,11 @@ tasks:
     mode: verify
     group: final
     deps: [review-auth, review-api]
+    locks: [workspace]
     output_files:
       - "artifacts/hybrid-workflow/final/integration-report.md"
-    kind: claude_code
-    claude_code:
-      model: "sonnet"
+    codex:
+      verify_after: true
       prompt: |
         認証機能とAPI機能の統合検証を実施してください。
 
