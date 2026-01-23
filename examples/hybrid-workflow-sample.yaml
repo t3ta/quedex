@@ -1,0 +1,183 @@
+version: 1
+
+description: "Hybrid workflow sample for parallel draft/review with task groups"
+
+# Hybridワークフロー サンプル
+# 認証機能とAPI機能を並列に開発し、それぞれでdraft→reviewの流れを実現
+
+variables:
+  # 共通変数: 全タスクで参照可能
+  project_name: "hybrid-sample-app"
+  base_branch: "main"
+
+groups:
+  # 認証機能グループ: draft → review の流れ
+  auth: [draft-auth, review-auth]
+
+  # API機能グループ: draft → review の流れ
+  api: [draft-api, review-api]
+
+  # 最終検証グループ
+  final: [final-verify]
+
+run:
+  name: "hybrid-sample"
+  max_concurrency: 2  # 認証とAPIを並列実行可能
+
+tasks:
+  # ========================================
+  # 認証機能: Draft フェーズ
+  # ========================================
+  - id: draft-auth
+    title: "Auth draft"
+    mode: implement
+    group: auth
+    output_files:
+      - "artifacts/hybrid-workflow/auth/draft-report.md"
+    kind: codex
+    codex:
+      prompt: |
+        認証機能の実装をdraftとして作成してください。
+
+        要件:
+        - ユーザー登録とログイン機能
+        - JWTトークンベースの認証
+        - パスワードのハッシュ化
+
+        プロジェクト名: ${project_name}
+        ベースブランチ: ${base_branch}
+
+        実装したファイルパスのリストを artifacts/hybrid-workflow/auth/draft-report.md に保存してください。
+        フォーマット:
+        - Files:
+          - path/to/file1
+          - path/to/file2
+
+  # ========================================
+  # 認証機能: Review フェーズ
+  # ========================================
+  - id: review-auth
+    title: "Auth review"
+    mode: verify
+    group: auth
+    deps: [draft-auth]
+    output_files:
+      - "artifacts/hybrid-workflow/auth/review-report.md"
+    kind: claude_code
+    claude_code:
+      model: "sonnet"
+      prompt: |
+        認証機能の実装をレビューしてください。
+
+        Draft report:
+        ${output.draft-auth}
+
+        レビュー観点:
+        - セキュリティ: パスワード処理、トークン管理
+        - エラーハンドリング
+        - テストカバレッジ
+
+        問題があれば修正してください。
+        最終的なファイルリストと指摘事項を artifacts/hybrid-workflow/auth/review-report.md にまとめてください。
+        フォーマット:
+        - Reviewed files:
+          - path/to/file
+        - Issues:
+          - issue summary (or "none")
+
+  # ========================================
+  # API機能: Draft フェーズ
+  # ========================================
+  - id: draft-api
+    title: "API draft"
+    mode: implement
+    group: api
+    output_files:
+      - "artifacts/hybrid-workflow/api/draft-report.md"
+    kind: codex
+    codex:
+      prompt: |
+        REST API機能の実装をdraftとして作成してください。
+
+        要件:
+        - ユーザー情報取得エンドポイント (GET /api/users/:id)
+        - ユーザー情報更新エンドポイント (PUT /api/users/:id)
+        - 認証ミドルウェアの統合
+
+        プロジェクト名: ${project_name}
+        ベースブランチ: ${base_branch}
+
+        実装したファイルパスとエンドポイントのリストを artifacts/hybrid-workflow/api/draft-report.md に保存してください。
+        フォーマット:
+        - Files:
+          - path/to/file1
+          - path/to/file2
+        - Endpoints:
+          - GET /api/users/:id
+          - PUT /api/users/:id
+
+  # ========================================
+  # API機能: Review フェーズ
+  # ========================================
+  - id: review-api
+    title: "API review"
+    mode: verify
+    group: api
+    deps: [draft-api]
+    output_files:
+      - "artifacts/hybrid-workflow/api/review-report.md"
+    kind: claude_code
+    claude_code:
+      model: "sonnet"
+      prompt: |
+        REST API機能の実装をレビューしてください。
+
+        Draft report:
+        ${output.draft-api}
+
+        レビュー観点:
+        - RESTful設計の妥当性
+        - 認証ミドルウェアの適用
+        - バリデーション処理
+        - エラーレスポンスの統一性
+
+        問題があれば修正してください。
+        最終的なファイルリストと指摘事項を artifacts/hybrid-workflow/api/review-report.md にまとめてください。
+        フォーマット:
+        - Reviewed files:
+          - path/to/file
+        - Issues:
+          - issue summary (or "none")
+
+  # ========================================
+  # 最終検証: 統合テスト
+  # ========================================
+  - id: final-verify
+    title: "Integration verify"
+    mode: verify
+    group: final
+    deps: [review-auth, review-api]
+    output_files:
+      - "artifacts/hybrid-workflow/final/integration-report.md"
+    kind: claude_code
+    claude_code:
+      model: "sonnet"
+      prompt: |
+        認証機能とAPI機能の統合検証を実施してください。
+
+        認証レビュー結果:
+        ${output.review-auth}
+
+        APIレビュー結果:
+        ${output.review-api}
+
+        検証項目:
+        1. 認証フローとAPI呼び出しの統合動作確認
+        2. トークン検証がAPIで正しく機能するか
+        3. エラーケースのE2Eテスト
+
+        統合テストの結果を artifacts/hybrid-workflow/final/integration-report.md に保存してください。
+        フォーマット:
+        - Result: success|failure
+        - Notes:
+          - note
