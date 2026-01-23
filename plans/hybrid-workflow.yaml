@@ -1,0 +1,299 @@
+version: 1
+
+# Multi-Runner Tasks (Hybrid Workflow) Implementation Plan
+# Claude Code (draft) + Codex CLI (review) を組み合わせた品質向上・効率化ワークフロー
+
+variables:
+  skill_path: "~/.claude/skills/spec-to-plan"
+  examples_path: "examples"
+
+groups:
+  skill-extension: [research-skill, draft-skill, review-skill]
+  sample: [draft-sample, review-sample]
+  docs: [draft-docs, review-docs]
+  final: [verify-all]
+
+run:
+  name: "hybrid-workflow-implementation"
+  max_concurrency: 2
+  fail_fast: true
+  default_timeout_sec: 900
+
+tasks:
+  # ============================================
+  # Phase 1: Research existing skill structure
+  # ============================================
+  - id: research-skill
+    title: "調査: spec-to-plan スキルの現状把握"
+    mode: research
+    codex:
+      prompt: |
+        spec-to-planスキルの現在の構造を調査してください。
+
+        調査対象:
+        - ~/.claude/skills/spec-to-plan/SKILL.md
+        - ~/.claude/skills/spec-to-plan/references/plan-generation-rules.md
+        - ~/.claude/skills/spec-to-plan/references/interview-checklist.md
+
+        調査項目:
+        1. 現在のPhase構成（Phase 0-5）
+        2. Plan Generation セクションの構造
+        3. Task Decomposition のロジック
+        4. Runner Selection の実装
+        5. 拡張ポイントの特定
+
+        重要: 調査結果を artifacts/research-skill.md に必ず保存してください。
+        ファイルには以下を含めること:
+        - 各Phaseの説明
+        - Plan Generationの現在のロジック
+        - 拡張が必要なセクション
+      output_last_message: "artifacts/research-skill.md"
+      sandbox: "workspace-write"
+
+  # ============================================
+  # Phase 2: Implement skill extension (Draft)
+  # ============================================
+  - id: draft-skill
+    title: "Draft: SKILL.md のHybridワークフロー拡張"
+    mode: implement
+    deps: [research-skill]
+    locks: [workspace]
+    claude_code:
+      prompt: |
+        ~/.claude/skills/spec-to-plan/SKILL.md を編集して、Hybridワークフローを追加してください。
+
+        ## 追加する機能
+
+        ### 1. Phase 5 の拡張（Runner Selectionセクション内）
+        「ワークフロー選択」を追加:
+        - Classic: research → implement → verify（従来）
+        - Hybrid: draft → review（新規）
+        - Mixed: 機能ごとに選択
+
+        ### 2. Plan Generation セクションの拡張
+        Hybridワークフロー用のタスク生成ルールを追加:
+
+        #### Draft Task
+        - ID: draft-{feature}
+        - mode: implement
+        - runner: claude_code (model: sonnet)
+        - output_files で生成内容を記録
+        - プロンプト: 包括的な実装 + レビューポイント出力
+
+        #### Review Task
+        - ID: review-{feature}
+        - mode: verify
+        - runner: codex (verify_after: true)
+        - deps: [draft-{feature}]
+        - locks: [workspace]
+        - 変数展開でドラフト内容を参照
+        - プロンプト: 品質・ベストプラクティス・テスト充足度の観点でレビュー・修正
+
+        ### 3. プロンプトテンプレート
+        Draft/Review用のテンプレートをPlan Generationセクションに追加
+
+        重要:
+        - SKILL.mdを直接編集してください
+        - 編集完了後、変更内容のサマリーを表示してください
+      model: sonnet
+
+  # ============================================
+  # Phase 3: Review skill extension (Codex)
+  # ============================================
+  - id: review-skill
+    title: "Review: SKILL.md の品質確認と修正"
+    mode: verify
+    deps: [draft-skill]
+    locks: [workspace]
+    codex:
+      prompt: |
+        ~/.claude/skills/spec-to-plan/SKILL.md の変更内容をレビュー・修正してください。
+
+        ## レビュー観点
+
+        1. **一貫性**
+           - 既存のPhase構成との整合性
+           - 既存のplan-generation-rulesとの整合性
+           - 命名規則の一貫性（draft-*, review-*）
+
+        2. **完全性**
+           - ワークフロー選択のすべてのパス（Classic/Hybrid/Mixed）が網羅されているか
+           - プロンプトテンプレートが十分詳細か
+           - エラーケースの考慮
+
+        3. **実用性**
+           - 実際に使用する際の分かりやすさ
+           - AskUserQuestionのオプション設計
+
+        ## 指示
+        - 問題があれば直接修正
+        - 修正理由をコメントで記録
+        - 最終的に SKILL.md が正しく動作することを確認
+      verify_after: true
+
+  # ============================================
+  # Phase 4: Create sample plan (Draft)
+  # ============================================
+  - id: draft-sample
+    title: "Draft: サンプルplan作成"
+    mode: implement
+    deps: [review-skill]
+    locks: [workspace]
+    claude_code:
+      prompt: |
+        Hybridワークフローのサンプルplanを examples/hybrid-workflow-sample.yaml に作成してください。
+
+        ## 要件
+        - 2つの機能（auth, api）を持つシナリオ
+        - draft → review の流れを明確に示す
+        - output変数の使用例を含む
+        - コメントで各セクションを説明
+
+        ## 構造
+        version: 1
+
+        variables:
+          # 共通変数
+
+        groups:
+          auth: [draft-auth, review-auth]
+          api: [draft-api, review-api]
+          final: [final-verify]
+
+        run:
+          name: "hybrid-sample"
+          max_concurrency: 2
+
+        tasks:
+          # auth機能: draft → review
+          # api機能: draft → review
+          # 最終検証
+
+        重要: examples/hybrid-workflow-sample.yaml を直接作成してください。
+      model: sonnet
+
+  # ============================================
+  # Phase 5: Review sample plan (Codex)
+  # ============================================
+  - id: review-sample
+    title: "Review: サンプルplanの検証"
+    mode: verify
+    deps: [draft-sample]
+    locks: [workspace]
+    codex:
+      prompt: |
+        examples/hybrid-workflow-sample.yaml のサンプルplanをレビュー・検証してください。
+
+        ## 検証項目
+
+        1. **YAML構文**
+           - 有効なYAML形式か
+           - quedexスキーマに準拠しているか
+
+        2. **DAG検証**
+           - quedex graph examples/hybrid-workflow-sample.yaml を実行
+           - 循環依存がないことを確認
+           - 依存関係が正しく設定されているか
+
+        3. **コンテンツ**
+           - プロンプトが実用的か
+           - 変数参照が正しいか
+           - ドキュメントとして分かりやすいか
+
+        ## 指示
+        - 問題があれば修正
+        - 検証コマンドを実行して確認
+      verify_after: true
+
+  # ============================================
+  # Phase 6: Update documentation (Draft)
+  # ============================================
+  - id: draft-docs
+    title: "Draft: README更新"
+    mode: implement
+    deps: [review-sample]
+    locks: [workspace]
+    claude_code:
+      prompt: |
+        quedexのREADME.mdにHybridワークフローのセクションを追加してください。
+
+        ## 追加内容（適切な場所に挿入）
+
+        ### 1. Hybridワークフロー概要
+        - Hybridワークフローとは何か
+        - Classic vs Hybrid の比較
+        - いつHybridを使うべきか
+
+        ### 2. 使用例
+        - spec-to-planからの生成フロー
+        - サンプルplanへの参照
+        - 実行コマンド例
+
+        ### 3. ベストプラクティス
+        - Draft/Reviewのプロンプト設計
+        - 効果的な output変数 の使い方
+        - 並列度の調整
+
+        重要: README.md を直接編集してください。
+      model: sonnet
+
+  # ============================================
+  # Phase 7: Review documentation (Codex)
+  # ============================================
+  - id: review-docs
+    title: "Review: README品質確認"
+    mode: verify
+    deps: [draft-docs]
+    locks: [workspace]
+    codex:
+      prompt: |
+        README.mdのHybridワークフローセクションをレビューしてください。
+
+        ## レビュー観点
+
+        1. **正確性**
+           - 技術的に正確か
+           - 実際の動作と一致しているか
+
+        2. **分かりやすさ**
+           - 初めて読む人にも理解できるか
+           - 例が適切か
+
+        3. **一貫性**
+           - 既存のREADME構成との一貫性
+           - 用語の統一
+
+        ## 指示
+        - 問題があれば修正
+        - マークダウンの構文チェック
+      verify_after: true
+
+  # ============================================
+  # Phase 8: Final verification
+  # ============================================
+  - id: verify-all
+    title: "最終検証: 全体の整合性確認"
+    mode: verify
+    deps: [review-skill, review-sample, review-docs]
+    codex:
+      prompt: |
+        Hybridワークフロー実装の最終検証を行ってください。
+
+        ## 検証項目
+
+        1. **ファイルの存在確認**
+           - ~/.claude/skills/spec-to-plan/SKILL.md が更新されている
+           - examples/hybrid-workflow-sample.yaml が作成されている
+           - README.md が更新されている
+
+        2. **機能テスト**
+           - quedex graph examples/hybrid-workflow-sample.yaml が成功
+           - SKILL.mdの構文が正しい
+
+        3. **整合性確認**
+           - SKILL.mdのルールとサンプルplanが一致
+           - READMEの説明とサンプルが一致
+
+        ## 出力
+        検証結果をサマリーとして表示してください。
+      verify_after: true

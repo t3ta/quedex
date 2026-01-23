@@ -377,6 +377,229 @@ notifications:
   events: ["on_complete", "on_failure"]
 ```
 
+## Hybridワークフロー
+
+quedex は複数のランナー（Codex CLI、Claude Code、Opencode）を組み合わせた柔軟なワークフローを実現します。特に「Draft → Review」パターンを使った品質向上ワークフローが効果的です。
+
+### Hybridワークフローとは
+
+Hybridワークフローは、異なるランナーの強みを組み合わせて高品質な成果物を効率的に作成する手法です。ここでの Draft / Review はタスク名の慣習で、`mode` はそれぞれ `implement` / `verify` を使います。
+
+**主なパターン:**
+
+1. **Draft（Claude Code）→ Review（Codex CLI）**
+   - Claude Code で初稿を素早く生成（model: sonnet で高速化）
+   - Codex CLI でコードレビュー・品質向上・テスト実行
+   - 並列度を高めつつ品質を担保
+
+2. **Research（Codex CLI）→ Implement（Claude Code）**
+   - Codex CLI で既存実装を調査・分析
+   - Claude Code で調査結果を踏まえた実装
+
+### Classic vs Hybrid の比較
+
+| 観点 | Classic | Hybrid |
+|------|---------|--------|
+| フロー | research → implement → verify | draft → review |
+| 実行時間 | 長め（各フェーズが独立） | 短縮（Draftが高速） |
+| 品質保証 | verify フェーズで確認 | Review で修正まで実施 |
+| 適用場面 | 複雑な調査が必要な場合 | 実装主体のタスク |
+
+### いつHybridを使うべきか
+
+**Hybridが適している場合:**
+- 実装主体のタスク（ドキュメント作成、コード生成、設定ファイル作成など）
+- 素早いイテレーションが必要な場合
+- 複数の機能を並列開発する場合
+
+**Classicが適している場合:**
+- 既存実装の深い理解が必要な場合
+- 調査フェーズの成果物（調査レポート）を明示的に残したい場合
+- 実装前に調査結果をレビューしたい場合
+
+### 使用例
+
+#### spec-to-plan スキルからの生成
+
+`spec-to-plan` スキルを使うと、対話形式でHybridワークフローのplanを生成できます:
+
+```bash
+# spec-to-plan スキルを起動
+claude
+
+# チャット内で
+/spec-to-plan
+
+# Phase 5: Runner Selection で "Hybrid" を選択
+# → draft-{feature} / review-{feature} タスクが自動生成される
+```
+
+#### サンプルplan
+
+Hybridワークフローのサンプルは `examples/hybrid-workflow-sample.yaml` を参照してください:
+
+```yaml
+version: 1
+
+variables:
+  target_dir: "src/features"
+
+groups:
+  auth: [draft-auth, review-auth]
+  api: [draft-api, review-api]
+
+run:
+  name: "feature-development"
+  max_concurrency: 2
+
+tasks:
+  # Auth機能: Draft → Review
+  - id: draft-auth
+    title: "Draft: 認証機能実装"
+    mode: implement
+    claude_code:
+      prompt: |
+        ${target_dir}/auth に認証機能を実装してください。
+
+        実装内容:
+        - JWT トークン生成
+        - ログイン API
+        - 基本的なテストケース
+
+        レビュー用の要点を artifacts/draft-auth-summary.md に出力:
+        - 実装した機能の説明
+        - テスト状況
+        - 懸念点
+      model: sonnet
+    output_files:
+      - "artifacts/draft-auth-summary.md"
+
+  - id: review-auth
+    title: "Review: 認証機能の品質向上"
+    mode: verify
+    deps: [draft-auth]
+    locks: [workspace]
+    codex:
+      prompt: |
+        ${target_dir}/auth の認証機能をレビュー・改善してください。
+
+        レビュー観点:
+        - セキュリティベストプラクティス（JWT有効期限、署名検証）
+        - エラーハンドリングの充実度
+        - テストカバレッジ
+        - コードスタイルの一貫性
+
+        問題があれば修正し、テストを実行してください。
+
+  # API機能も同様に並列実行
+  - id: draft-api
+    # ...
+  - id: review-api
+    # ...
+```
+
+#### 実行コマンド例
+
+```bash
+# planを実行（バックグラウンド）
+quedex start examples/hybrid-workflow-sample.yaml
+# → run_id: abc123...
+
+# TUIで監視（draft-auth と draft-api が並列実行される様子が確認できる）
+quedex tui abc123
+
+# グループ単位で状態確認
+quedex status abc123 --group auth
+
+# DAGを可視化
+quedex graph examples/hybrid-workflow-sample.yaml --mermaid
+```
+
+### ベストプラクティス
+
+#### Draft プロンプトの設計
+
+Draft タスクでは、実装だけでなく **レビューに必要な情報** も出力させるのがポイント:
+
+```yaml
+claude_code:
+  prompt: |
+    機能Xを実装してください。
+
+    【実装内容】
+    - ...
+
+    【レビュー用出力】
+    以下の情報をartifacts/draft-summary.mdに出力:
+    - 実装した機能の説明
+    - 設計上の判断とその理由
+    - 懸念点・要検討事項
+    - テスト実施状況
+  model: sonnet
+output_files:
+  - "artifacts/draft-summary.md"
+```
+
+#### Review プロンプトの設計
+
+Review タスクでは、Draft の出力を参照し、具体的なレビュー観点を指定:
+
+```yaml
+codex:
+  prompt: |
+    機能Xをレビュー・改善してください。
+
+    Draft時の出力: artifacts/draft-summary.md を参照
+
+    【レビュー観点】
+    1. 正確性: ビジネスロジックが仕様通りか
+    2. 保守性: コードが理解しやすく、拡張しやすいか
+    3. 堅牢性: エラーケースが適切に処理されているか
+    4. テスト: カバレッジとテストケースの妥当性
+
+    問題があれば修正し、すべてのテストを実行してください。
+```
+
+#### output_files の効果的な使い方
+
+Draft タスクで成果物を `output_files` に登録し、Review タスクから参照:
+
+```yaml
+# Draft
+- id: draft-feature
+  output_files:
+    - "artifacts/implementation-notes.md"
+    - "src/feature/index.ts"
+
+# Review（プロンプト内で参照）
+- id: review-feature
+  deps: [draft-feature]
+  codex:
+    prompt: |
+      artifacts/implementation-notes.md を読んで実装の意図を理解してから、
+      src/feature/index.ts をレビューしてください。
+```
+
+#### 並列度の調整
+
+Hybridワークフローでは、Draft タスクを並列実行して高速化できます:
+
+```yaml
+run:
+  max_concurrency: 4  # Draft 4つを同時実行
+
+groups:
+  # 機能ごとにグループ化
+  feature-a: [draft-a, review-a]
+  feature-b: [draft-b, review-b]
+  feature-c: [draft-c, review-c]
+  feature-d: [draft-d, review-d]
+```
+
+**推奨設定:**
+- Draft タスク: 並列度を高める（max_concurrency: 4〜8）
+- Review タスク: `locks: [workspace]` で排他実行（コンフリクト回避）
+
 ## 使用例
 
 ### 基本的な使い方
