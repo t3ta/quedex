@@ -1,8 +1,50 @@
 # Plan JSON Schema Reference
 
-## Overview
+## 原則: 最小限のフィールドのみ使う
 
-Plan files define DAG-based task execution for quedex. This reference covers all fields, validation rules, and constraints.
+**省略できるフィールドは省略する。** デフォルト値があるものは書かない。
+
+### 省略すべきフィールド一覧
+
+| フィールド | デフォルト | 書くべき場合 |
+|-----------|----------|-------------|
+| `deps` | `[]` | 依存がある場合のみ |
+| `locks` | `[]` | 排他制御が必要な場合のみ |
+| `kind` | (自動推論) | **常に省略** |
+| `json` | `true` | **常に省略** |
+| `cwd` | `.` | カレント以外で実行する場合のみ |
+| `verify_after` | `true` | falseにしたい場合のみ |
+| `sandbox` | `"workspace-write"` | 変更したい場合のみ |
+| `title` | なし | 必要な場合のみ |
+| `variables` | なし | 3箇所以上で同じ値を使う場合のみ |
+| `groups` | なし | バッチ操作が必要な場合のみ |
+
+---
+
+## 最小限のplan例
+
+```json
+{
+  "version": 1,
+  "run": { "name": "feature" },
+  "tasks": [
+    {
+      "id": "research",
+      "mode": "research",
+      "codex": { "prompt": "調査して", "output_last_message": "out.md" }
+    },
+    {
+      "id": "impl",
+      "mode": "implement",
+      "deps": ["research"],
+      "locks": ["workspace"],
+      "codex": { "prompt": "実装して" }
+    }
+  ]
+}
+```
+
+---
 
 ## Root Structure
 
@@ -231,10 +273,10 @@ Array of Task objects. Must contain at least one task.
 - **Purpose**: Disable worktree for this task even if enabled globally
 - **Default**: `false`
 
-### kind (optional)
+### kind (optional) ⚠️ 常に省略
 
 - **Type**: `"codex" | "claude_code" | "opencode"`
-- **Note**: Inferred from which config is present if omitted
+- **Note**: runner設定から自動推論されるため**常に省略する**
 
 ### Runner configs (one required)
 
@@ -278,11 +320,12 @@ Exactly one of `codex`, `claude_code`, or `opencode` must be present.
 - **Common values**: `"workspace-write"`, `"danger-full-access"`
 - **Note**: Only used for `mode: "research"`
 
-### json (optional)
+### json (optional) ⚠️ 常に省略
 
 - **Type**: `boolean`
 - **Default**: `true`
 - **Purpose**: JSONL event output for TUI monitoring
+- **Note**: デフォルトがtrueなので**常に省略する**
 
 ---
 
@@ -306,10 +349,11 @@ Exactly one of `codex`, `claude_code`, or `opencode` must be present.
 - **Type**: `string`
 - **Purpose**: Model to use (e.g., `"sonnet"`, `"opus"`)
 
-### json (optional)
+### json (optional) ⚠️ 常に省略
 
 - **Type**: `boolean`
 - **Default**: `true`
+- **Note**: デフォルトがtrueなので**常に省略する**
 
 ---
 
@@ -333,10 +377,11 @@ Exactly one of `codex`, `claude_code`, or `opencode` must be present.
 - **Type**: `string`
 - **Purpose**: Model to use
 
-### json (optional)
+### json (optional) ⚠️ 常に省略
 
 - **Type**: `boolean`
 - **Default**: `true`
+- **Note**: デフォルトがtrueなので**常に省略する**
 
 ---
 

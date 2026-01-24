@@ -2,82 +2,38 @@
   "version": 1,
   "run": {
     "name": "feature-implementation",
-    "cwd": ".",
     "max_concurrency": 2,
-    "fail_fast": true,
-    "default_timeout_sec": 3600
+    "fail_fast": true
   },
   "tasks": [
     {
       "id": "research",
-      "title": "調査: 既存実装の把握",
       "mode": "research",
-      "deps": [],
-      "locks": [],
-      "kind": "codex",
       "codex": {
         "prompt": "既存の実装を調査して、パターンとベストプラクティスを把握して",
-        "output_last_message": "artifacts/research.md",
-        "sandbox": "workspace-write",
-        "json": true
+        "output_last_message": "artifacts/research.md"
       }
     },
     {
       "id": "implement-core",
-      "title": "実装: コア機能",
       "mode": "implement",
       "deps": ["research"],
       "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "artifacts/research.md の調査結果を踏まえて、コア機能を実装して",
-        "json": true
-      }
+      "codex": { "prompt": "artifacts/research.md の調査結果を踏まえて、コア機能を実装して" }
     },
     {
       "id": "implement-tests",
-      "title": "実装: テストコード",
       "mode": "implement",
       "deps": ["implement-core"],
       "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "実装したコア機能のテストコードを作成して",
-        "json": true
-      }
+      "codex": { "prompt": "実装したコア機能のテストコードを作成して" }
     },
     {
-      "id": "verify-build",
-      "title": "検証: ビルド",
+      "id": "verify",
       "mode": "verify",
       "deps": ["implement-tests"],
-      "locks": [],
-      "kind": "shell",
-      "shell": {
-        "command": "npm run build"
-      }
-    },
-    {
-      "id": "verify-test",
-      "title": "検証: テスト実行",
-      "mode": "verify",
-      "deps": ["verify-build"],
-      "locks": [],
-      "kind": "shell",
-      "shell": {
-        "command": "npm test"
-      }
-    },
-    {
-      "id": "verify-lint",
-      "title": "検証: Lint",
-      "mode": "verify",
-      "deps": ["verify-build"],
-      "locks": [],
-      "kind": "shell",
-      "shell": {
-        "command": "npm run lint"
-      }
+      "locks": ["workspace"],
+      "codex": { "prompt": "npm run build && npm test && npm run lint を実行して、失敗があれば修正して" }
     }
   ]
 }

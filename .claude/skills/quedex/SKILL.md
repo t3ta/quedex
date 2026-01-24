@@ -7,53 +7,50 @@ description: DAG-based task execution with Codex CLI integration. Use when users
 
 ## Overview
 
-Generate and execute DAG-based task plans using Codex CLI, Claude Code, or Opencode. Quedex handles dependency resolution, parallel execution, state persistence, and failure recovery while LLMs focus on planning.
+Generate and execute DAG-based task plans. Quedex handles dependency resolution, parallel execution, state persistence, and failure recovery while LLMs focus on planning.
 
-**Core capabilities:**
-- DAG-based dependency resolution and scheduling
-- Multiple runners: Codex CLI / Claude Code / Opencode
-- Parallel execution with concurrency control
-- Exclusive resource locks (workspace, db-migrate, etc.)
-- Task groups for batch operations
-- Conditional execution (env vars, task results)
-- Automatic retry with configurable delays
-- Output file capture
-- Real-time TUI and Web dashboard monitoring
-- State persistence and crash recovery
+## ⚠️ Plan作成の原則: 最小限のフィールドのみ使う
+
+**省略できるフィールドは省略する。** 以下は書かない：
+- `deps: []` → 依存がないなら省略
+- `locks: []` → ロックが不要なら省略
+- `kind: "codex"` → runner設定から自動推論される
+- `json: true` → デフォルトがtrue
+- `cwd: "."` → デフォルトがカレントディレクトリ
+- `verify_after: true` → implementモードのデフォルト
+- `variables` → 同じ値を複数箇所で使う場合のみ
 
 ## Quick Start
 
-### 1. Create a plan
+### 1. 最小限のplan例
 
-```yaml
-version: 1
-run:
-  name: "demo"
-  max_concurrency: 2
-
-groups:
-  backend: [research, implement]
-
-tasks:
-  - id: research
-    title: "調査: 既存実装の把握"
-    mode: research
-    codex:
-      prompt: "このリポジトリの構成を調査して要点をまとめて"
-      output_last_message: "artifacts/research.md"
-
-  - id: implement
-    title: "実装: 機能追加"
-    mode: implement
-    deps: [research]
-    locks: [workspace]
-    claude_code:
-      prompt: "artifacts/research.md を参考に新機能を実装して"
-      model: sonnet
+```json
+{
+  "version": 1,
+  "run": { "name": "add-feature" },
+  "tasks": [
+    {
+      "id": "research",
+      "mode": "research",
+      "codex": {
+        "prompt": "認証機能の実装を調査して",
+        "output_last_message": "artifacts/research.md"
+      }
+    },
+    {
+      "id": "implement",
+      "mode": "implement",
+      "deps": ["research"],
+      "locks": ["workspace"],
+      "codex": { "prompt": "artifacts/research.md を参考にパスワードリセット機能を実装して" }
+    }
+  ]
+}
 ```
 
-**For plan schema details**, see [schema.md](references/schema.md).
-**For common patterns**, see [examples.md](references/examples.md).
+**ポイント:** 必要なフィールドだけ。`title`, `kind`, `json`, `verify_after` 等は省略。
+
+**詳細**: [schema.md](references/schema.md) | [examples.md](references/examples.md)
 
 ### 2. Execute
 
@@ -110,113 +107,31 @@ quedex retry <run_id> --group <name>       # Retry group
 
 ### Task modes
 
-**research**: Sandboxed exploration
-- Use `output_last_message` to save findings
-- Use `sandbox: "workspace-write"` for artifact creation
+- **research**: 調査用。`output_last_message` で結果を保存
+- **implement**: 実装用。自動でbuild/lint/test実行（`verify_after`デフォルトtrue）
+- **verify**: テスト・検証用
 
-**implement**: Full write access
-- Set `verify_after: true` (default) for auto build/lint/test
-- Use `locks: ["workspace"]` to prevent conflicts
+### Runners（1つ選ぶ、通常はcodex）
 
-**verify**: Testing and validation
-
-### Runners
-
-**codex**: Codex CLI
-```yaml
-codex:
-  prompt: "Implement feature X"
-  verify_after: true
-  json: true
+```json
+"codex": { "prompt": "..." }
+"claude_code": { "prompt": "...", "model": "opus" }
+"opencode": { "prompt": "...", "model": "gpt-4" }
 ```
 
-**claude_code**: Claude Code
-```yaml
-claude_code:
-  prompt: "Implement feature X"
-  model: opus  # or sonnet
-```
+## 高度な機能（必要なときだけ使う）
 
-**opencode**: Opencode
-```yaml
-opencode:
-  prompt: "Implement feature X"
-  model: gpt-4
-```
+以下は**本当に必要な場合のみ**使用。シンプルなplanでは不要：
 
-## Advanced Features
-
-### Task groups
-
-Group tasks for batch operations:
-
-```yaml
-groups:
-  backend: [api-research, api-impl]
-  frontend: [ui-research, ui-impl]
-```
-
-```bash
-quedex status <run_id> --group backend
-quedex retry <run_id> --group backend
-quedex cancel <run_id> --group frontend
-```
-
-### Conditional execution
-
-Skip tasks based on conditions:
-
-```yaml
-# Environment variable condition
-condition:
-  env: "CI"
-  equals: "true"
-
-# Previous task result condition
-condition:
-  task: "build"
-  status: succeeded
-```
-
-### Automatic retry
-
-```yaml
-retry_count: 3
-retry_delay_sec: 30
-```
-
-### Output file capture
-
-```yaml
-output_files:
-  - "artifacts/report.md"
-  - "coverage/lcov.info"
-```
-
-View with: `quedex outputs <run_id> --task <task_id>`
-
-### Dynamic timeout
-
-```yaml
-timeout_sec: 300       # Fixed
-timeout_sec: "auto"    # Average + 2σ from history
-timeout_sec: "2x_average"  # 2× average
-```
-
-### Template variables
-
-```yaml
-variables:
-  target_dir: "src/api"
-  test_cmd: "npm test"
-
-tasks:
-  - id: impl
-    codex:
-      prompt: "Implement in ${target_dir}, run ${test_cmd}"
-```
-
-Environment variables: `${env.CI}`, `${env.NODE_ENV}`
+| 機能 | いつ使うか |
+|------|----------|
+| `locks` | 複数タスクが同じファイルを編集する場合 |
+| `groups` | 大量のタスクをまとめて操作したい場合 |
+| `condition` | 環境や前タスク結果で分岐が必要な場合 |
+| `retry_count` | 不安定なタスク（E2Eテスト等）の場合 |
+| `variables` | 同じ値を3箇所以上で使う場合 |
+| `timeout_sec` | 長時間タスクでタイムアウト制御が必要な場合 |
+| `output_files` | 特定ファイルをキャプチャしたい場合 |
 
 ## TUI Key Bindings
 
@@ -231,22 +146,17 @@ Environment variables: `${env.CI}`, `${env.NODE_ENV}`
 
 ## Tips
 
-### When to use quedex
+### quedexを使うべきケース
+- 複数ステップの実装（依存関係あり）
+- 並列で複数領域を調査
+- 長時間のバックグラウンド実行
 
-**Good fits:**
-- Multi-step implementations with dependencies
-- Parallel research across subsystems
-- Complex features with staged rollout
-- Tasks needing failure recovery
-- Long-running background operations
+### quedexを使うべきでないケース
+- 単一のシンプルなタスク → 直接実行
+- 対話的なワークフロー
 
-**Poor fits:**
-- Single simple tasks
-- Highly interactive workflows
-
-### Optimizing plans
-
-- **Maximize parallelism**: Only add deps when truly required
-- **Use locks sparingly**: Only for genuine conflicts
-- **Tune concurrency**: Start with `max_concurrency: 2`
-- **Use groups**: Organize related tasks for batch operations
+### Plan作成のベストプラクティス
+1. **フィールドは最小限に** - 省略できるものは書かない
+2. **depsは本当に必要なときだけ** - 不要な依存は並列性を下げる
+3. **locksは慎重に** - 本当に競合する場合のみ
+4. **variablesは3箇所以上で使う場合のみ** - 1-2箇所なら直書き
