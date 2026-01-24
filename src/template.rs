@@ -57,22 +57,18 @@ pub fn expand_prompt(
 ) -> Result<String> {
     let re = &*TEMPLATE_REGEX;
 
-    let mut result = prompt.to_string();
     let mut errors: Vec<String> = Vec::new();
     let mut state_cache: Option<State> = None;
     let mut output_cache: HashMap<String, String> = HashMap::new();
 
-    // Find all matches first to avoid borrowing issues
-    let matches: Vec<(String, String)> = re
-        .captures_iter(prompt)
-        .map(|cap| {
-            let full_match = cap.get(0).unwrap().as_str().to_string();
-            let var_name = cap.get(1).unwrap().as_str().to_string();
-            (full_match, var_name)
-        })
-        .collect();
+    // Collect match positions and compute replacement values
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
 
-    for (full_match, var_name) in matches {
+    for cap in re.captures_iter(prompt) {
+        let mat = cap.get(0).unwrap();
+        let full_match = mat.as_str();
+        let var_name = cap.get(1).unwrap().as_str();
+
         let value = if let Some(env_var) = var_name.strip_prefix("env.") {
             // Environment variable reference
             match std::env::var(env_var) {
@@ -83,7 +79,7 @@ pub fn expand_prompt(
                 }
             }
         } else {
-            match parse_output_ref(&var_name) {
+            match parse_output_ref(var_name) {
                 Ok(Some(task_id)) => {
                     if let Some(cached) = output_cache.get(task_id) {
                         cached.clone()
@@ -102,7 +98,7 @@ pub fn expand_prompt(
                 }
                 Ok(None) => {
                     // Regular variable reference
-                    match variables.get(&var_name) {
+                    match variables.get(var_name) {
                         Some(val) => val.clone(),
                         None => {
                             errors.push(format!("undefined variable: {var_name}"));
@@ -117,12 +113,23 @@ pub fn expand_prompt(
             }
         };
 
-        result = result.replace(&full_match, &value);
+        replacements.push((mat.start(), mat.end(), value));
     }
 
     if !errors.is_empty() {
         bail!("template expansion failed: {}", errors.join(", "));
     }
+
+    // Build result string in a single pass
+    let mut result = String::with_capacity(prompt.len());
+    let mut last_end = 0;
+
+    for (start, end, value) in replacements {
+        result.push_str(&prompt[last_end..start]);
+        result.push_str(&value);
+        last_end = end;
+    }
+    result.push_str(&prompt[last_end..]);
 
     Ok(result)
 }
@@ -339,21 +346,17 @@ mod tests {
 
     #[test]
     fn test_expand_env_variable() {
-        // SAFETY: Using unique env var name to minimize conflicts with parallel tests.
-        // This is inherently racy but acceptable for testing purposes.
-        unsafe {
-            std::env::set_var("TEST_QUEDEX_EXPAND_VAR_1", "test_value");
-        }
+        let unique_suffix = std::process::id();
+        let var_name = format!("TEST_QUEDEX_EXPAND_VAR_{unique_suffix}");
+        std::env::set_var(&var_name, "test_value");
 
         let vars = HashMap::new();
         let store = NoopStore;
         let result =
-            expand_prompt("Value: ${env.TEST_QUEDEX_EXPAND_VAR_1}", &vars, &store).unwrap();
+            expand_prompt(&format!("Value: ${{env.{}}}", var_name), &vars, &store).unwrap();
         assert_eq!(result, "Value: test_value");
 
-        unsafe {
-            std::env::remove_var("TEST_QUEDEX_EXPAND_VAR_1");
-        }
+        std::env::remove_var(&var_name);
     }
 
     #[test]
@@ -415,27 +418,23 @@ mod tests {
 
     #[test]
     fn test_mixed_variables_and_env() {
-        // SAFETY: Using unique env var name to minimize conflicts with parallel tests.
-        // This is inherently racy but acceptable for testing purposes.
-        unsafe {
-            std::env::set_var("TEST_QUEDEX_MIXED_VAR_2", "env_value");
-        }
+        let unique_suffix = std::process::id();
+        let var_name = format!("TEST_QUEDEX_MIXED_VAR_{unique_suffix}");
+        std::env::set_var(&var_name, "env_value");
 
         let mut vars = HashMap::new();
         vars.insert("local".to_string(), "local_value".to_string());
 
         let store = NoopStore;
         let result = expand_prompt(
-            "Local: ${local}, Env: ${env.TEST_QUEDEX_MIXED_VAR_2}",
+            &format!("Local: ${{local}}, Env: ${{env.{}}}", var_name),
             &vars,
             &store,
         )
         .unwrap();
         assert_eq!(result, "Local: local_value, Env: env_value");
 
-        unsafe {
-            std::env::remove_var("TEST_QUEDEX_MIXED_VAR_2");
-        }
+        std::env::remove_var(&var_name);
     }
 
     #[test]
