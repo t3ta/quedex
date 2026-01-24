@@ -1,698 +1,264 @@
-# Common Quedex Patterns and Examples
+# Quedex Plan Examples
 
-## Basic Patterns
+## 原則: 最小限のフィールドのみ書く
 
-### Single Research Task
+以下は**省略する**：
+- `deps: []` → 依存がないなら書かない
+- `locks: []` → ロックが不要なら書かない
+- `kind: "codex"` → runner設定から自動推論
+- `json: true` → デフォルト値
+- `cwd: "."` → デフォルト値
+- `verify_after: true` → implementモードのデフォルト
+- `sandbox: "workspace-write"` → researchモードのデフォルト
 
-Explore a codebase and save findings:
+---
+
+## 基本パターン
+
+### 単一の調査タスク
 
 ```json
 {
   "version": 1,
-  "run": {
-    "name": "explore-auth",
-    "cwd": ".",
-    "max_concurrency": 1
-  },
+  "run": { "name": "explore-auth" },
   "tasks": [
     {
-      "id": "research-auth",
-      "title": "調査: 認証の実装状況",
+      "id": "research",
       "mode": "research",
-      "deps": [],
-      "locks": [],
-      "kind": "codex",
       "codex": {
-        "prompt": "このプロジェクトの認証実装を調査して、使用している技術とフローを説明して",
-        "output_last_message": "artifacts/auth-research.md",
-        "sandbox": "workspace-write",
-        "json": true
+        "prompt": "認証機能の実装を調査して",
+        "output_last_message": "artifacts/auth.md"
       }
     }
   ]
 }
 ```
 
-**Use when:** Need to understand existing code before making changes.
+### 調査 → 実装
 
-### Research → Implement Pipeline
-
-Standard two-phase workflow:
+最も一般的なパターン:
 
 ```json
 {
   "version": 1,
-  "run": {
-    "name": "add-feature",
-    "cwd": ".",
-    "max_concurrency": 1,
-    "fail_fast": true
-  },
+  "run": { "name": "add-feature" },
   "tasks": [
     {
       "id": "research",
-      "title": "調査: 既存のログイン実装",
       "mode": "research",
-      "deps": [],
-      "locks": [],
-      "kind": "codex",
       "codex": {
-        "prompt": "ログイン機能の実装箇所を調査し、パターンを把握して",
-        "output_last_message": "artifacts/login-analysis.md",
-        "sandbox": "workspace-write",
-        "json": true
+        "prompt": "ログイン機能の実装を調査して",
+        "output_last_message": "artifacts/login.md"
       }
     },
     {
       "id": "implement",
-      "title": "実装: パスワードリセット機能",
       "mode": "implement",
       "deps": ["research"],
       "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "artifacts/login-analysis.md を参考に、既存パターンに従ってパスワードリセット機能を実装して",
-        "verify_after": true,
-        "json": true
-      }
+      "codex": { "prompt": "artifacts/login.md を参考にパスワードリセット機能を実装して" }
     }
   ]
 }
 ```
 
-**Use when:** Need context before implementing to match existing patterns.
+### 並列調査 → 統合実装
 
-### Parallel Research Tasks
-
-Investigate multiple areas simultaneously:
+複数領域を同時に調査:
 
 ```json
 {
   "version": 1,
-  "run": {
-    "name": "multi-research",
-    "cwd": ".",
-    "max_concurrency": 3
-  },
+  "run": { "name": "multi-research", "max_concurrency": 3 },
   "tasks": [
     {
       "id": "research-api",
-      "title": "調査: API構造",
       "mode": "research",
-      "deps": [],
-      "kind": "codex",
       "codex": {
-        "prompt": "API のエンドポイント設計を調査して",
-        "output_last_message": "artifacts/api.md",
-        "sandbox": "workspace-write",
-        "json": true
+        "prompt": "API構造を調査して",
+        "output_last_message": "artifacts/api.md"
       }
     },
     {
       "id": "research-db",
-      "title": "調査: データベーススキーマ",
       "mode": "research",
-      "deps": [],
-      "kind": "codex",
       "codex": {
-        "prompt": "データベーススキーマを調査して",
-        "output_last_message": "artifacts/db.md",
-        "sandbox": "workspace-write",
-        "json": true
+        "prompt": "DBスキーマを調査して",
+        "output_last_message": "artifacts/db.md"
       }
     },
     {
-      "id": "research-auth",
-      "title": "調査: 認証フロー",
-      "mode": "research",
-      "deps": [],
-      "kind": "codex",
-      "codex": {
-        "prompt": "認証フローを調査して",
-        "output_last_message": "artifacts/auth.md",
-        "sandbox": "workspace-write",
-        "json": true
-      }
-    },
-    {
-      "id": "synthesize",
-      "title": "実装: 統合実装",
+      "id": "implement",
       "mode": "implement",
-      "deps": ["research-api", "research-db", "research-auth"],
+      "deps": ["research-api", "research-db"],
       "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "artifacts/*.md の調査結果を踏まえて、新しい機能を実装して",
-        "verify_after": true,
-        "json": true
-      }
+      "codex": { "prompt": "artifacts/*.md の調査結果を踏まえて新機能を実装して" }
     }
   ]
 }
 ```
 
-**Use when:** Large feature requires understanding multiple subsystems.
+---
 
-## Advanced Patterns
+## 高度なパターン（必要な場合のみ）
 
-### Research → Multi-Phase Implementation
+### locksで排他制御
 
-Complex features with staged rollout:
-
-```json
-{
-  "version": 1,
-  "run": {
-    "name": "feature-rollout",
-    "cwd": ".",
-    "max_concurrency": 2,
-    "fail_fast": true,
-    "default_timeout_sec": 3600
-  },
-  "tasks": [
-    {
-      "id": "research",
-      "title": "調査: 既存実装",
-      "mode": "research",
-      "deps": [],
-      "kind": "codex",
-      "codex": {
-        "prompt": "既存のユーザー管理実装を調査",
-        "output_last_message": "artifacts/user-mgmt.md",
-        "sandbox": "workspace-write",
-        "json": true
-      }
-    },
-    {
-      "id": "impl-models",
-      "title": "実装: データモデル",
-      "mode": "implement",
-      "deps": ["research"],
-      "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "ユーザープロフィール用のデータモデルを追加",
-        "json": true
-      }
-    },
-    {
-      "id": "impl-api",
-      "title": "実装: API エンドポイント",
-      "mode": "implement",
-      "deps": ["impl-models"],
-      "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "プロフィール取得・更新の API エンドポイントを実装",
-        "json": true
-      }
-    },
-    {
-      "id": "impl-ui",
-      "title": "実装: UI コンポーネント",
-      "mode": "implement",
-      "deps": ["impl-api"],
-      "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "プロフィール編集画面を実装",
-        "json": true
-      }
-    },
-    {
-      "id": "verify",
-      "title": "検証: E2E テスト",
-      "mode": "verify",
-      "deps": ["impl-ui"],
-      "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "プロフィール機能の E2E テストを実行して、失敗があれば修正",
-        "json": true
-      }
-    }
-  ]
-}
-```
-
-**Use when:** Feature requires multiple distinct implementation phases.
-
-### Mixing Runners (Codex + Claude Code)
-
-Combine different runners based on task needs:
-
-```yaml
-version: 1
-run:
-  name: "mixed-runners"
-  max_concurrency: 2
-
-tasks:
-  - id: research
-    mode: research
-    codex:
-      prompt: "既存実装を調査して"
-      output_last_message: "artifacts/research.md"
-
-  - id: implement
-    mode: implement
-    deps: [research]
-    locks: [workspace]
-    claude_code:
-      prompt: "artifacts/research.md を参考に実装して"
-      model: opus
-
-  - id: verify
-    mode: verify
-    deps: [implement]
-    codex:
-      prompt: "npm test を実行して、失敗があれば修正"
-```
-
-**Use when:** Different tasks benefit from different models/runners.
-
-### Database Migrations with Locks
-
-Prevent concurrent schema changes:
+同じリソースを操作するタスクを直列化:
 
 ```json
 {
   "version": 1,
-  "run": {
-    "name": "migrations",
-    "cwd": ".",
-    "max_concurrency": 3
-  },
+  "run": { "name": "migrations", "max_concurrency": 3 },
   "tasks": [
     {
       "id": "migration-users",
-      "title": "マイグレーション: users テーブル",
       "mode": "implement",
-      "deps": [],
       "locks": ["db-migrate"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "users テーブルにカラムを追加するマイグレーションを作成して実行",
-        "json": true
-      }
+      "codex": { "prompt": "usersテーブルにカラムを追加" }
     },
     {
       "id": "migration-posts",
-      "title": "マイグレーション: posts テーブル",
       "mode": "implement",
-      "deps": [],
       "locks": ["db-migrate"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "posts テーブルにカラムを追加するマイグレーションを作成して実行",
-        "json": true
-      }
+      "codex": { "prompt": "postsテーブルにカラムを追加" }
     }
   ]
 }
 ```
 
-**Use when:** Tasks must not run simultaneously even though no dependency exists.
+deps不要でも`locks: ["db-migrate"]`で同時実行を防ぐ。
 
-## Full Dogfooding Example
-
-Real example from quedex v1 development (using quedex to build quedex):
+### 条件付き実行
 
 ```json
 {
   "version": 1,
-  "run": {
-    "name": "quedex-v1",
-    "cwd": ".",
-    "max_concurrency": 2,
-    "fail_fast": true,
-    "default_timeout_sec": 3600
-  },
+  "run": { "name": "conditional" },
   "tasks": [
     {
-      "id": "retry-command",
-      "title": "実装: retry コマンド",
+      "id": "build",
       "mode": "implement",
-      "deps": [],
-      "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "失敗したタスクを再実行する retry コマンドを実装...",
-        "verify_after": true,
-        "json": true
-      }
+      "codex": { "prompt": "ビルドを実行" }
     },
     {
-      "id": "tui-module",
-      "title": "実装: TUI モジュール",
+      "id": "deploy",
       "mode": "implement",
-      "deps": [],
-      "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "ratatui を使ってリアルタイム TUI を実装...",
-        "verify_after": true,
-        "json": true
-      }
-    },
-    {
-      "id": "tui-command",
-      "title": "実装: tui コマンド",
-      "mode": "implement",
-      "deps": ["tui-module"],
-      "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "TUI モジュールを呼び出す tui コマンドを main.rs に統合...",
-        "verify_after": true,
-        "json": true
-      }
-    },
-    {
-      "id": "state-recovery",
-      "title": "実装: 状態復元機能",
-      "mode": "implement",
-      "deps": [],
-      "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "プロセス死亡検出と状態復元を実装...",
-        "verify_after": true,
-        "json": true
-      }
-    },
-    {
-      "id": "integration-test",
-      "title": "実装: v1 機能の統合テスト",
-      "mode": "implement",
-      "deps": ["retry-command", "tui-command", "state-recovery"],
-      "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "retry, tui, recovery 機能の統合テストを作成...",
-        "json": true
-      }
-    },
-    {
-      "id": "build-and-test",
-      "title": "検証: ビルドとテスト実行",
-      "mode": "verify",
-      "deps": ["integration-test"],
-      "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "cargo build && cargo test && cargo clippy を実行...",
-        "json": true
-      }
-    },
-    {
-      "id": "update-readme",
-      "title": "実装: README 更新",
-      "mode": "implement",
-      "deps": ["build-and-test"],
-      "locks": ["workspace"],
-      "kind": "codex",
-      "codex": {
-        "prompt": "v1 機能を README.md に追加...",
-        "json": true
-      }
+      "deps": ["build"],
+      "condition": { "task": "build", "status": "succeeded" },
+      "codex": { "prompt": "デプロイを実行" }
     }
   ]
 }
 ```
 
-**Demonstrates:**
-- Parallel implementation of independent features
-- Sequential dependencies where needed
-- Workspace locks to prevent conflicts
-- Verification integrated into workflow
-- Real production usage
+### 自動リトライ
 
-## Tips
-
-### When to use research mode
-
-- Understanding unfamiliar codebases
-- Exploring API designs before implementation
-- Documenting existing patterns
-- Gathering context for complex changes
-
-### When to use implement mode
-
-- Adding new features
-- Refactoring existing code
-- Writing documentation
-- Creating configuration files
-
-### When to use verify mode
-
-- Running tests
-- Checking build output
-- Validating deployments
-- Confirming fixes
-
-### Locks strategy
-
-Use locks when:
-- Multiple tasks modify same files (e.g., `locks: ["workspace"]`)
-- Database migrations must run sequentially (e.g., `locks: ["db-migrate"]`)
-- Tasks share stateful resources (e.g., `locks: ["test-db"]`)
-
-Don't use locks when:
-- Tasks operate on different files/modules
-- True parallel execution is safe and desired
-
-### Concurrency tuning
+不安定なタスク（E2Eテスト等）に:
 
 ```json
-"max_concurrency": 1  // Sequential execution
-"max_concurrency": 2  // Moderate parallelism (safe default)
-"max_concurrency": 4  // Aggressive parallelism (fast, more resource usage)
+{
+  "id": "e2e-test",
+  "mode": "verify",
+  "retry_count": 3,
+  "retry_delay_sec": 30,
+  "codex": { "prompt": "E2Eテストを実行" }
+}
 ```
 
-Omit for unlimited concurrency (controlled only by dependencies and locks).
+### 変数（3箇所以上で同じ値を使う場合のみ）
 
-## New Features Examples
-
-### Task Groups
-
-Organize tasks into logical groups for batch operations:
-
-```yaml
-version: 1
-groups:
-  backend: [api-research, api-impl, api-test]
-  frontend: [ui-research, ui-impl, ui-test]
-
-run:
-  name: "grouped-tasks"
-  max_concurrency: 4
-
-tasks:
-  - id: api-research
-    mode: research
-    codex:
-      prompt: "API構造を調査"
-      output_last_message: "artifacts/api.md"
-
-  - id: api-impl
-    mode: implement
-    deps: [api-research]
-    locks: [backend]
-    claude_code:
-      prompt: "API を実装"
-      model: sonnet
-
-  - id: api-test
-    mode: verify
-    deps: [api-impl]
-    codex:
-      prompt: "API テストを実行"
-
-  - id: ui-research
-    mode: research
-    codex:
-      prompt: "UI構造を調査"
-      output_last_message: "artifacts/ui.md"
-
-  - id: ui-impl
-    mode: implement
-    deps: [ui-research]
-    locks: [frontend]
-    claude_code:
-      prompt: "UI を実装"
-      model: sonnet
-
-  - id: ui-test
-    mode: verify
-    deps: [ui-impl]
-    codex:
-      prompt: "UI テストを実行"
+```json
+{
+  "version": 1,
+  "variables": {
+    "target": "src/auth",
+    "test_cmd": "npm test"
+  },
+  "run": { "name": "with-vars" },
+  "tasks": [
+    {
+      "id": "research",
+      "mode": "research",
+      "codex": {
+        "prompt": "${target} を調査して",
+        "output_last_message": "artifacts/research.md"
+      }
+    },
+    {
+      "id": "implement",
+      "mode": "implement",
+      "deps": ["research"],
+      "locks": ["workspace"],
+      "codex": { "prompt": "${target} を改善して、完了後 ${test_cmd} を実行" }
+    },
+    {
+      "id": "verify",
+      "mode": "verify",
+      "deps": ["implement"],
+      "codex": { "prompt": "${test_cmd} で全テストがパスすることを確認" }
+    }
+  ]
+}
 ```
 
-**CLI usage:**
-```bash
-quedex status <run_id> --group backend
-quedex retry <run_id> --group frontend
-quedex cancel <run_id> --group backend
+**注意:** 1-2箇所でしか使わない値は変数にせず直書きする。
+
+---
+
+## アンチパターン（避けるべき例）
+
+### ❌ 冗長なフィールド
+
+```json
+{
+  "id": "task",
+  "title": "タスク",
+  "mode": "research",
+  "deps": [],
+  "locks": [],
+  "kind": "codex",
+  "codex": {
+    "prompt": "調査して",
+    "output_last_message": "out.md",
+    "sandbox": "workspace-write",
+    "json": true
+  }
+}
 ```
 
-### Conditional Execution
+### ✅ 正しい書き方
 
-Skip tasks based on environment or previous task results:
-
-```yaml
-version: 1
-run:
-  name: "conditional"
-  max_concurrency: 2
-
-tasks:
-  - id: build
-    mode: implement
-    codex:
-      prompt: "ビルドを実行"
-
-  - id: deploy-staging
-    mode: implement
-    deps: [build]
-    condition:
-      task: build
-      status: succeeded
-    codex:
-      prompt: "ステージングにデプロイ"
-
-  - id: deploy-prod
-    mode: implement
-    deps: [deploy-staging]
-    condition:
-      env: "DEPLOY_PROD"
-      equals: "true"
-    codex:
-      prompt: "本番にデプロイ"
-
-  - id: notify-failure
-    mode: implement
-    deps: [build]
-    condition:
-      task: build
-      status: failed
-    codex:
-      prompt: "失敗を通知"
+```json
+{
+  "id": "task",
+  "mode": "research",
+  "codex": {
+    "prompt": "調査して",
+    "output_last_message": "out.md"
+  }
+}
 ```
 
-### Output File Capture
+### ❌ 不要な変数
 
-Capture task outputs for later reference:
-
-```yaml
-version: 1
-run:
-  name: "with-outputs"
-
-tasks:
-  - id: generate-report
-    mode: implement
-    output_files:
-      - "reports/summary.md"
-      - "reports/metrics.json"
-    codex:
-      prompt: "レポートを生成して reports/ に保存"
-
-  - id: analyze
-    mode: research
-    deps: [generate-report]
-    codex:
-      prompt: "reports/summary.md を分析して"
-      output_last_message: "artifacts/analysis.md"
+```json
+{
+  "variables": { "dir": "src/api" },
+  "tasks": [
+    { "codex": { "prompt": "${dir} を調査" } }
+  ]
+}
 ```
 
-**CLI usage:**
-```bash
-quedex outputs <run_id> --task generate-report
+1箇所でしか使わないなら変数にしない:
+
+### ✅ 直書き
+
+```json
+{
+  "tasks": [
+    { "codex": { "prompt": "src/api を調査" } }
+  ]
+}
 ```
-
-### Automatic Retry
-
-Configure automatic retry for flaky tasks:
-
-```yaml
-version: 1
-run:
-  name: "with-retry"
-
-tasks:
-  - id: flaky-test
-    mode: verify
-    retry_count: 3
-    retry_delay_sec: 30
-    codex:
-      prompt: "E2E テストを実行（ネットワーク依存あり）"
-
-  - id: stable-task
-    mode: implement
-    deps: [flaky-test]
-    codex:
-      prompt: "次のステップを実行"
-```
-
-### Dynamic Timeout
-
-Use historical data for smart timeouts:
-
-```yaml
-version: 1
-run:
-  name: "dynamic-timeout"
-
-tasks:
-  - id: quick-task
-    mode: research
-    timeout_sec: 300  # Fixed 5 minutes
-    codex:
-      prompt: "簡単な調査"
-
-  - id: variable-task
-    mode: implement
-    timeout_sec: "auto"  # Average + 2σ from history
-    codex:
-      prompt: "実行時間が変動するタスク"
-
-  - id: long-task
-    mode: implement
-    timeout_sec: "2x_average"  # 2× average from history
-    codex:
-      prompt: "長時間かかる可能性があるタスク"
-```
-
-### Template Variables
-
-Use variables for reusable prompts:
-
-```yaml
-version: 1
-variables:
-  target_module: "src/auth"
-  test_command: "npm test -- --coverage"
-  output_dir: "artifacts"
-
-run:
-  name: "templated"
-
-tasks:
-  - id: research
-    mode: research
-    codex:
-      prompt: "${target_module} を調査して ${output_dir}/research.md に保存"
-      output_last_message: "${output_dir}/research.md"
-
-  - id: implement
-    mode: implement
-    deps: [research]
-    codex:
-      prompt: |
-        ${target_module} を改善して
-        完了後 ${test_command} を実行
-```
-
-Environment variables can also be used: `${env.CI}`, `${env.NODE_ENV}`
