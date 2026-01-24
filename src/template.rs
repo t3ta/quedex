@@ -348,7 +348,9 @@ mod tests {
     fn test_expand_env_variable() {
         let unique_suffix = std::process::id();
         let var_name = format!("TEST_QUEDEX_EXPAND_VAR_{unique_suffix}");
-        std::env::set_var(&var_name, "test_value");
+        unsafe {
+            std::env::set_var(&var_name, "test_value");
+        }
 
         let vars = HashMap::new();
         let store = NoopStore;
@@ -356,7 +358,9 @@ mod tests {
             expand_prompt(&format!("Value: ${{env.{}}}", var_name), &vars, &store).unwrap();
         assert_eq!(result, "Value: test_value");
 
-        std::env::remove_var(&var_name);
+        unsafe {
+            std::env::remove_var(&var_name);
+        }
     }
 
     #[test]
@@ -420,7 +424,9 @@ mod tests {
     fn test_mixed_variables_and_env() {
         let unique_suffix = std::process::id();
         let var_name = format!("TEST_QUEDEX_MIXED_VAR_{unique_suffix}");
-        std::env::set_var(&var_name, "env_value");
+        unsafe {
+            std::env::set_var(&var_name, "env_value");
+        }
 
         let mut vars = HashMap::new();
         vars.insert("local".to_string(), "local_value".to_string());
@@ -434,7 +440,9 @@ mod tests {
         .unwrap();
         assert_eq!(result, "Local: local_value, Env: env_value");
 
-        std::env::remove_var(&var_name);
+        unsafe {
+            std::env::remove_var(&var_name);
+        }
     }
 
     #[test]
