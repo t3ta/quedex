@@ -66,7 +66,7 @@ pub fn expand_prompt(
 
     for cap in re.captures_iter(prompt) {
         let mat = cap.get(0).unwrap();
-        let full_match = mat.as_str();
+        let _full_match = mat.as_str();
         let var_name = cap.get(1).unwrap().as_str();
 
         let value = if let Some(env_var) = var_name.strip_prefix("env.") {
