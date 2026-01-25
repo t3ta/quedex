@@ -16,7 +16,8 @@
         "artifacts/output-files-sample/notes.txt"
       ],
       "codex": {
-        "prompt": "Write a short note into artifacts/output-files-sample/notes.txt."
+        "prompt": "Write a short note into artifacts/output-files-sample/notes.txt.",
+        "output_last_message": "artifacts/output-files-sample/generate-output.txt"
       }
     },
     {
@@ -26,7 +27,8 @@
       "deps": ["generate-output"],
       "kind": "codex",
       "codex": {
-        "prompt": "Read the file artifacts/output-files-sample/notes.txt and summarize its content."
+        "prompt": "Read the file artifacts/output-files-sample/notes.txt and summarize its content.",
+        "output_last_message": "artifacts/output-files-sample/summarize-output.txt"
       }
     }
   ]
