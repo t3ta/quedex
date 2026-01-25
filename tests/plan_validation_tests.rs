@@ -26,7 +26,9 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
         retry_count: 0,
         retry_delay_sec: 0,
         condition: None,
-    }
+            auto_commit: true,
+        squash: false,
+}
 }
 
 #[allow(dead_code)]
@@ -52,7 +54,9 @@ fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
         retry_count: 0,
         retry_delay_sec: 0,
         condition: None,
-    }
+            auto_commit: true,
+        squash: false,
+}
 }
 
 fn plan_with_tasks(tasks: Vec<Task>) -> Plan {
@@ -117,7 +121,9 @@ fn plan_rejects_empty_codex_prompt() {
         retry_count: 0,
         retry_delay_sec: 0,
         condition: None,
-    };
+            auto_commit: true,
+        squash: false,
+};
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "codex.prompt is empty");
@@ -146,7 +152,9 @@ fn plan_rejects_empty_claude_code_prompt() {
         retry_count: 0,
         retry_delay_sec: 0,
         condition: None,
-    };
+            auto_commit: true,
+        squash: false,
+};
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "claude_code.prompt is empty");
@@ -182,7 +190,9 @@ fn plan_rejects_multiple_runner_configs() {
         retry_count: 0,
         retry_delay_sec: 0,
         condition: None,
-    };
+            auto_commit: true,
+        squash: false,
+};
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "multiple runner configs");
@@ -211,7 +221,9 @@ fn plan_accepts_valid_claude_code_task() {
         retry_count: 0,
         retry_delay_sec: 0,
         condition: None,
-    };
+            auto_commit: true,
+        squash: false,
+};
 
     let plan = plan_with_tasks(vec![task]);
     assert!(plan.validate().is_ok());
@@ -243,7 +255,9 @@ fn plan_rejects_kind_mismatch_claude_code() {
         retry_count: 0,
         retry_delay_sec: 0,
         condition: None,
-    };
+            auto_commit: true,
+        squash: false,
+};
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "kind=claude_code without claude_code config");
@@ -272,7 +286,9 @@ fn plan_rejects_empty_opencode_prompt() {
         retry_count: 0,
         retry_delay_sec: 0,
         condition: None,
-    };
+            auto_commit: true,
+        squash: false,
+};
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "opencode.prompt is empty");
@@ -319,7 +335,9 @@ fn plan_accepts_valid_opencode_task() {
         retry_count: 0,
         retry_delay_sec: 0,
         condition: None,
-    };
+            auto_commit: true,
+        squash: false,
+};
 
     let plan = plan_with_tasks(vec![task]);
     assert!(plan.validate().is_ok());
@@ -351,7 +369,9 @@ fn plan_rejects_kind_mismatch_opencode() {
         retry_count: 0,
         retry_delay_sec: 0,
         condition: None,
-    };
+            auto_commit: true,
+        squash: false,
+};
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "kind=opencode without opencode config");
@@ -384,7 +404,9 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
         retry_count: 0,
         retry_delay_sec: 0,
         condition: None,
-    };
+            auto_commit: true,
+        squash: false,
+};
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "multiple runner configs");

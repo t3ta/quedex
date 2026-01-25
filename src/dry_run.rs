@@ -261,6 +261,8 @@ mod tests {
             no_worktree: false,
             kind: None,
             output_files: None,
+            auto_commit: true,
+            squash: false,
             codex: Some(crate::plan::CodexConfig {
                 prompt: "test prompt".to_string(),
                 output_last_message: None,

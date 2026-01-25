@@ -106,6 +106,10 @@ async fn env_condition_equals_match() {
             not_equals: None,
             exists: None,
         })),
+        title: None,
+        mode: quedex::plan::TaskMode::default(),
+        auto_commit: true,
+        squash: false,
     }];
 
     let scheduler = build_scheduler(tasks, runner);
@@ -130,6 +134,10 @@ async fn env_condition_equals_no_match() {
             not_equals: None,
             exists: None,
         })),
+        title: None,
+        mode: quedex::plan::TaskMode::default(),
+        auto_commit: true,
+        squash: false,
     }];
 
     let scheduler = build_scheduler(tasks, runner);
@@ -155,6 +163,10 @@ async fn env_condition_equals_missing_var() {
             not_equals: None,
             exists: None,
         })),
+        title: None,
+        mode: quedex::plan::TaskMode::default(),
+        auto_commit: true,
+        squash: false,
     }];
 
     let scheduler = build_scheduler(tasks, runner);
@@ -179,6 +191,10 @@ async fn env_condition_not_equals_match() {
             not_equals: Some("forbidden_value".to_string()),
             exists: None,
         })),
+        title: None,
+        mode: quedex::plan::TaskMode::default(),
+        auto_commit: true,
+        squash: false,
     }];
 
     let scheduler = build_scheduler(tasks, runner);
@@ -203,6 +219,10 @@ async fn env_condition_not_equals_no_match() {
             not_equals: Some("forbidden_value".to_string()),
             exists: None,
         })),
+        title: None,
+        mode: quedex::plan::TaskMode::default(),
+        auto_commit: true,
+        squash: false,
     }];
 
     let scheduler = build_scheduler(tasks, runner);
@@ -227,6 +247,10 @@ async fn env_condition_exists_true() {
             not_equals: None,
             exists: Some(true),
         })),
+        title: None,
+        mode: quedex::plan::TaskMode::default(),
+        auto_commit: true,
+        squash: false,
     }];
 
     let scheduler = build_scheduler(tasks, runner);
@@ -251,6 +275,10 @@ async fn env_condition_exists_false() {
             not_equals: None,
             exists: Some(false),
         })),
+        title: None,
+        mode: quedex::plan::TaskMode::default(),
+        auto_commit: true,
+        squash: false,
     }];
 
     let scheduler = build_scheduler(tasks, runner);
@@ -274,6 +302,10 @@ async fn task_condition_succeeded_match() {
             locks: vec![],
             output_files: None,
             condition: None,
+            title: None,
+            mode: quedex::plan::TaskMode::default(),
+            auto_commit: true,
+            squash: false,
         },
         TaskSpec {
             id: "main".to_string(),
@@ -284,6 +316,10 @@ async fn task_condition_succeeded_match() {
                 task: "check".to_string(),
                 status: ConditionStatus::Succeeded,
             })),
+            title: None,
+            mode: quedex::plan::TaskMode::default(),
+            auto_commit: true,
+            squash: false,
         },
     ];
 
@@ -306,6 +342,10 @@ async fn task_condition_failed_match() {
             locks: vec![],
             output_files: None,
             condition: None,
+            title: None,
+            mode: quedex::plan::TaskMode::default(),
+            auto_commit: true,
+            squash: false,
         },
         TaskSpec {
             id: "fix".to_string(),
@@ -316,6 +356,10 @@ async fn task_condition_failed_match() {
                 task: "check".to_string(),
                 status: ConditionStatus::Failed,
             })),
+            title: None,
+            mode: quedex::plan::TaskMode::default(),
+            auto_commit: true,
+            squash: false,
         },
     ];
 
@@ -338,6 +382,10 @@ async fn task_condition_failed_no_match_when_succeeded() {
             locks: vec![],
             output_files: None,
             condition: None,
+            title: None,
+            mode: quedex::plan::TaskMode::default(),
+            auto_commit: true,
+            squash: false,
         },
         TaskSpec {
             id: "fix".to_string(),
@@ -348,6 +396,10 @@ async fn task_condition_failed_no_match_when_succeeded() {
                 task: "check".to_string(),
                 status: ConditionStatus::Failed,
             })),
+            title: None,
+            mode: quedex::plan::TaskMode::default(),
+            auto_commit: true,
+            squash: false,
         },
     ];
 
@@ -377,6 +429,10 @@ async fn condition_skip_does_not_propagate_as_failure() {
                 not_equals: None,
                 exists: None,
             })),
+            title: None,
+            mode: quedex::plan::TaskMode::default(),
+            auto_commit: true,
+            squash: false,
         },
         TaskSpec {
             id: "dependent".to_string(),
@@ -384,6 +440,10 @@ async fn condition_skip_does_not_propagate_as_failure() {
             locks: vec![],
             output_files: None,
             condition: None,
+            title: None,
+            mode: quedex::plan::TaskMode::default(),
+            auto_commit: true,
+            squash: false,
         },
     ];
 
@@ -413,6 +473,10 @@ async fn dependency_failure_skip_does_propagate() {
             locks: vec![],
             output_files: None,
             condition: None,
+            title: None,
+            mode: quedex::plan::TaskMode::default(),
+            auto_commit: true,
+            squash: false,
         },
         TaskSpec {
             id: "dependent".to_string(),
@@ -420,6 +484,10 @@ async fn dependency_failure_skip_does_propagate() {
             locks: vec![],
             output_files: None,
             condition: None,
+            title: None,
+            mode: quedex::plan::TaskMode::default(),
+            auto_commit: true,
+            squash: false,
         },
     ];
 
@@ -466,6 +534,8 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        auto_commit: true,
+        squash: false,
         condition: Some(TaskCondition::TaskResult(TaskResultCondition {
             task: "nonexistent".to_string(),
             status: ConditionStatus::Failed,
@@ -514,6 +584,8 @@ fn plan_rejects_condition_referencing_self() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        auto_commit: true,
+        squash: false,
         condition: Some(TaskCondition::TaskResult(TaskResultCondition {
             task: "main".to_string(),
             status: ConditionStatus::Failed,

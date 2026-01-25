@@ -20,6 +20,7 @@ use uuid::Uuid;
 use cli::{Cli, Commands, GlobalOptions, RecoveryOptions};
 use quedex::config::{Config, EffectiveOptions};
 use quedex::dry_run::{detect_lock_conflicts, generate_execution_waves};
+use quedex::git::{self, GitManager};
 use quedex::notifier::Notifier;
 use quedex::plan::{Plan, PlanFormat, Task, TimeoutConfig};
 use quedex::stats::StatsCollector;
@@ -922,6 +923,10 @@ async fn handle_run(
             locks: task.locks.clone(),
             output_files: task.output_files.clone(),
             condition: task.condition.clone(),
+            title: task.title.clone(),
+            mode: task.mode,
+            auto_commit: task.auto_commit,
+            squash: task.squash,
         })
         .collect();
 
@@ -955,8 +960,15 @@ async fn handle_run(
         notifier.clone(),
         &store_root,
     );
+    
+    // Create GitManager for auto-commit functionality
+    let git_manager = match crate::git::GitManager::open() {
+        Ok(gm) => Some(Arc::new(std::sync::Mutex::new(gm))),
+        Err(_) => None, // Not in a git repository, skip auto-commit
+    };
+    
     let scheduler = if let Some(initial_states) = initial_states {
-        Scheduler::new_with_initial_state(
+        let sched = Scheduler::new_with_initial_state(
             task_specs,
             SchedulerOptions {
                 max_concurrency,
@@ -964,16 +976,26 @@ async fn handle_run(
             },
             runner,
             initial_states,
-        )
+        );
+        if let Some(gm) = git_manager {
+            sched.with_git_manager_for_state(gm)
+        } else {
+            sched
+        }
     } else {
-        Scheduler::new(
+        let sched = Scheduler::new(
             task_specs,
             SchedulerOptions {
                 max_concurrency,
                 fail_fast,
             },
             runner,
-        )
+        );
+        if let Some(gm) = git_manager {
+            sched.with_git_manager(gm)
+        } else {
+            sched
+        }
     };
 
     // Collect environment variables for condition evaluation
@@ -983,6 +1005,13 @@ async fn handle_run(
 
     let report = scheduler.run(&env_vars).await;
     reconcile_state(&state_handle, &report)?;
+
+    // Handle squash tasks and create final commit
+    let squash_result = handle_squash_tasks(&plan, &report);
+
+    if let Err(ref err) = squash_result {
+        eprintln!("Warning: squash failed: {}", err);
+    }
 
     state = state_handle.snapshot();
     let (run_status, exit_code) = finalize_run_status(&state);
@@ -1554,6 +1583,10 @@ async fn handle_retry(
             locks: task.locks.clone(),
             output_files: task.output_files.clone(),
             condition: task.condition.clone(),
+            title: task.title.clone(),
+            mode: task.mode,
+            auto_commit: task.auto_commit,
+            squash: task.squash,
         });
     }
 
@@ -1577,6 +1610,13 @@ async fn handle_retry(
         None,
         &store_root,
     );
+    
+    // Create GitManager for auto-commit functionality
+    let git_manager = match crate::git::GitManager::open() {
+        Ok(gm) => Some(Arc::new(std::sync::Mutex::new(gm))),
+        Err(_) => None, // Not in a git repository, skip auto-commit
+    };
+    
     let scheduler = Scheduler::new(
         task_specs,
         SchedulerOptions {
@@ -1585,6 +1625,12 @@ async fn handle_retry(
         },
         runner,
     );
+    
+    let scheduler = if let Some(gm) = git_manager {
+        scheduler.with_git_manager(gm)
+    } else {
+        scheduler
+    };
 
     // Collect environment variables for condition evaluation
     let mut env_vars: HashMap<String, String> = std::env::vars().collect();
@@ -1968,6 +2014,66 @@ fn handle_graph(effective: &EffectiveOptions, target: &str, mermaid: bool, ascii
         print_ascii_graph(&plan);
     }
     Ok(0)
+}
+
+/// Handle squash tasks after plan execution
+fn handle_squash_tasks(plan: &Plan, report: &ScheduleReport) -> Result<()> {
+    // Find a squash task
+    let squash_task = plan.tasks.iter().find(|t| t.squash);
+
+    if squash_task.is_none() {
+        return Ok(());
+    }
+
+    if report.commit_hashes.is_empty() {
+        return Ok(());
+    }
+
+    // Try to open git manager
+    let git_manager = match GitManager::open() {
+        Ok(gm) => gm,
+        Err(e) => {
+            eprintln!("Warning: Could not open git repository for squash: {}", e);
+            return Ok(());
+        }
+    };
+
+    // Ensure on a branch
+    if let Err(e) = git_manager.ensure_on_branch() {
+        eprintln!("Warning: Not on a branch, skipping squash: {}", e);
+        return Ok(());
+    }
+
+    let task_title = squash_task.unwrap().title.as_deref().unwrap_or("Integration");
+
+    // Collect commit information for squash message
+    let task_summaries: Vec<(String, String)> = report.commit_hashes
+        .iter()
+        .map(|(id, _, title)| {
+            let title_str = title.clone().unwrap_or_else(|| id.clone());
+            (id.clone(), title_str)
+        })
+        .collect();
+
+    if task_summaries.is_empty() {
+        return Ok(());
+    }
+
+    // Generate squash message
+    let squash_message = git::generate_squash_message(&task_summaries, task_title);
+
+    // Squash commits
+    let count = report.commit_hashes.len();
+    match git_manager.squash_commits(count, &squash_message) {
+        Ok(new_commit_id) => {
+            println!("Squashed {} commits into: {}", count, new_commit_id);
+        }
+        Err(e) => {
+            eprintln!("Warning: Failed to squash commits: {}", e);
+        }
+    }
+
+    Ok(())
 }
 
 fn resolve_store_path(store: Option<&PathBuf>) -> Result<PathBuf> {
