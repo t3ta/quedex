@@ -1,9 +1,5 @@
 version: 1
-description: "Simple YAML plan example with variables"
-
-variables:
-  project_name: "quedex"
-  target_file: "src/lib.rs"
+description: "Simple YAML plan example"
 
 run:
   name: "yaml-example"
@@ -16,5 +12,5 @@ tasks:
     mode: research
     kind: codex
     codex:
-      prompt: "Analyze the ${target_file} file in the ${project_name} project"
+      prompt: "Analyze the src/lib.rs file in the quedex project"
       model: "o3-mini"
