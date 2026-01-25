@@ -763,7 +763,7 @@ quedex start plan.yaml
 
 **注意点**:
 - auto_commit は `implement` / `verify` モードのみ有効（research モードでは無視）
-- squashタスクは最後に1つだけ配置する必要がある
+- squashタスクはplan内で最初に見つかった1つが使われるため、運用上は最後に1つだけ配置することを推奨
 - Gitリポジトリ内で実行する必要がある
 
 ## ライセンス

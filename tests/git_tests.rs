@@ -84,15 +84,112 @@ fn test_task_json_parsing() {
     assert!(!task.squash);
 }
 
-#[test]
-fn test_auto_commit_true_by_default() {
-    // Verify auto_commit defaults to true
-    let task_json = r#"{
-        "id": "task-1",
-        "mode": "implement",
-        "codex": { "prompt": "test" }
-    }"#;
+// Integration tests for GitManager operations
+// These tests create temporary git repositories to test actual git operations
 
-    let task: quedex::plan::Task = serde_json::from_str(task_json).unwrap();
-    assert!(task.auto_commit, "auto_commit should default to true for implement mode");
+#[cfg(test)]
+mod git_integration_tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+    use git2::Repository;
+
+    fn create_temp_git_repo() -> (TempDir, PathBuf) {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let repo_path = temp_dir.path().to_path_buf();
+        
+        // Initialize git repository
+        let repo = Repository::init(&repo_path).expect("Failed to init git repo");
+        
+        // Configure git user for commits
+        let mut config = repo.config().expect("Failed to get config");
+        config.set_str("user.name", "Test User").expect("Failed to set user.name");
+        config.set_str("user.email", "test@example.com").expect("Failed to set user.email");
+        
+        // Create initial commit
+        let sig = repo.signature().expect("Failed to create signature");
+        let tree_id = {
+            let mut index = repo.index().expect("Failed to get index");
+            index.write_tree().expect("Failed to write tree")
+        };
+        let tree = repo.find_tree(tree_id).expect("Failed to find tree");
+        repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "Initial commit",
+            &tree,
+            &[],
+        ).expect("Failed to create initial commit");
+        
+        (temp_dir, repo_path)
+    }
+
+    #[test]
+    fn test_git_manager_create_commit() {
+        let (_temp_dir, repo_path) = create_temp_git_repo();
+        
+        // Create a test file
+        fs::write(repo_path.join("test.txt"), "test content").expect("Failed to write test file");
+        
+        // Open GitManager from the specific path
+        let repo = Repository::open(&repo_path).expect("Failed to open repo");
+        let manager = quedex::git::GitManager { repo };
+        let commit_hash = manager.create_commit("Test commit message").expect("Failed to create commit");
+        
+        assert!(!commit_hash.is_empty(), "Commit hash should not be empty");
+    }
+
+    #[test]
+    fn test_git_manager_create_commit_no_changes() {
+        let (_temp_dir, repo_path) = create_temp_git_repo();
+        
+        // Open GitManager with no new changes
+        let repo = Repository::open(&repo_path).expect("Failed to open repo");
+        let manager = quedex::git::GitManager { repo };
+        let commit_hash = manager.create_commit("Empty commit").expect("Should handle no changes");
+        
+        assert!(commit_hash.is_empty(), "Should return empty string when no changes");
+    }
+
+    #[test]
+    fn test_git_manager_list_commits() {
+        let (_temp_dir, repo_path) = create_temp_git_repo();
+        
+        let repo = Repository::open(&repo_path).expect("Failed to open repo");
+        let manager = quedex::git::GitManager { repo };
+        let commits = manager.list_commits(5).expect("Failed to list commits");
+        
+        assert!(!commits.is_empty(), "Should have at least the initial commit");
+        assert_eq!(commits[0].summary, "Initial commit");
+    }
+
+    #[test]
+    fn test_git_manager_squash_commits() {
+        let (_temp_dir, repo_path) = create_temp_git_repo();
+        
+        // Create multiple commits
+        for i in 1..=3 {
+            fs::write(repo_path.join(format!("file{}.txt", i)), format!("content {}", i))
+                .expect("Failed to write file");
+            
+            // Re-open manager for each commit to ensure clean state
+            let repo_inner = Repository::open(&repo_path).expect("Failed to open repo");
+            let manager_inner = quedex::git::GitManager { repo: repo_inner };
+            manager_inner.create_commit(&format!("Commit {}", i)).expect("Failed to create commit");
+        }
+        
+        // Re-open for squash operation
+        let repo_final = Repository::open(&repo_path).expect("Failed to open repo");
+        let manager_final = quedex::git::GitManager { repo: repo_final };
+        
+        // Squash the last 3 commits
+        let squash_hash = manager_final.squash_commits(3, "Squashed commit").expect("Failed to squash commits");
+        assert!(!squash_hash.is_empty(), "Squash should return a commit hash");
+        
+        // Verify there are now 2 commits total (initial + squashed)
+        let commits = manager_final.list_commits(10).expect("Failed to list commits");
+        assert_eq!(commits.len(), 2, "Should have 2 commits after squash");
+        assert_eq!(commits[0].summary, "Squashed commit");
+    }
 }

@@ -3,7 +3,7 @@ use git2::{Repository, StatusOptions};
 
 /// Manager for git operations
 pub struct GitManager {
-    repo: Repository,
+    pub repo: Repository,
 }
 
 #[derive(Debug, Clone)]
@@ -61,18 +61,20 @@ impl GitManager {
             }
         }
 
-        // Check if there are any changes to commit
-        if index.is_empty() {
-            return Ok(String::new()); // No changes, return empty
-        }
-
-        // Write tree
+        // Write tree for current index state
         let tree_id = index.write_tree()?;
-        let tree = self.repo.find_tree(tree_id)?;
 
         // Get HEAD commit and commit parents
         let head = self.repo.head()?;
         let parent_commit = head.peel_to_commit()?;
+
+        // Check if there are any changes to commit by comparing index tree with HEAD tree
+        if tree_id == parent_commit.tree_id() {
+            return Ok(String::new()); // No changes, return empty
+        }
+
+        // Load tree for committing
+        let tree = self.repo.find_tree(tree_id)?;
 
         // Get author signature (use git config if available)
         let signature = self.repo.signature()?;
@@ -132,16 +134,14 @@ pub fn squash_commits(&self, count: usize, message: &str) -> Result<String> {
         let first_commit_id = revwalk.next().ok_or_else(|| anyhow!("no commits in repository"))??;
         Ok(first_commit_id.to_string())
     } else {
-        // Simplified approach: get HEAD's parent and create new commit with same tree
-        let head = self.repo.head()?;
-        let _head = head.peel_to_commit()?;
-
+        // Get HEAD commit
         let mut revwalk = self.repo.revwalk()?;
         revwalk.push_head()?;
         let head_commit_id = revwalk.next().ok_or_else(|| anyhow!("no commits"))??;
         let head_commit = self.repo.find_commit(head_commit_id)?;
 
-        // Skip (count) commits to find the squash parent
+        // Skip count commits to find the parent of the squash range
+        // If we want to squash 3 commits (HEAD, HEAD~1, HEAD~2), the new parent is HEAD~3
         let mut skip_count = count;
         let mut squash_parent_id = head_commit_id;
         while skip_count > 0 {
@@ -155,15 +155,22 @@ pub fn squash_commits(&self, count: usize, message: &str) -> Result<String> {
 
         let signature = self.repo.signature()?;
 
-        // Create the squashed commit
+        // Create the squashed commit without updating HEAD first
         let commit_id = self.repo.commit(
-            Some("HEAD"),
+            None, // Don't update any reference yet
             &signature,
             &signature,
             message,
             &tree,
             &[&squash_parent],
         )?;
+
+        // Now update HEAD to point to the new commit
+        let commit = self.repo.find_commit(commit_id)?;
+        self.repo.head()?.set_target(commit_id, &format!("squash: {}", message))?;
+        
+        // Reset the working tree and index to match the new HEAD
+        self.repo.reset(commit.as_object(), git2::ResetType::Hard, None)?;
 
         Ok(commit_id.to_string())
     }

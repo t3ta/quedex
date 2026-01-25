@@ -28,3 +28,4 @@ git2 = "0.18"
 
 [dev-dependencies]
 tempdir = "0.3"
+tempfile = "3"
