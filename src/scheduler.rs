@@ -557,6 +557,7 @@ fn deps_failed(task: &TaskSpec, states: &HashMap<TaskId, TaskRecord>) -> bool {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_event(
     event: SchedulerEvent,
     states: &mut HashMap<TaskId, TaskRecord>,

@@ -121,7 +121,7 @@ impl GitManager {
 /// Squash multiple commits into one
 /// Takes the last `count` commits and squashes them into a single commit
 pub fn squash_commits(&self, count: usize, message: &str) -> Result<String> {
-    if count <= 0 {
+    if count == 0 {
         anyhow::bail!("count must be greater than 0");
     }
 

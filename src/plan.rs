@@ -7,18 +7,13 @@ use petgraph::graphmap::DiGraphMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskMode {
     Research,
+    #[default]
     Implement,
     Verify,
-}
-
-impl Default for TaskMode {
-    fn default() -> Self {
-        TaskMode::Implement
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
