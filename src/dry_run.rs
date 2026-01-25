@@ -244,7 +244,6 @@ mod tests {
                 default_timeout_sec: None,
                 notifications: None,
             },
-            variables: std::collections::HashMap::new(),
             groups: std::collections::HashMap::new(),
             tasks,
         }

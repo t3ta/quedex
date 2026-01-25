@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "description": "Sample plan using output_files.",
+  "run": {
+    "name": "output-files-sample",
+    "max_concurrency": 1,
+    "fail_fast": true
+  },
+  "tasks": [
+    {
+      "id": "generate-output",
+      "title": "Generate output file",
+      "mode": "research",
+      "kind": "codex",
+      "output_files": [
+        "artifacts/output-files-sample/notes.txt"
+      ],
+      "codex": {
+        "prompt": "Write a short note into artifacts/output-files-sample/notes.txt."
+      }
+    },
+    {
+      "id": "summarize-output",
+      "title": "Summarize generated output",
+      "mode": "research",
+      "deps": ["generate-output"],
+      "kind": "codex",
+      "codex": {
+        "prompt": "Read the file artifacts/output-files-sample/notes.txt and summarize its content."
+      }
+    }
+  ]
+}

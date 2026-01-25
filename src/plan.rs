@@ -64,11 +64,6 @@ pub struct Plan {
     pub version: u32,
     #[serde(default)]
     pub run: RunConfig,
-    /// Template variables for prompt expansion.
-    /// Use ${variable} to reference these in prompts.
-    /// Use ${env.VAR} to reference environment variables.
-    #[serde(default)]
-    pub variables: HashMap<String, String>,
     /// Task groups for logical organization.
     /// Maps group name to list of task IDs belonging to that group.
     #[serde(default)]

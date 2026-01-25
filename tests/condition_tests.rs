@@ -475,7 +475,6 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
     let plan = Plan {
         version: 1,
         run: RunConfig::default(),
-        variables: HashMap::new(),
         groups: HashMap::new(),
         tasks: vec![task],
     };
@@ -524,7 +523,6 @@ fn plan_rejects_condition_referencing_self() {
     let plan = Plan {
         version: 1,
         run: RunConfig::default(),
-        variables: HashMap::new(),
         groups: HashMap::new(),
         tasks: vec![task],
     };

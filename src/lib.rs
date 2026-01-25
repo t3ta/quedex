@@ -6,7 +6,6 @@ pub mod runner;
 pub mod scheduler;
 pub mod stats;
 pub mod store;
-pub mod template;
 pub mod tui;
 pub mod web;
 pub mod worktree;

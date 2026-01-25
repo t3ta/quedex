@@ -5,11 +5,6 @@ description: "Hybrid workflow sample for parallel draft/review with task groups"
 # Hybridワークフロー サンプル
 # 認証機能とAPI機能を並列に開発し、それぞれでdraft→reviewの流れを実現
 
-variables:
-  # 共通変数: 全タスクで参照可能
-  project_name: "hybrid-sample-app"
-  base_branch: "main"
-
 groups:
   # 認証機能グループ: draft → review の流れ
   auth: [draft-auth, review-auth]
@@ -44,9 +39,6 @@ tasks:
         - JWTトークンベースの認証
         - パスワードのハッシュ化
 
-        プロジェクト名: ${project_name}
-        ベースブランチ: ${base_branch}
-
         実装したファイルパスのリストを artifacts/hybrid-workflow/auth/draft-report.md に保存してください。
         フォーマット:
         - Files:
@@ -69,8 +61,7 @@ tasks:
       prompt: |
         認証機能の実装をレビューしてください。
 
-        Draft report:
-        ${output.draft-auth}
+        Draft report: artifacts/hybrid-workflow/auth/draft-report.md を参照してください。
 
         レビュー観点:
         - セキュリティ: パスワード処理、トークン管理
@@ -104,9 +95,6 @@ tasks:
         - ユーザー情報更新エンドポイント (PUT /api/users/:id)
         - 認証ミドルウェアの統合
 
-        プロジェクト名: ${project_name}
-        ベースブランチ: ${base_branch}
-
         実装したファイルパスとエンドポイントのリストを artifacts/hybrid-workflow/api/draft-report.md に保存してください。
         フォーマット:
         - Files:
@@ -132,8 +120,7 @@ tasks:
       prompt: |
         REST API機能の実装をレビューしてください。
 
-        Draft report:
-        ${output.draft-api}
+        Draft report: artifacts/hybrid-workflow/api/draft-report.md を参照してください。
 
         レビュー観点:
         - RESTful設計の妥当性
@@ -165,11 +152,9 @@ tasks:
       prompt: |
         認証機能とAPI機能の統合検証を実施してください。
 
-        認証レビュー結果:
-        ${output.review-auth}
-
-        APIレビュー結果:
-        ${output.review-api}
+        以下のファイルを参照してください:
+        - 認証レビュー結果: artifacts/hybrid-workflow/auth/review-report.md
+        - APIレビュー結果: artifacts/hybrid-workflow/api/review-report.md
 
         検証項目:
         1. 認証フローとAPI呼び出しの統合動作確認

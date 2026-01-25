@@ -59,7 +59,6 @@ fn plan_with_tasks(tasks: Vec<Task>) -> Plan {
     Plan {
         version: 1,
         run: RunConfig::default(),
-        variables: HashMap::new(),
         groups: HashMap::new(),
         tasks,
     }

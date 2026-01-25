@@ -838,7 +838,6 @@ async fn handle_run(
         env,
         store: store.clone(),
         worktree_manager,
-        variables: plan.variables.clone(),
     };
 
     let (mut state, initial_states) = if recovery.resume {
@@ -1538,7 +1537,6 @@ async fn handle_retry(
         env,
         store: store.clone(),
         worktree_manager,
-        variables: plan.variables.clone(),
     };
 
     let state_handle = StateHandle::new(store.clone(), state);
