@@ -100,8 +100,8 @@ pub struct Scheduler<R> {
     options: SchedulerOptions,
     runner: R,
     initial_states: Option<HashMap<TaskId, TaskRecord>>,
-    // Git manager for commit handling
-    git_manager: Option<std::sync::Arc<crate::git::GitManager>>,
+    // Git manager for commit handling; wrapped in a mutex to serialize git operations
+    git_manager: Option<std::sync::Arc<std::sync::Mutex<crate::git::GitManager>>>,
 }
 
 impl<R> Scheduler<R>
@@ -122,7 +122,7 @@ where
         }
     }
 
-    pub fn with_git_manager(mut self, git_manager: std::sync::Arc<crate::git::GitManager>) -> Self {
+    pub fn with_git_manager(mut self, git_manager: std::sync::Arc<std::sync::Mutex<crate::git::GitManager>>) -> Self {
         self.git_manager = Some(git_manager);
         self
     }
@@ -148,7 +148,7 @@ where
 
     pub fn with_git_manager_for_state(
         mut self,
-        git_manager: std::sync::Arc<crate::git::GitManager>,
+        git_manager: std::sync::Arc<std::sync::Mutex<crate::git::GitManager>>,
     ) -> Self {
         self.git_manager = Some(git_manager);
         self
@@ -566,7 +566,7 @@ fn handle_event(
     fail_fast_enabled: bool,
     ready_queue: &mut VecDeque<TaskId>,
     commit_hashes: &mut Vec<(String, String, Option<String>)>, // (task_id, commit_hash, title)
-    git_manager: &Option<std::sync::Arc<crate::git::GitManager>>,
+    git_manager: &Option<std::sync::Arc<std::sync::Mutex<crate::git::GitManager>>>,
 ) {
     match event {
         SchedulerEvent::TaskFinished { task_id, result, task_spec } => {
@@ -579,20 +579,46 @@ fn handle_event(
                 )
             {
                 if let Some(gm) = git_manager {
-                    // Try to create commit
-                    if let Ok(_hash) = gm.ensure_on_branch() {
-                        let title = task_spec.title.clone().unwrap_or_else(|| task_spec.id.clone());
-                        let message = crate::git::generate_commit_message(
-                            &title,
-                            &task_spec.id,
-                            &format!("{:?}", task_spec.mode),
-                        );
+                    // Lock the git manager for thread-safe operations
+                    if let Ok(gm_locked) = gm.lock() {
+                        // Try to create commit
+                        match gm_locked.ensure_on_branch() {
+                            Ok(_) => {
+                                let title = task_spec.title.clone().unwrap_or_else(|| task_spec.id.clone());
+                                let message = crate::git::generate_commit_message(
+                                    &title,
+                                    &task_spec.id,
+                                    &format!("{:?}", task_spec.mode),
+                                );
 
-                        if let Ok(commit_hash) = gm.create_commit(&message) {
-                            if !commit_hash.is_empty() {
-                                commit_hashes.push((task_spec.id.clone(), commit_hash, task_spec.title));
+                                match gm_locked.create_commit(&message) {
+                                    Ok(commit_hash) => {
+                                        if !commit_hash.is_empty() {
+                                            commit_hashes.push((task_spec.id.clone(), commit_hash, task_spec.title));
+                                        }
+                                    }
+                                    Err(err) => {
+                                        eprintln!(
+                                            "Warning: auto-commit create_commit failed for task {}: {:?}",
+                                            task_spec.id,
+                                            err
+                                        );
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                eprintln!(
+                                    "Warning: auto-commit ensure_on_branch failed for task {}: {:?}",
+                                    task_spec.id,
+                                    err
+                                );
                             }
                         }
+                    } else {
+                        eprintln!(
+                            "Warning: could not acquire git manager lock for task {}",
+                            task_spec.id
+                        );
                     }
                 }
             }

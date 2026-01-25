@@ -961,8 +961,15 @@ async fn handle_run(
         notifier.clone(),
         &store_root,
     );
+    
+    // Create GitManager for auto-commit functionality
+    let git_manager = match crate::git::GitManager::open() {
+        Ok(gm) => Some(Arc::new(std::sync::Mutex::new(gm))),
+        Err(_) => None, // Not in a git repository, skip auto-commit
+    };
+    
     let scheduler = if let Some(initial_states) = initial_states {
-        Scheduler::new_with_initial_state(
+        let sched = Scheduler::new_with_initial_state(
             task_specs,
             SchedulerOptions {
                 max_concurrency,
@@ -970,16 +977,26 @@ async fn handle_run(
             },
             runner,
             initial_states,
-        )
+        );
+        if let Some(gm) = git_manager {
+            sched.with_git_manager_for_state(gm)
+        } else {
+            sched
+        }
     } else {
-        Scheduler::new(
+        let sched = Scheduler::new(
             task_specs,
             SchedulerOptions {
                 max_concurrency,
                 fail_fast,
             },
             runner,
-        )
+        );
+        if let Some(gm) = git_manager {
+            sched.with_git_manager(gm)
+        } else {
+            sched
+        }
     };
 
     // Collect environment variables for condition evaluation
@@ -1595,6 +1612,13 @@ async fn handle_retry(
         None,
         &store_root,
     );
+    
+    // Create GitManager for auto-commit functionality
+    let git_manager = match crate::git::GitManager::open() {
+        Ok(gm) => Some(Arc::new(std::sync::Mutex::new(gm))),
+        Err(_) => None, // Not in a git repository, skip auto-commit
+    };
+    
     let scheduler = Scheduler::new(
         task_specs,
         SchedulerOptions {
@@ -1603,6 +1627,12 @@ async fn handle_retry(
         },
         runner,
     );
+    
+    let scheduler = if let Some(gm) = git_manager {
+        scheduler.with_git_manager(gm)
+    } else {
+        scheduler
+    };
 
     // Collect environment variables for condition evaluation
     let mut env_vars: HashMap<String, String> = std::env::vars().collect();
@@ -2021,8 +2051,10 @@ fn handle_squash_tasks(plan: &Plan, report: &ScheduleReport) -> Result<()> {
     // Collect commit information for squash message
     let task_summaries: Vec<(String, String)> = report.commit_hashes
         .iter()
-        .filter(|(_, _, title)| title.is_some())
-        .map(|(id, _, title)| (id.clone(), title.clone().unwrap()))
+        .map(|(id, _, title)| {
+            let title_str = title.clone().unwrap_or_else(|| id.clone());
+            (id.clone(), title_str)
+        })
         .collect();
 
     if task_summaries.is_empty() {
