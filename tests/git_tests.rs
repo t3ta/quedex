@@ -134,7 +134,7 @@ mod git_integration_tests {
         
         // Open GitManager from the specific path
         let repo = Repository::open(&repo_path).expect("Failed to open repo");
-        let manager = quedex::git::GitManager { repo };
+        let manager = quedex::git::GitManager::from_repo(repo);
         let commit_hash = manager.create_commit("Test commit message").expect("Failed to create commit");
         
         assert!(!commit_hash.is_empty(), "Commit hash should not be empty");
@@ -146,7 +146,7 @@ mod git_integration_tests {
         
         // Open GitManager with no new changes
         let repo = Repository::open(&repo_path).expect("Failed to open repo");
-        let manager = quedex::git::GitManager { repo };
+        let manager = quedex::git::GitManager::from_repo(repo);
         let commit_hash = manager.create_commit("Empty commit").expect("Should handle no changes");
         
         assert!(commit_hash.is_empty(), "Should return empty string when no changes");
@@ -157,7 +157,7 @@ mod git_integration_tests {
         let (_temp_dir, repo_path) = create_temp_git_repo();
         
         let repo = Repository::open(&repo_path).expect("Failed to open repo");
-        let manager = quedex::git::GitManager { repo };
+        let manager = quedex::git::GitManager::from_repo(repo);
         let commits = manager.list_commits(5).expect("Failed to list commits");
         
         assert!(!commits.is_empty(), "Should have at least the initial commit");
@@ -175,13 +175,13 @@ mod git_integration_tests {
             
             // Re-open manager for each commit to ensure clean state
             let repo_inner = Repository::open(&repo_path).expect("Failed to open repo");
-            let manager_inner = quedex::git::GitManager { repo: repo_inner };
+            let manager_inner = quedex::git::GitManager::from_repo(repo_inner);
             manager_inner.create_commit(&format!("Commit {}", i)).expect("Failed to create commit");
         }
         
         // Re-open for squash operation
         let repo_final = Repository::open(&repo_path).expect("Failed to open repo");
-        let manager_final = quedex::git::GitManager { repo: repo_final };
+        let manager_final = quedex::git::GitManager::from_repo(repo_final);
         
         // Squash the last 3 commits
         let squash_hash = manager_final.squash_commits(3, "Squashed commit").expect("Failed to squash commits");

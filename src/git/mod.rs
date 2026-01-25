@@ -3,7 +3,7 @@ use git2::{Repository, StatusOptions};
 
 /// Manager for git operations
 pub struct GitManager {
-    pub repo: Repository,
+    repo: Repository,
 }
 
 #[derive(Debug, Clone)]
@@ -19,6 +19,11 @@ impl GitManager {
         let repo = Repository::discover(".")
             .context("failed to open git repository. Ensure you are inside a git repository.")?;
         Ok(Self { repo })
+    }
+
+    /// Create a GitManager from an existing Repository (for testing)
+    pub fn from_repo(repo: Repository) -> Self {
+        Self { repo }
     }
 
     /// Ensure we are on a valid branch (not detached HEAD)
