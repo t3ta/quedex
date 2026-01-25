@@ -17,6 +17,27 @@ pub struct TaskSpec {
     pub locks: Vec<String>,
     pub output_files: Option<Vec<String>>,
     pub condition: Option<TaskCondition>,
+    // Task-related fields for commit generation
+    pub title: Option<String>,
+    pub mode: crate::plan::TaskMode,
+    pub auto_commit: bool,
+    pub squash: bool,
+}
+
+impl Default for TaskSpec {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            deps: Vec::new(),
+            locks: Vec::new(),
+            output_files: None,
+            condition: None,
+            title: None,
+            mode: crate::plan::TaskMode::default(),
+            auto_commit: true,
+            squash: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -64,6 +85,8 @@ pub struct TaskRecord {
 #[derive(Debug, Clone)]
 pub struct ScheduleReport {
     pub tasks: HashMap<TaskId, TaskRecord>,
+    // Track commits created during execution for squash task
+    pub commit_hashes: Vec<(String, String, Option<String>)>, // (task_id, commit_hash, title)
 }
 
 pub trait TaskRunner: Send + Sync + 'static {
@@ -77,6 +100,8 @@ pub struct Scheduler<R> {
     options: SchedulerOptions,
     runner: R,
     initial_states: Option<HashMap<TaskId, TaskRecord>>,
+    // Git manager for commit handling
+    git_manager: Option<std::sync::Arc<crate::git::GitManager>>,
 }
 
 impl<R> Scheduler<R>
@@ -93,7 +118,13 @@ where
             options,
             runner,
             initial_states: None,
+            git_manager: None,
         }
+    }
+
+    pub fn with_git_manager(mut self, git_manager: std::sync::Arc<crate::git::GitManager>) -> Self {
+        self.git_manager = Some(git_manager);
+        self
     }
 
     pub fn new_with_initial_state(
@@ -111,7 +142,16 @@ where
             options,
             runner,
             initial_states: Some(initial_states),
+            git_manager: None,
         }
+    }
+
+    pub fn with_git_manager_for_state(
+        mut self,
+        git_manager: std::sync::Arc<crate::git::GitManager>,
+    ) -> Self {
+        self.git_manager = Some(git_manager);
+        self
     }
 
     pub async fn run(self, env_vars: &HashMap<String, String>) -> ScheduleReport {
@@ -140,6 +180,8 @@ where
         if fail_fast_triggered {
             apply_fail_fast(&mut states, &mut ready_queue);
         }
+
+        let mut commit_hashes = Vec::new();
 
         loop {
             refresh_ready(
@@ -194,6 +236,7 @@ where
                 rotations = 0;
 
                 let task_clone = task.clone();
+                let task_spec_for_event = task.clone();
                 let task_id_clone = task_id.clone();
                 let locks = task.locks.clone();
                 let lock_table = Arc::clone(&lock_table);
@@ -204,9 +247,11 @@ where
                     let result = future.await;
                     release_locks(&lock_table, &task_id_clone, &locks);
                     drop(permit);
+                    let task_spec_for_event = task_spec_for_event.clone();
                     let _ = tx.send(SchedulerEvent::TaskFinished {
                         task_id: task_id_clone,
                         result,
+                        task_spec: task_spec_for_event,
                     });
                 });
             }
@@ -233,17 +278,18 @@ where
                 &mut fail_fast_triggered,
                 self.options.fail_fast,
                 &mut ready_queue,
+                &mut commit_hashes,
+                &self.git_manager,
             );
-
         }
 
-        ScheduleReport { tasks: states }
+        ScheduleReport { tasks: states, commit_hashes }
     }
 }
 
 #[derive(Debug)]
 enum SchedulerEvent {
-    TaskFinished { task_id: TaskId, result: TaskResult },
+    TaskFinished { task_id: TaskId, result: TaskResult, task_spec: TaskSpec },
 }
 
 fn init_lock_table(tasks: &HashMap<TaskId, TaskSpec>) -> LockTable {
@@ -518,9 +564,38 @@ fn handle_event(
     fail_fast_triggered: &mut bool,
     fail_fast_enabled: bool,
     ready_queue: &mut VecDeque<TaskId>,
+    commit_hashes: &mut Vec<(String, String, Option<String>)>, // (task_id, commit_hash, title)
+    git_manager: &Option<std::sync::Arc<crate::git::GitManager>>,
 ) {
     match event {
-        SchedulerEvent::TaskFinished { task_id, result } => {
+        SchedulerEvent::TaskFinished { task_id, result, task_spec } => {
+            // Handle git commit if task succeeded and auto_commit is enabled
+            if result.status == TaskStatus::Succeeded
+                && task_spec.auto_commit
+                && matches!(
+                    task_spec.mode,
+                    crate::plan::TaskMode::Implement | crate::plan::TaskMode::Verify
+                )
+            {
+                if let Some(gm) = git_manager {
+                    // Try to create commit
+                    if let Ok(_hash) = gm.ensure_on_branch() {
+                        let title = task_spec.title.clone().unwrap_or_else(|| task_spec.id.clone());
+                        let message = crate::git::generate_commit_message(
+                            &title,
+                            &task_spec.id,
+                            &format!("{:?}", task_spec.mode),
+                        );
+
+                        if let Ok(commit_hash) = gm.create_commit(&message) {
+                            if !commit_hash.is_empty() {
+                                commit_hashes.push((task_spec.id.clone(), commit_hash, task_spec.title));
+                            }
+                        }
+                    }
+                }
+            }
+
             if let Some(record) = states.get_mut(&task_id) {
                 record.status = result.status;
                 record.exit_code = result.exit_code;

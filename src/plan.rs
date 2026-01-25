@@ -15,6 +15,12 @@ pub enum TaskMode {
     Verify,
 }
 
+impl Default for TaskMode {
+    fn default() -> Self {
+        TaskMode::Implement
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct WorktreeRunConfig {
     #[serde(default)]
@@ -238,6 +244,19 @@ pub struct Task {
     /// Condition for conditional execution. If the condition is not met, the task is skipped.
     #[serde(default)]
     pub condition: Option<TaskCondition>,
+    /// Whether to create a git commit after this task succeeds (default: true)
+    /// Only applicable for Implement and Verify modes, ignored for Research mode
+    #[serde(default = "default_auto_commit")]
+    #[schemars(default = "default_auto_commit")]
+    pub auto_commit: bool,
+    /// Whether this task should squash all previous commits into one
+    /// Used for final integration/review tasks
+    #[serde(default)]
+    pub squash: bool,
+}
+
+fn default_auto_commit() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy)]

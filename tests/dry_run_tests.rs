@@ -48,7 +48,9 @@ fn create_task(id: &str, deps: Vec<&str>, locks: Vec<&str>) -> Task {
         retry_count: 0,
         retry_delay_sec: 0,
         condition: None,
-    }
+            auto_commit: true,
+        squash: false,
+}
 }
 
 #[test]

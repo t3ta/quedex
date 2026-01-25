@@ -20,6 +20,8 @@ quedex は機械可読な plan (DAG) を受け取り、依存関係と排他制�
 - **条件付き実行**（環境変数や前タスクの結果に基づく実行制御）
 - **Web ダッシュボード**（リアルタイム監視）
 - **出力ファイルキャプチャ**（タスク成果物の自動収集）
+- **自動 git commit**（タスク完了時の自動コミット）
+- **Squash 機能**（複数コミットを1つに統合）
 
 ## インストール方法
 
@@ -235,6 +237,8 @@ tasks:
 - `output_files`: 出力として収集するファイルパス（相対パス）
 - `condition`: 条件付き実行（環境変数または前タスクの結果）
 - `no_worktree`: worktree を使用しない（デフォルト: false）
+- `auto_commit`: タスク完了時にgit commitを作成（デフォルト: true。researchモードでは無視）
+- `squash`: 全コミットを1つに統合（最後の統合タスクで使用）
 
 **ランナー設定（いずれか一つ）:**
 
@@ -708,6 +712,59 @@ quedex stats --since 7d
 # 実行履歴
 quedex history -n 20
 ```
+
+### 自動 commit と Squash 機能
+
+タスク完了時に自動でgit commitを作成し、最終的に統合できます。
+
+```yaml
+version: 1
+
+run:
+  name: "feature-implementation"
+  max_concurrency: 2
+
+tasks:
+  - id: implement-api
+    title: "APIの実装"
+    mode: implement
+    auto_commit: true  # デフォルトはtrue
+    deps: []
+    locks: ["workspace"]
+    codex:
+      prompt: "認証APIを実装して"
+
+  - id: write-tests
+    title: "テスト作成"
+    mode: implement
+    auto_commit: true
+    deps: [implement-api]
+    codex:
+      prompt: "APIのテストを書いて"
+
+  - id: integration-review
+    title: "最終統合とレビュー"
+    mode: verify
+    squash: true  # このタスクで全コミットをsquash
+    deps: [write-tests]
+    codex:
+      prompt: "変更をレビューしてテストを実行"
+```
+
+```bash
+# 実行
+quedex start plan.yaml
+
+# 結果:
+# - implement-api 完了 → commit: "feat: APIの実装 [implement-api]"
+# - write-tests 完了 → commit: "feat: テスト作成 [write-tests]"
+# - integration-review 完了 → squashして: "feat/integration: 最終統合とレビュー"
+```
+
+**注意点**:
+- auto_commit は `implement` / `verify` モードのみ有効（research モードでは無視）
+- squashタスクは最後に1つだけ配置する必要がある
+- Gitリポジトリ内で実行する必要がある
 
 ## ライセンス
 
