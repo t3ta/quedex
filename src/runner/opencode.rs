@@ -28,7 +28,13 @@ impl Runner for OpencodeRunner {
             .as_ref()
             .context("opencode config missing")?;
 
-        let prompt = config.prompt.clone();
+        // Build prompt with optional system prompt prefix
+        let mut prompt = String::new();
+        if let Some(ref sys) = ctx.system_prompt {
+            prompt.push_str(sys);
+            prompt.push_str("\n\n");
+        }
+        prompt.push_str(&config.prompt);
 
         let stdout_path = ctx.store.log_path(&task.id, LogStream::Stdout);
         let stderr_path = ctx.store.log_path(&task.id, LogStream::Stderr);

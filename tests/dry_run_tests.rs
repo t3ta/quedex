@@ -16,6 +16,7 @@ fn create_test_plan(tasks: Vec<Task>) -> Plan {
             fail_fast: None,
             default_timeout_sec: None,
             notifications: None,
+            system_prompt: None,
         },
         groups: HashMap::new(),
         tasks,

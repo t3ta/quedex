@@ -88,7 +88,7 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             if dry_run {
                 handle_dry_run(&cli.global, &plan)
             } else {
-                handle_run(&cli.global, &effective, &plan, recovery, run_id, base_dir).await
+                handle_run(&cli.global, &effective, &config, &plan, recovery, run_id, base_dir).await
             }
         }
         Commands::Start {
@@ -110,7 +110,7 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             task_id,
             group,
             reload_plan,
-        } => handle_retry(&cli.global, &effective, &run_id, task_id, group, reload_plan).await,
+        } => handle_retry(&cli.global, &effective, &config, &run_id, task_id, group, reload_plan).await,
         Commands::Cancel { run_id, task_id, group } => handle_cancel(&effective, &run_id, task_id, group),
         Commands::Clean {
             run_id,
@@ -733,6 +733,7 @@ fn handle_stats(
 async fn handle_run(
     _global: &GlobalOptions,
     effective: &EffectiveOptions,
+    config: &Config,
     plan_arg: &str,
     recovery: RecoveryOptions,
     run_id: Option<String>,
@@ -834,11 +835,19 @@ async fn handle_run(
     let mut env: HashMap<String, String> = std::env::vars().collect();
     env.extend(plan.run.env.clone());
 
+    // Resolve system_prompt: plan-level overrides config-level
+    let system_prompt = plan
+        .run
+        .system_prompt
+        .clone()
+        .or_else(|| config.system_prompt.clone());
+
     let ctx = RunContext {
         cwd,
         env,
         store: store.clone(),
         worktree_manager,
+        system_prompt,
     };
 
     let (mut state, initial_states) = if recovery.resume {
@@ -1432,6 +1441,7 @@ fn collect_downstream_tasks(plan: &Plan, target_ids: &HashSet<String>) -> HashSe
 async fn handle_retry(
     _global: &GlobalOptions,
     effective: &EffectiveOptions,
+    config: &Config,
     run_id: &str,
     task_id: Option<String>,
     group: Option<String>,
@@ -1651,11 +1661,19 @@ async fn handle_retry(
     let mut env: HashMap<String, String> = std::env::vars().collect();
     env.extend(plan.run.env.clone());
 
+    // Resolve system_prompt: plan-level overrides config-level
+    let system_prompt = plan
+        .run
+        .system_prompt
+        .clone()
+        .or_else(|| config.system_prompt.clone());
+
     let ctx = RunContext {
         cwd,
         env,
         store: store.clone(),
         worktree_manager,
+        system_prompt,
     };
 
     let state_handle = StateHandle::new(store.clone(), state);

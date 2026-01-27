@@ -58,6 +58,9 @@ pub struct RunConfig {
     /// Webhook notification configuration
     #[serde(default)]
     pub notifications: Option<NotificationConfig>,
+    /// System prompt to prepend to all task prompts (overrides quedex.toml)
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

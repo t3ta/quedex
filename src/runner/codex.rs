@@ -30,7 +30,13 @@ impl Runner for CodexRunner {
             .as_ref()
             .context("codex config missing")?;
 
-        let mut prompt = config.prompt.clone();
+        // Build prompt with optional system prompt prefix
+        let mut prompt = String::new();
+        if let Some(ref sys) = ctx.system_prompt {
+            prompt.push_str(sys);
+            prompt.push_str("\n\n");
+        }
+        prompt.push_str(&config.prompt);
         if matches!(task.mode, TaskMode::Implement) && config.verify_after {
             prompt.push_str("\n\n");
             prompt.push_str(VERIFY_AFTER_SUFFIX);

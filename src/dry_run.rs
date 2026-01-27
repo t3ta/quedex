@@ -243,6 +243,7 @@ mod tests {
                 fail_fast: None,
                 default_timeout_sec: None,
                 notifications: None,
+                system_prompt: None,
             },
             groups: std::collections::HashMap::new(),
             tasks,

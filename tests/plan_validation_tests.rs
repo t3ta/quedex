@@ -429,3 +429,48 @@ fn plan_rejects_parent_dir_in_output_files() {
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "contains '..'");
 }
+
+#[test]
+fn plan_accepts_system_prompt_in_run_config() {
+    use quedex::plan::PlanFormat;
+
+    let yaml = r#"
+version: 1
+run:
+  system_prompt: |
+    This is a test project.
+    Please follow coding conventions.
+tasks:
+  - id: test
+    mode: implement
+    codex:
+      prompt: "implement feature"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    assert!(plan.validate().is_ok());
+    assert!(plan.run.system_prompt.is_some());
+    let sys_prompt = plan.run.system_prompt.unwrap();
+    assert!(sys_prompt.contains("test project"));
+    assert!(sys_prompt.contains("coding conventions"));
+}
+
+#[test]
+fn plan_accepts_empty_run_config_system_prompt() {
+    use quedex::plan::PlanFormat;
+
+    let json = r#"{
+        "version": 1,
+        "tasks": [
+            {
+                "id": "test",
+                "mode": "implement",
+                "codex": {
+                    "prompt": "implement feature"
+                }
+            }
+        ]
+    }"#;
+    let plan = Plan::parse_str(json, PlanFormat::Json).unwrap();
+    assert!(plan.validate().is_ok());
+    assert!(plan.run.system_prompt.is_none());
+}

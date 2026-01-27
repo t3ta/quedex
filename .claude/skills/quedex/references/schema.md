@@ -18,6 +18,7 @@
 | `title` | なし | 必要な場合のみ |
 | `variables` | なし | 3箇所以上で同じ値を使う場合のみ |
 | `groups` | なし | バッチ操作が必要な場合のみ |
+| `system_prompt` | なし | 全タスクに共通コンテキストを渡す場合のみ |
 
 ---
 
@@ -98,7 +99,8 @@ Array of Task objects. Must contain at least one task.
   "fail_fast": true,
   "default_timeout_sec": 3600,
   "worktree": { "enabled": true },
-  "notifications": { "url": "https://hooks.slack.com/..." }
+  "notifications": { "url": "https://hooks.slack.com/..." },
+  "system_prompt": "全タスク共通のコンテキスト"
 }
 ```
 
@@ -152,6 +154,21 @@ Array of Task objects. Must contain at least one task.
   - `url`: Webhook URL (Slack/Discord compatible)
   - `events`: Array of events (`"on_start"`, `"on_task_complete"`, `"on_complete"`, `"on_failure"`)
   - `username`: Custom username for notifications
+
+### system_prompt (optional)
+
+- **Type**: `string`
+- **Purpose**: 全タスクのプロンプトの前に追加される共通コンテキスト
+- **Priority**: プラン単位の設定が `quedex.toml` の設定を上書き
+- **Example**:
+```yaml
+run:
+  system_prompt: |
+    このプロジェクトは Rust で書かれています。
+    コーディング規約:
+    - snake_case を使用
+    - エラー処理には anyhow を使用
+```
 
 ---
 
