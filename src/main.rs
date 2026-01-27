@@ -1,6 +1,6 @@
 mod cli;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
@@ -1398,6 +1398,37 @@ fn read_preview_lines(path: &Path, max_lines: usize) -> Result<Vec<String>> {
     Ok(lines)
 }
 
+/// Collect all downstream tasks (direct and indirect dependents) from the given target task IDs.
+/// Returns a set of task IDs that depend (directly or transitively) on any of the target tasks.
+fn collect_downstream_tasks(plan: &Plan, target_ids: &HashSet<String>) -> HashSet<String> {
+    // Build dependents map: task_id -> list of tasks that depend on it
+    let mut dependents: HashMap<&str, Vec<&str>> = HashMap::new();
+    for task in &plan.tasks {
+        for dep in &task.deps {
+            dependents
+                .entry(dep.as_str())
+                .or_default()
+                .push(task.id.as_str());
+        }
+    }
+
+    // BFS to collect all downstream tasks
+    let mut downstream: HashSet<String> = HashSet::new();
+    let mut queue: Vec<&str> = target_ids.iter().map(|s| s.as_str()).collect();
+
+    while let Some(task_id) = queue.pop() {
+        if let Some(deps) = dependents.get(task_id) {
+            for &dep in deps {
+                if !target_ids.contains(dep) && downstream.insert(dep.to_string()) {
+                    queue.push(dep);
+                }
+            }
+        }
+    }
+
+    downstream
+}
+
 async fn handle_retry(
     _global: &GlobalOptions,
     effective: &EffectiveOptions,
@@ -1509,8 +1540,54 @@ async fn handle_retry(
         return Err(anyhow!("no tasks to retry"));
     }
 
-    // Check runner availability for all tasks
-    for task in &tasks_to_retry {
+    // Collect downstream tasks that were skipped due to dependency failure or fail-fast
+    let retry_target_ids: HashSet<String> = tasks_to_retry.iter().map(|t| t.id.clone()).collect();
+    let downstream_task_ids = collect_downstream_tasks(&plan, &retry_target_ids);
+
+    let mut downstream_tasks: Vec<Task> = Vec::new();
+    for task in &plan.tasks {
+        if downstream_task_ids.contains(&task.id) {
+            if let Some(task_state) = state.tasks.get(&task.id) {
+                // Only include Skipped tasks with DependencyFailed or FailFast reason
+                // ConditionNotMet tasks should NOT be auto-retried (condition should be re-evaluated)
+                if task_state.status == TaskStatus::Skipped {
+                    match &task_state.skip_reason {
+                        Some(SkipReason::DependencyFailed) | Some(SkipReason::FailFast) => {
+                            // Check if all non-retry-set dependencies are Succeeded
+                            let task_statuses: HashMap<String, TaskStatus> = state
+                                .tasks
+                                .iter()
+                                .map(|(id, ts)| (id.clone(), ts.status))
+                                .collect();
+
+                            if has_unsatisfied_external_deps(
+                                &task.deps,
+                                &retry_target_ids,
+                                &task_statuses,
+                            ) {
+                                eprintln!(
+                                    "Note: Excluding downstream task '{}' from retry - has unsatisfied dependencies outside retry set",
+                                    task.id
+                                );
+                            } else {
+                                downstream_tasks.push(task.clone());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    // Combine all tasks for runner availability check
+    let all_retry_tasks: Vec<&Task> = tasks_to_retry
+        .iter()
+        .chain(downstream_tasks.iter())
+        .collect();
+
+    // Check runner availability for all tasks (including downstream)
+    for task in &all_retry_tasks {
         if matches!(task.kind.as_deref(), Some("codex")) || task.codex.is_some() {
             check_codex_available()?;
         }
@@ -1522,7 +1599,7 @@ async fn handle_retry(
         }
     }
 
-    // Reset task states
+    // Reset task states for retry targets
     for task in &tasks_to_retry {
         let task_state = state.tasks.get_mut(&task.id).unwrap();
         task_state.status = TaskStatus::Pending;
@@ -1532,6 +1609,19 @@ async fn handle_retry(
         task_state.completed_at = None;
         task_state.pid = None;
     }
+
+    // Reset task states for downstream tasks
+    for task in &downstream_tasks {
+        let task_state = state.tasks.get_mut(&task.id).unwrap();
+        task_state.status = TaskStatus::Pending;
+        task_state.exit_code = None;
+        task_state.stderr_tail = None;
+        task_state.started_at = None;
+        task_state.completed_at = None;
+        task_state.pid = None;
+        task_state.skip_reason = None;
+    }
+
     state.status = RunStatus::Running;
     state.completed_at = None;
 
@@ -1572,9 +1662,18 @@ async fn handle_retry(
     let cancel = CancelHandle::new();
     spawn_cancel_listener(cancel.clone());
 
-    // Build task map and specs for all tasks to retry
+    // Build task map and specs for all tasks to retry (including downstream)
     let mut tasks_map = HashMap::new();
     let mut task_specs = Vec::new();
+
+    // Collect all task IDs that are part of this retry operation
+    let all_retry_task_ids: HashSet<String> = tasks_to_retry
+        .iter()
+        .chain(downstream_tasks.iter())
+        .map(|t| t.id.clone())
+        .collect();
+
+    // Add retry target tasks (no dependencies - their deps are already satisfied)
     for task in &tasks_to_retry {
         tasks_map.insert(task.id.clone(), task.clone());
         task_specs.push(TaskSpec {
@@ -1590,7 +1689,43 @@ async fn handle_retry(
         });
     }
 
-    println!("Retrying {} task(s)...", tasks_to_retry.len());
+    // Add downstream tasks with filtered dependencies
+    // Keep only dependencies that are within the retry set
+    for task in &downstream_tasks {
+        tasks_map.insert(task.id.clone(), task.clone());
+
+        // Filter dependencies: only keep those in the retry set
+        let filtered_deps: Vec<String> = task
+            .deps
+            .iter()
+            .filter(|dep| all_retry_task_ids.contains(*dep))
+            .cloned()
+            .collect();
+
+        task_specs.push(TaskSpec {
+            id: task.id.clone(),
+            deps: filtered_deps,
+            locks: task.locks.clone(),
+            output_files: task.output_files.clone(),
+            condition: task.condition.clone(),
+            title: task.title.clone(),
+            mode: task.mode,
+            auto_commit: task.auto_commit,
+            squash: task.squash,
+        });
+    }
+
+    // Print retry message with downstream task count
+    let downstream_count = downstream_tasks.len();
+    if downstream_count > 0 {
+        println!(
+            "Retrying {} task(s) + {} downstream task(s)...",
+            tasks_to_retry.len(),
+            downstream_count
+        );
+    } else {
+        println!("Retrying {} task(s)...", tasks_to_retry.len());
+    }
 
     let max_concurrency = plan
         .run
@@ -3323,4 +3458,130 @@ async fn handle_serve(
     .await?;
 
     Ok(0)
+}
+
+/// Check if a downstream task has unsatisfied dependencies outside the retry set.
+/// Returns true if the task should be excluded from retry.
+fn has_unsatisfied_external_deps(
+    task_deps: &[String],
+    retry_target_ids: &HashSet<String>,
+    task_statuses: &HashMap<String, TaskStatus>,
+) -> bool {
+    task_deps.iter().any(|dep| {
+        // Dependencies in retry set → OK (will be retried)
+        if retry_target_ids.contains(dep) {
+            return false;
+        }
+        // Dependencies outside retry set → must be Succeeded
+        task_statuses.get(dep).is_none_or(|status| *status != TaskStatus::Succeeded)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_all_in_retry_set() {
+        // All dependencies are in the retry set → should NOT be excluded
+        let task_deps = vec!["A".to_string(), "B".to_string()];
+        let retry_target_ids: HashSet<String> = ["A", "B"].iter().map(|s| s.to_string()).collect();
+        let task_statuses = HashMap::new();
+
+        assert!(!has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_external_succeeded() {
+        // External dependency is Succeeded → should NOT be excluded
+        let task_deps = vec!["A".to_string(), "B".to_string()];
+        let retry_target_ids: HashSet<String> = ["A"].iter().map(|s| s.to_string()).collect();
+        let mut task_statuses = HashMap::new();
+        task_statuses.insert("B".to_string(), TaskStatus::Succeeded);
+
+        assert!(!has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_external_failed() {
+        // External dependency is Failed → SHOULD be excluded
+        let task_deps = vec!["A".to_string(), "B".to_string()];
+        let retry_target_ids: HashSet<String> = ["A"].iter().map(|s| s.to_string()).collect();
+        let mut task_statuses = HashMap::new();
+        task_statuses.insert("B".to_string(), TaskStatus::Failed);
+
+        assert!(has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_external_skipped() {
+        // External dependency is Skipped → SHOULD be excluded
+        let task_deps = vec!["A".to_string(), "B".to_string()];
+        let retry_target_ids: HashSet<String> = ["A"].iter().map(|s| s.to_string()).collect();
+        let mut task_statuses = HashMap::new();
+        task_statuses.insert("B".to_string(), TaskStatus::Skipped);
+
+        assert!(has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_mixed() {
+        // Mixed: one Succeeded, one Failed outside retry set → SHOULD be excluded
+        let task_deps = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let retry_target_ids: HashSet<String> = ["A"].iter().map(|s| s.to_string()).collect();
+        let mut task_statuses = HashMap::new();
+        task_statuses.insert("B".to_string(), TaskStatus::Succeeded);
+        task_statuses.insert("C".to_string(), TaskStatus::Failed);
+
+        assert!(has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_no_deps() {
+        // No dependencies → should NOT be excluded
+        let task_deps: Vec<String> = vec![];
+        let retry_target_ids: HashSet<String> = HashSet::new();
+        let task_statuses = HashMap::new();
+
+        assert!(!has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_missing_status() {
+        // External dependency has no status record → SHOULD be excluded (conservative)
+        let task_deps = vec!["A".to_string(), "B".to_string()];
+        let retry_target_ids: HashSet<String> = ["A"].iter().map(|s| s.to_string()).collect();
+        let task_statuses = HashMap::new(); // B has no status
+
+        assert!(has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
 }
