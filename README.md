@@ -381,6 +381,32 @@ notifications:
   events: ["on_complete", "on_failure"]
 ```
 
+## ランナー選択ガイド
+
+| ランナー | 特徴 | 推奨用途 |
+|---------|------|---------|
+| **Codex CLI** | verify_after で自動テスト、output_last_message で research 出力 | 調査、テスト実行が重要な実装 |
+| **Claude Code** | sonnet/opus 選択可、高速な Draft 生成 | Hybrid ワークフローの draft |
+| **Opencode** | 軽量・シンプル、任意モデル指定可 | 汎用的なタスク、GPT 系モデル利用 |
+
+### Opencode の使用例
+
+```yaml
+tasks:
+  - id: analyze
+    mode: research
+    opencode:
+      prompt: "コードベースの構造を分析して"
+      model: "gpt-4"  # 任意のモデルを指定可能
+
+  - id: implement
+    mode: implement
+    deps: [analyze]
+    locks: [workspace]
+    opencode:
+      prompt: "分析結果を踏まえて改善を実装して"
+```
+
 ## Hybridワークフロー
 
 quedex は複数のランナー（Codex CLI、Claude Code、Opencode）を組み合わせた柔軟なワークフローを実現します。特に「Draft → Review」パターンを使った品質向上ワークフローが効果的です。

@@ -1,0 +1,40 @@
+version: 1
+description: "Opencode runner - implement mode example"
+
+run:
+  name: "opencode-impl-demo"
+  max_concurrency: 1
+
+tasks:
+  - id: research
+    title: "調査: 既存構造の把握"
+    mode: research
+    opencode:
+      prompt: |
+        このプロジェクトの構造を調査し、以下をまとめてください:
+        - 主要なディレクトリ構成
+        - 使用している技術スタック
+        - エントリポイント
+
+  - id: implement
+    title: "実装: READMEの改善"
+    mode: implement
+    deps: [research]
+    locks: [workspace]
+    opencode:
+      prompt: |
+        調査結果を踏まえて、READMEファイルを改善してください:
+        - プロジェクト概要の明確化
+        - インストール手順の追加
+        - 使用例の追加
+
+  - id: verify
+    title: "検証: ドキュメント確認"
+    mode: verify
+    deps: [implement]
+    opencode:
+      prompt: |
+        改善したREADMEを確認してください:
+        - 内容の正確性
+        - マークダウンの構文
+        - リンク切れがないか
