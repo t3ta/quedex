@@ -262,3 +262,50 @@ deps不要でも`locks: ["db-migrate"]`で同時実行を防ぐ。
   ]
 }
 ```
+
+---
+
+## Opencode パターン
+
+### 基本的な Opencode タスク
+
+```json
+{
+  "version": 1,
+  "run": { "name": "opencode-demo" },
+  "tasks": [
+    {
+      "id": "analyze",
+      "mode": "research",
+      "opencode": {
+        "prompt": "プロジェクト構造を分析して要点をまとめて"
+      }
+    }
+  ]
+}
+```
+
+### Opencode + Codex ハイブリッド
+
+Opencode で初期調査、Codex で実装・テスト:
+
+```yaml
+version: 1
+run:
+  name: hybrid-opencode
+  max_concurrency: 2
+
+tasks:
+  - id: research
+    mode: research
+    opencode:
+      prompt: "既存実装を調査して"
+      model: "gpt-4"
+
+  - id: implement
+    mode: implement
+    deps: [research]
+    locks: [workspace]
+    codex:
+      prompt: "調査結果を踏まえて実装して"
+```
