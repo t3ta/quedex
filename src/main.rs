@@ -1553,7 +1553,25 @@ async fn handle_retry(
                 if task_state.status == TaskStatus::Skipped {
                     match &task_state.skip_reason {
                         Some(SkipReason::DependencyFailed) | Some(SkipReason::FailFast) => {
-                            downstream_tasks.push(task.clone());
+                            // Check if all non-retry-set dependencies are Succeeded
+                            let task_statuses: HashMap<String, TaskStatus> = state
+                                .tasks
+                                .iter()
+                                .map(|(id, ts)| (id.clone(), ts.status))
+                                .collect();
+
+                            if has_unsatisfied_external_deps(
+                                &task.deps,
+                                &retry_target_ids,
+                                &task_statuses,
+                            ) {
+                                eprintln!(
+                                    "Note: Excluding downstream task '{}' from retry - has unsatisfied dependencies outside retry set",
+                                    task.id
+                                );
+                            } else {
+                                downstream_tasks.push(task.clone());
+                            }
                         }
                         _ => {}
                     }
@@ -3440,4 +3458,130 @@ async fn handle_serve(
     .await?;
 
     Ok(0)
+}
+
+/// Check if a downstream task has unsatisfied dependencies outside the retry set.
+/// Returns true if the task should be excluded from retry.
+fn has_unsatisfied_external_deps(
+    task_deps: &[String],
+    retry_target_ids: &HashSet<String>,
+    task_statuses: &HashMap<String, TaskStatus>,
+) -> bool {
+    task_deps.iter().any(|dep| {
+        // Dependencies in retry set → OK (will be retried)
+        if retry_target_ids.contains(dep) {
+            return false;
+        }
+        // Dependencies outside retry set → must be Succeeded
+        task_statuses.get(dep).is_none_or(|status| *status != TaskStatus::Succeeded)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_all_in_retry_set() {
+        // All dependencies are in the retry set → should NOT be excluded
+        let task_deps = vec!["A".to_string(), "B".to_string()];
+        let retry_target_ids: HashSet<String> = ["A", "B"].iter().map(|s| s.to_string()).collect();
+        let task_statuses = HashMap::new();
+
+        assert!(!has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_external_succeeded() {
+        // External dependency is Succeeded → should NOT be excluded
+        let task_deps = vec!["A".to_string(), "B".to_string()];
+        let retry_target_ids: HashSet<String> = ["A"].iter().map(|s| s.to_string()).collect();
+        let mut task_statuses = HashMap::new();
+        task_statuses.insert("B".to_string(), TaskStatus::Succeeded);
+
+        assert!(!has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_external_failed() {
+        // External dependency is Failed → SHOULD be excluded
+        let task_deps = vec!["A".to_string(), "B".to_string()];
+        let retry_target_ids: HashSet<String> = ["A"].iter().map(|s| s.to_string()).collect();
+        let mut task_statuses = HashMap::new();
+        task_statuses.insert("B".to_string(), TaskStatus::Failed);
+
+        assert!(has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_external_skipped() {
+        // External dependency is Skipped → SHOULD be excluded
+        let task_deps = vec!["A".to_string(), "B".to_string()];
+        let retry_target_ids: HashSet<String> = ["A"].iter().map(|s| s.to_string()).collect();
+        let mut task_statuses = HashMap::new();
+        task_statuses.insert("B".to_string(), TaskStatus::Skipped);
+
+        assert!(has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_mixed() {
+        // Mixed: one Succeeded, one Failed outside retry set → SHOULD be excluded
+        let task_deps = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let retry_target_ids: HashSet<String> = ["A"].iter().map(|s| s.to_string()).collect();
+        let mut task_statuses = HashMap::new();
+        task_statuses.insert("B".to_string(), TaskStatus::Succeeded);
+        task_statuses.insert("C".to_string(), TaskStatus::Failed);
+
+        assert!(has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_no_deps() {
+        // No dependencies → should NOT be excluded
+        let task_deps: Vec<String> = vec![];
+        let retry_target_ids: HashSet<String> = HashSet::new();
+        let task_statuses = HashMap::new();
+
+        assert!(!has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
+
+    #[test]
+    fn test_has_unsatisfied_external_deps_missing_status() {
+        // External dependency has no status record → SHOULD be excluded (conservative)
+        let task_deps = vec!["A".to_string(), "B".to_string()];
+        let retry_target_ids: HashSet<String> = ["A"].iter().map(|s| s.to_string()).collect();
+        let task_statuses = HashMap::new(); // B has no status
+
+        assert!(has_unsatisfied_external_deps(
+            &task_deps,
+            &retry_target_ids,
+            &task_statuses
+        ));
+    }
 }
