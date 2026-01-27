@@ -134,6 +134,37 @@ quedex retry <run_id> --group <name>       # Retry group
 | `output_files` | 特定ファイルをキャプチャしたい場合 |
 | `auto_commit` | テストで無効化したい場合（デフォルトtrue） |
 | `squash` | 最終統合タスクで全コミットを1つにまとめたい場合 |
+| `system_prompt` | 全タスクに共通のコンテキストを渡したい場合 |
+
+### system_prompt（共通プロンプト）
+
+全タスクのプロンプトの前に追加される共通コンテキスト。プロジェクト全体（quedex.toml）またはプラン単位で定義可能。
+
+**quedex.toml（プロジェクト全体）:**
+```toml
+system_prompt = """
+このプロジェクトは Rust で書かれています。
+コーディング規約:
+- snake_case を使用
+- エラー処理には anyhow を使用
+"""
+```
+
+**プランファイル（プラン単位で上書き）:**
+```yaml
+version: 1
+run:
+  system_prompt: |
+    このタスク群は認証機能の実装です。
+    既存の auth モジュールとの整合性を保ってください。
+tasks:
+  - id: task-1
+    mode: implement
+    codex:
+      prompt: "ログイン機能を実装して"
+```
+
+プラン単位の `system_prompt` が設定されている場合、quedex.toml の設定を上書きします。
 
 ## TUI Key Bindings
 

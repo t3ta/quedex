@@ -19,6 +19,8 @@ pub struct Config {
     pub store: Option<PathBuf>,
     /// Default timeout for tasks in seconds
     pub default_timeout_sec: Option<u64>,
+    /// System prompt to prepend to all task prompts
+    pub system_prompt: Option<String>,
 }
 
 impl Config {
@@ -108,6 +110,7 @@ mod tests {
         assert!(config.fail_fast.is_none());
         assert!(config.store.is_none());
         assert!(config.default_timeout_sec.is_none());
+        assert!(config.system_prompt.is_none());
     }
 
     #[test]
@@ -117,12 +120,14 @@ max_concurrency = 4
 fail_fast = false
 store = "/tmp/quedex"
 default_timeout_sec = 300
+system_prompt = "You are a helpful assistant."
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.max_concurrency, Some(4));
         assert_eq!(config.fail_fast, Some(false));
         assert_eq!(config.store, Some(PathBuf::from("/tmp/quedex")));
         assert_eq!(config.default_timeout_sec, Some(300));
+        assert_eq!(config.system_prompt, Some("You are a helpful assistant.".to_string()));
     }
 
     #[test]
@@ -144,6 +149,7 @@ max_concurrency = 2
             fail_fast: Some(false),
             store: Some(PathBuf::from("/config/store")),
             default_timeout_sec: Some(300),
+            system_prompt: None,
         };
 
         // CLI values should override config
@@ -169,6 +175,7 @@ max_concurrency = 2
             fail_fast: Some(false),
             store: Some(PathBuf::from("/config/store")),
             default_timeout_sec: Some(300),
+            system_prompt: None,
         };
 
         // No CLI values, should use config
@@ -187,11 +194,29 @@ max_concurrency = 2
             fail_fast: Some(true),
             store: None,
             default_timeout_sec: None,
+            system_prompt: None,
         };
 
         // --no-fail-fast should override config
         let effective = EffectiveOptions::new(None, None, true, true, &config);
 
         assert!(!effective.fail_fast);
+    }
+
+    #[test]
+    fn test_parse_multiline_system_prompt() {
+        let toml = r#"
+system_prompt = """
+This project is written in Rust.
+Coding conventions:
+- Use snake_case
+- Use anyhow for error handling
+"""
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.system_prompt.is_some());
+        let prompt = config.system_prompt.unwrap();
+        assert!(prompt.contains("Rust"));
+        assert!(prompt.contains("snake_case"));
     }
 }
