@@ -792,12 +792,14 @@ fn expand_env_placeholders(value: &str, base_env: &HashMap<String, String>) -> S
     output
 }
 
-fn build_run_env(plan_env: &HashMap<String, String>) -> HashMap<String, String> {
+fn build_run_env(plan_env: Option<&HashMap<String, String>>) -> HashMap<String, String> {
     let base_env: HashMap<String, String> = std::env::vars().collect();
     let mut env = base_env.clone();
-    for (key, value) in plan_env {
-        let expanded = expand_env_placeholders(value, &base_env);
-        env.insert(key.clone(), expanded);
+    if let Some(plan_env) = plan_env {
+        for (key, value) in plan_env {
+            let expanded = expand_env_placeholders(value, &base_env);
+            env.insert(key.clone(), expanded);
+        }
     }
     env
 }
@@ -904,7 +906,7 @@ async fn handle_run(
 
     // Merge system environment variables with plan.run.env
     // plan.run.env takes precedence over system env vars
-    let env = build_run_env(&plan.run.env);
+    let env = build_run_env(plan.run.env.as_ref());
 
     // Resolve system_prompt: plan-level overrides config-level
     let system_prompt = plan
@@ -1728,7 +1730,7 @@ async fn handle_retry(
 
     // Merge system environment variables with plan.run.env
     // plan.run.env takes precedence over system env vars
-    let env = build_run_env(&plan.run.env);
+    let env = build_run_env(plan.run.env.as_ref());
 
     // Resolve system_prompt: plan-level overrides config-level
     let system_prompt = plan
@@ -2358,15 +2360,8 @@ fn plan_format_from_path(path: &Path) -> Option<PlanFormat> {
 }
 
 fn resolve_run_cwd(plan: &Plan, base_dir: PathBuf) -> Result<PathBuf> {
-    let cwd = if let Some(cwd) = plan.run.cwd.as_ref() {
-        if cwd.is_relative() {
-            base_dir.join(cwd)
-        } else {
-            cwd.clone()
-        }
-    } else {
-        base_dir
-    };
+    // cwd must be absolute (validated in Plan::validate), or defaults to base_dir
+    let cwd = plan.run.cwd.clone().unwrap_or(base_dir);
     Ok(cwd)
 }
 

@@ -54,7 +54,7 @@ impl Runner for CodexRunner {
             .context("open stderr log")?;
 
         let codex_path = resolve_command_path("codex")?;
-        let mut cmd = Command::new(codex_path);
+        let mut cmd = Command::new(&codex_path);
         cmd.arg("exec").arg(prompt);
 
         if config.json {

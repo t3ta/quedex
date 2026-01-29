@@ -47,8 +47,8 @@ pub struct RunConfig {
     pub cwd: Option<PathBuf>,
     #[serde(default)]
     pub worktree: Option<WorktreeRunConfig>,
-    #[serde(default)]
-    pub env: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
     #[serde(default)]
     pub max_concurrency: Option<usize>,
     #[serde(default)]
@@ -272,6 +272,23 @@ impl Plan {
         }
         if self.tasks.is_empty() {
             bail!("plan has no tasks");
+        }
+
+        // Validate cwd is absolute path if specified
+        if let Some(cwd) = self.run.cwd.as_ref() {
+            if cwd.is_relative() {
+                bail!(
+                    "run.cwd must be an absolute path, got: {}",
+                    cwd.display()
+                );
+            }
+        }
+
+        // Warn if env block is explicitly set but empty (likely a mistake)
+        if let Some(env) = &self.run.env {
+            if env.is_empty() {
+                eprintln!("warning: run.env is empty; if you don't need custom env vars, remove the env block entirely");
+            }
         }
 
         let mut seen = HashSet::new();
