@@ -27,7 +27,7 @@ use quedex::stats::StatsCollector;
 use quedex::runner::claude_code::ClaudeCodeRunner;
 use quedex::runner::codex::CodexRunner;
 use quedex::runner::opencode::OpencodeRunner;
-use quedex::runner::{ChildHandle, RunContext, Runner};
+use quedex::runner::{resolve_command_path, ChildHandle, RunContext, Runner};
 use quedex::scheduler::{
     ScheduleReport, Scheduler, SchedulerOptions, TaskRecord, TaskResult, TaskRunner, TaskSpec,
 };
@@ -2371,7 +2371,8 @@ fn resolve_run_cwd(plan: &Plan, base_dir: PathBuf) -> Result<PathBuf> {
 }
 
 fn check_codex_available() -> Result<()> {
-    let status = std::process::Command::new("codex")
+    let codex_path = resolve_command_path("codex")?;
+    let status = std::process::Command::new(codex_path)
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -2383,7 +2384,8 @@ fn check_codex_available() -> Result<()> {
 }
 
 fn check_claude_code_available() -> Result<()> {
-    let status = std::process::Command::new("claude")
+    let claude_path = resolve_command_path("claude")?;
+    let status = std::process::Command::new(claude_path)
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -2395,7 +2397,8 @@ fn check_claude_code_available() -> Result<()> {
 }
 
 fn check_opencode_available() -> Result<()> {
-    let status = std::process::Command::new("opencode")
+    let opencode_path = resolve_command_path("opencode")?;
+    let status = std::process::Command::new(opencode_path)
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
