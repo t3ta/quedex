@@ -5,7 +5,6 @@ pub mod notifier;
 pub mod plan;
 pub mod runner;
 pub mod scheduler;
-pub mod stats;
 pub mod store;
 pub mod tui;
 pub mod web;

@@ -220,7 +220,6 @@ tasks:
 - `env`: 追加環境変数
 - `max_concurrency`: 同時実行数
 - `fail_fast`: 失敗時の停止方針
-- `default_timeout_sec`: デフォルトタイムアウト
 - `worktree`: Git worktree 設定（`enabled`, `base_dir`, `shallow_depth`）
 - `notifications`: Webhook 通知設定
 
@@ -231,7 +230,6 @@ tasks:
 - `group`: 所属グループ名（オプション）
 - `deps`: 依存タスク ID
 - `locks`: 排他リソース名
-- `timeout_sec`: タイムアウト（秒数または `"auto"` / `"2x_average"`）
 - `retry_count`: 失敗時の自動リトライ回数
 - `retry_delay_sec`: リトライ間隔（秒）
 - `output_files`: 出力として収集するファイルパス（相対パス）
@@ -340,9 +338,6 @@ fail_fast = false
 
 # 状態保存ディレクトリ（デフォルト: .quedex）
 store = ".quedex"
-
-# デフォルトタイムアウト（秒）
-default_timeout_sec = 3600
 ```
 
 ## Webhook 通知

@@ -4,8 +4,7 @@
     "name": "feature-enhancements-v2",
     "cwd": ".",
     "max_concurrency": 3,
-    "fail_fast": false,
-    "default_timeout_sec": 1800
+    "fail_fast": false
   },
   "tasks": [
     {
@@ -92,7 +91,7 @@
       "locks": ["workspace"],
       "kind": "claude_code",
       "claude_code": {
-        "prompt": "artifacts/research-config.mdの調査結果に基づいて、quedex.toml設定ファイル機能を実装してください。\n\n## 要件\n1. quedex.tomlの読み込み（カレントディレクトリ）\n2. CLIオプションがquedex.tomlより優先\n3. 設定可能な項目：\n   - max_concurrency\n   - fail_fast\n   - store\n   - default_timeout_sec\n\n## 実装後\ncargo build && cargo clippyでエラーがないことを確認してください。",
+        "prompt": "artifacts/research-config.mdの調査結果に基づいて、quedex.toml設定ファイル機能を実装してください。\n\n## 要件\n1. quedex.tomlの読み込み（カレントディレクトリ）\n2. CLIオプションがquedex.tomlより優先\n3. 設定可能な項目：\n   - max_concurrency\n   - fail_fast\n   - store\n\n## 実装後\ncargo build && cargo clippyでエラーがないことを確認してください。",
         "model": "opus"
       }
     },

@@ -14,12 +14,15 @@ fn create_test_plan(tasks: Vec<Task>) -> Plan {
             env: None,
             max_concurrency: None,
             fail_fast: None,
-            default_timeout_sec: None,
+            _default_timeout_sec_rejected: None,
+            _timeout_sec_rejected: None,
             notifications: None,
             system_prompt: None,
         },
         groups: HashMap::new(),
         tasks,
+        _timeout_sec_rejected: None,
+        _default_timeout_sec_rejected: None,
     }
 }
 
@@ -31,7 +34,8 @@ fn create_task(id: &str, deps: Vec<&str>, locks: Vec<&str>) -> Task {
         group: None,
         deps: deps.into_iter().map(|s| s.to_string()).collect(),
         locks: locks.into_iter().map(|s| s.to_string()).collect(),
-        timeout_sec: None,
+        _timeout_sec_rejected: None,
+        _default_timeout_sec_rejected: None,
         no_worktree: false,
         kind: None,
         output_files: None,
@@ -48,9 +52,9 @@ fn create_task(id: &str, deps: Vec<&str>, locks: Vec<&str>) -> Task {
         retry_count: 0,
         retry_delay_sec: 0,
         condition: None,
-            auto_commit: true,
+        auto_commit: true,
         squash: false,
-}
+    }
 }
 
 #[test]

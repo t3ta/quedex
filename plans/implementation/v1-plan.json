@@ -4,8 +4,7 @@
   "run": {
     "name": "quedex-v1",
     "max_concurrency": 2,
-    "fail_fast": true,
-    "default_timeout_sec": 3600
+    "fail_fast": true
   },
   "tasks": [
     {

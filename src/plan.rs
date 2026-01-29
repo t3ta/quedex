@@ -53,8 +53,22 @@ pub struct RunConfig {
     pub max_concurrency: Option<usize>,
     #[serde(default)]
     pub fail_fast: Option<bool>,
-    #[serde(default)]
-    pub default_timeout_sec: Option<u64>,
+    #[serde(
+        rename = "default_timeout_sec",
+        default,
+        deserialize_with = "reject_default_timeout_sec",
+        skip_serializing
+    )]
+    #[schemars(skip)]
+    pub _default_timeout_sec_rejected: Option<serde::de::IgnoredAny>,
+    #[serde(
+        rename = "timeout_sec",
+        default,
+        deserialize_with = "reject_timeout_sec",
+        skip_serializing
+    )]
+    #[schemars(skip)]
+    pub _timeout_sec_rejected: Option<serde::de::IgnoredAny>,
     /// Webhook notification configuration
     #[serde(default)]
     pub notifications: Option<NotificationConfig>,
@@ -73,6 +87,22 @@ pub struct Plan {
     #[serde(default)]
     pub groups: HashMap<String, Vec<String>>,
     pub tasks: Vec<Task>,
+    #[serde(
+        rename = "timeout_sec",
+        default,
+        deserialize_with = "reject_timeout_sec",
+        skip_serializing
+    )]
+    #[schemars(skip)]
+    pub _timeout_sec_rejected: Option<serde::de::IgnoredAny>,
+    #[serde(
+        rename = "default_timeout_sec",
+        default,
+        deserialize_with = "reject_default_timeout_sec",
+        skip_serializing
+    )]
+    #[schemars(skip)]
+    pub _default_timeout_sec_rejected: Option<serde::de::IgnoredAny>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -98,6 +128,30 @@ fn default_json() -> bool {
 
 fn default_verify_after() -> bool {
     true
+}
+
+fn reject_timeout_sec<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde::de::IgnoredAny>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let _ = serde::de::IgnoredAny::deserialize(deserializer)?;
+    Err(serde::de::Error::custom(
+        "timeout_sec は削除済みです。Codex CLI のタイムアウト設定を使用してください。",
+    ))
+}
+
+fn reject_default_timeout_sec<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde::de::IgnoredAny>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let _ = serde::de::IgnoredAny::deserialize(deserializer)?;
+    Err(serde::de::Error::custom(
+        "default_timeout_sec は削除済みです。Codex CLI のタイムアウト設定を使用してください。",
+    ))
 }
 
 /// Condition for conditional task execution.
@@ -163,43 +217,6 @@ pub struct OpencodeConfig {
     pub json: bool,
 }
 
-/// Dynamic timeout configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DynamicTimeout {
-    /// Calculate timeout as average + 2σ from history
-    Auto,
-    /// Calculate timeout as 2x the average from history
-    #[serde(rename = "2x_average")]
-    TwoXAverage,
-}
-
-/// Timeout configuration - can be fixed seconds or dynamic.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-pub enum TimeoutConfig {
-    /// Fixed timeout in seconds
-    Fixed(u64),
-    /// Dynamic timeout based on historical execution times
-    Dynamic(DynamicTimeout),
-}
-
-impl TimeoutConfig {
-    /// Returns Some(seconds) if this is a fixed timeout, None if dynamic.
-    pub fn as_fixed(&self) -> Option<u64> {
-        match self {
-            TimeoutConfig::Fixed(secs) => Some(*secs),
-            TimeoutConfig::Dynamic(_) => None,
-        }
-    }
-}
-
-impl Default for TimeoutConfig {
-    fn default() -> Self {
-        TimeoutConfig::Fixed(300) // 5 minutes default
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Task {
     pub id: String,
@@ -214,8 +231,22 @@ pub struct Task {
     pub deps: Vec<String>,
     #[serde(default)]
     pub locks: Vec<String>,
-    #[serde(default)]
-    pub timeout_sec: Option<TimeoutConfig>,
+    #[serde(
+        rename = "timeout_sec",
+        default,
+        deserialize_with = "reject_timeout_sec",
+        skip_serializing
+    )]
+    #[schemars(skip)]
+    pub _timeout_sec_rejected: Option<serde::de::IgnoredAny>,
+    #[serde(
+        rename = "default_timeout_sec",
+        default,
+        deserialize_with = "reject_default_timeout_sec",
+        skip_serializing
+    )]
+    #[schemars(skip)]
+    pub _default_timeout_sec_rejected: Option<serde::de::IgnoredAny>,
     #[serde(default)]
     pub no_worktree: bool,
     #[serde(default)]

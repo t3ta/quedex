@@ -518,7 +518,8 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
         group: None,
         deps: vec![],
         locks: vec![],
-        timeout_sec: None,
+        _timeout_sec_rejected: None,
+        _default_timeout_sec_rejected: None,
         no_worktree: false,
         kind: None,
         output_files: None,
@@ -547,6 +548,8 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
         run: RunConfig::default(),
         groups: HashMap::new(),
         tasks: vec![task],
+        _timeout_sec_rejected: None,
+        _default_timeout_sec_rejected: None,
     };
 
     let err = plan.validate().expect_err("expected validation error");
@@ -568,7 +571,8 @@ fn plan_rejects_condition_referencing_self() {
         group: None,
         deps: vec![],
         locks: vec![],
-        timeout_sec: None,
+        _timeout_sec_rejected: None,
+        _default_timeout_sec_rejected: None,
         no_worktree: false,
         kind: None,
         output_files: None,
@@ -597,6 +601,8 @@ fn plan_rejects_condition_referencing_self() {
         run: RunConfig::default(),
         groups: HashMap::new(),
         tasks: vec![task],
+        _timeout_sec_rejected: None,
+        _default_timeout_sec_rejected: None,
     };
 
     let err = plan.validate().expect_err("expected validation error");
