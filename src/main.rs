@@ -2410,7 +2410,8 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     } else if max_len <= 3 {
         ".".repeat(max_len)
     } else {
-        format!("{}...", &s[..max_len - 3])
+        let truncated: String = s.chars().take(max_len - 3).collect();
+        format!("{}...", truncated)
     }
 }
 
