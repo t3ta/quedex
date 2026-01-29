@@ -133,7 +133,7 @@ fn draw_logs(frame: &mut Frame, app: &mut App, area: Rect) {
     let text = Text::from(text_lines);
     let paragraph = Paragraph::new(text)
         .block(Block::default().borders(Borders::ALL).title(title))
-        .scroll((scroll as u16, 0))
+        .scroll((scroll as u16, app.log_horizontal_offset as u16))
         .wrap(Wrap { trim: false });
 
     frame.render_widget(paragraph, area);

@@ -12,6 +12,8 @@ pub enum Action {
     CancelRun,
     ToggleGraph,
     ToggleGroupCollapse,
+    ScrollLeft,
+    ScrollRight,
 }
 
 pub fn handle_key(event: KeyEvent) -> Option<Action> {
@@ -19,6 +21,8 @@ pub fn handle_key(event: KeyEvent) -> Option<Action> {
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Up => Some(Action::Up),
         KeyCode::Down => Some(Action::Down),
+        KeyCode::Left => Some(Action::ScrollLeft),
+        KeyCode::Right => Some(Action::ScrollRight),
         KeyCode::Enter => Some(Action::ToggleLogFocus),
         KeyCode::Char('t') => Some(Action::ToggleStream),
         KeyCode::Char('r') => Some(Action::Retry),

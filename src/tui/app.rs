@@ -47,6 +47,7 @@ pub struct App {
     pub log_stream: LogStream,
     pub log_lines: Vec<String>,
     pub log_offset: usize,
+    pub log_horizontal_offset: usize,
     pub log_focus: bool,
     pub graph_mode: bool,
     pub status_message: Option<String>,
@@ -111,6 +112,7 @@ impl App {
             log_stream: LogStream::Stdout,
             log_lines: Vec::new(),
             log_offset: 0,
+            log_horizontal_offset: 0,
             log_focus: false,
             graph_mode: false,
             status_message: None,
@@ -294,6 +296,7 @@ impl App {
         self.log_focus = !self.log_focus;
         if !self.log_focus {
             self.log_offset = 0;
+            self.log_horizontal_offset = 0;
         }
     }
 
@@ -310,6 +313,14 @@ impl App {
 
     pub fn scroll_log_down(&mut self) {
         self.log_offset = self.log_offset.saturating_sub(1);
+    }
+
+    pub fn scroll_log_left(&mut self) {
+        self.log_horizontal_offset = self.log_horizontal_offset.saturating_sub(1);
+    }
+
+    pub fn scroll_log_right(&mut self) {
+        self.log_horizontal_offset = self.log_horizontal_offset.saturating_add(1);
     }
 
     pub fn task_status(&self, task_id: &str) -> TaskStatus {
