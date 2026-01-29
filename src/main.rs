@@ -730,6 +730,78 @@ fn handle_stats(
     Ok(0)
 }
 
+fn expand_env_placeholders(value: &str, base_env: &HashMap<String, String>) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch != '$' {
+            output.push(ch);
+            continue;
+        }
+
+        match chars.peek() {
+            Some('{') => {
+                chars.next();
+                let mut token = String::new();
+                let mut closed = false;
+                while let Some(c) = chars.next() {
+                    if c == '}' {
+                        closed = true;
+                        break;
+                    }
+                    token.push(c);
+                }
+                let key = token.strip_prefix("env.").unwrap_or(&token);
+                if closed {
+                    if let Some(val) = base_env.get(key) {
+                        output.push_str(val);
+                    } else {
+                        output.push_str("${");
+                        output.push_str(&token);
+                        output.push('}');
+                    }
+                } else {
+                    output.push_str("${");
+                    output.push_str(&token);
+                }
+            }
+            Some(c) if c.is_ascii_alphanumeric() || *c == '_' => {
+                let mut key = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c.is_ascii_alphanumeric() || c == '_' {
+                        chars.next();
+                        key.push(c);
+                    } else {
+                        break;
+                    }
+                }
+                if let Some(val) = base_env.get(&key) {
+                    output.push_str(val);
+                } else {
+                    output.push('$');
+                    output.push_str(&key);
+                }
+            }
+            _ => {
+                output.push('$');
+            }
+        }
+    }
+
+    output
+}
+
+fn build_run_env(plan_env: &HashMap<String, String>) -> HashMap<String, String> {
+    let base_env: HashMap<String, String> = std::env::vars().collect();
+    let mut env = base_env.clone();
+    for (key, value) in plan_env {
+        let expanded = expand_env_placeholders(value, &base_env);
+        env.insert(key.clone(), expanded);
+    }
+    env
+}
+
 async fn handle_run(
     _global: &GlobalOptions,
     effective: &EffectiveOptions,
@@ -832,8 +904,7 @@ async fn handle_run(
 
     // Merge system environment variables with plan.run.env
     // plan.run.env takes precedence over system env vars
-    let mut env: HashMap<String, String> = std::env::vars().collect();
-    env.extend(plan.run.env.clone());
+    let env = build_run_env(&plan.run.env);
 
     // Resolve system_prompt: plan-level overrides config-level
     let system_prompt = plan
@@ -844,7 +915,7 @@ async fn handle_run(
 
     let ctx = RunContext {
         cwd,
-        env,
+        env: env.clone(),
         store: store.clone(),
         worktree_manager,
         system_prompt,
@@ -1009,8 +1080,7 @@ async fn handle_run(
 
     // Collect environment variables for condition evaluation
     // Start with system environment, then overlay plan-defined env vars
-    let mut env_vars: HashMap<String, String> = std::env::vars().collect();
-    env_vars.extend(plan.run.env.clone());
+    let env_vars = env.clone();
 
     let report = scheduler.run(&env_vars).await;
     reconcile_state(&state_handle, &report)?;
@@ -1658,8 +1728,7 @@ async fn handle_retry(
 
     // Merge system environment variables with plan.run.env
     // plan.run.env takes precedence over system env vars
-    let mut env: HashMap<String, String> = std::env::vars().collect();
-    env.extend(plan.run.env.clone());
+    let env = build_run_env(&plan.run.env);
 
     // Resolve system_prompt: plan-level overrides config-level
     let system_prompt = plan
@@ -1670,7 +1739,7 @@ async fn handle_retry(
 
     let ctx = RunContext {
         cwd,
-        env,
+        env: env.clone(),
         store: store.clone(),
         worktree_manager,
         system_prompt,
@@ -1786,8 +1855,7 @@ async fn handle_retry(
     };
 
     // Collect environment variables for condition evaluation
-    let mut env_vars: HashMap<String, String> = std::env::vars().collect();
-    env_vars.extend(plan.run.env.clone());
+    let env_vars = env.clone();
 
     let report = scheduler.run(&env_vars).await;
     reconcile_state(&state_handle, &report)?;
