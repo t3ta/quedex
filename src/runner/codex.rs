@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result};
 
 use crate::plan::{Task, TaskMode};
-use crate::runner::{ChildHandle, RunContext, Runner};
+use crate::runner::{resolve_command_path, ChildHandle, RunContext, Runner};
 use crate::store::LogStream;
 
 const VERIFY_AFTER_SUFFIX: &str = "実装後 build→lint→test を実行し、エラーがあれば修正して";
@@ -53,7 +53,8 @@ impl Runner for CodexRunner {
             .open_log(&task.id, LogStream::Stderr)
             .context("open stderr log")?;
 
-        let mut cmd = Command::new("codex");
+        let codex_path = resolve_command_path("codex")?;
+        let mut cmd = Command::new(&codex_path);
         cmd.arg("exec").arg(prompt);
 
         if config.json {

@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result};
 
 use crate::plan::Task;
-use crate::runner::{ChildHandle, RunContext, Runner};
+use crate::runner::{resolve_command_path, ChildHandle, RunContext, Runner};
 use crate::store::LogStream;
 
 #[derive(Clone, Copy)]
@@ -47,7 +47,8 @@ impl Runner for ClaudeCodeRunner {
             .open_log(&task.id, LogStream::Stderr)
             .context("open stderr log")?;
 
-        let mut cmd = Command::new("claude");
+        let claude_path = resolve_command_path("claude")?;
+        let mut cmd = Command::new(claude_path);
         cmd.arg("--print");
         cmd.arg("--dangerously-skip-permissions");
 

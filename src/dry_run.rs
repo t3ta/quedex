@@ -238,7 +238,7 @@ mod tests {
                 name: Some("test-plan".to_string()),
                 cwd: None,
                 worktree: None,
-                env: std::collections::HashMap::new(),
+                env: None,
                 max_concurrency: None,
                 fail_fast: None,
                 default_timeout_sec: None,

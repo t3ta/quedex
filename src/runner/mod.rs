@@ -13,6 +13,13 @@ pub mod claude_code;
 pub mod codex;
 pub mod opencode;
 
+/// Resolve the full path of a command using `which`.
+/// This ensures commands are found even when PATH doesn't include
+/// directories like ~/.local/bin (e.g., when running from IDE).
+pub fn resolve_command_path(cmd: &str) -> Result<PathBuf> {
+    which::which(cmd).with_context(|| format!("{} not found in PATH", cmd))
+}
+
 pub trait Runner {
     fn spawn(&self, task: &Task, ctx: &RunContext) -> Result<ChildHandle>;
 }

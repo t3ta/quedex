@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result};
 
 use crate::plan::Task;
-use crate::runner::{ChildHandle, RunContext, Runner};
+use crate::runner::{resolve_command_path, ChildHandle, RunContext, Runner};
 use crate::store::LogStream;
 
 #[derive(Clone, Copy)]
@@ -47,7 +47,8 @@ impl Runner for OpencodeRunner {
             .open_log(&task.id, LogStream::Stderr)
             .context("open stderr log")?;
 
-        let mut cmd = Command::new("opencode");
+        let opencode_path = resolve_command_path("opencode")?;
+        let mut cmd = Command::new(opencode_path);
         cmd.arg("run");
 
         // Model selection (optional)
