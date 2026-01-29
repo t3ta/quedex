@@ -2472,6 +2472,17 @@ fn list_runs_with_activity(store_root: &Path) -> Result<Vec<RunInfo>> {
     Ok(runs)
 }
 
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else if max_len <= 3 {
+        ".".repeat(max_len)
+    } else {
+        let truncated: String = s.chars().take(max_len - 3).collect();
+        format!("{}...", truncated)
+    }
+}
+
 fn print_run_selection_ui(runs: &[RunInfo], selected: usize) {
     // Clear screen and move cursor to top
     print!("\x1B[2J\x1B[H");
@@ -2494,9 +2505,12 @@ fn print_run_selection_ui(runs: &[RunInfo], selected: usize) {
             let marker = if *idx == selected { ">" } else { " " };
             let reason = run.active_reason.as_deref().unwrap_or("");
             let short_id: String = run.state.run_id.chars().take(8).collect();
+            let status_str = format!("{:?}", run.state.status);
+            let name = truncate_str(&run.state.run_name, 25);
+            let reason_display = truncate_str(reason, 20);
             println!(
-                "{} [{:?}] {}  {}  ({})",
-                marker, run.state.status, short_id, run.state.run_name, reason
+                "{} [{:<10}] {:<8} {:<25} ({})",
+                marker, status_str, short_id, name, reason_display
             );
         }
         println!();
@@ -2507,9 +2521,11 @@ fn print_run_selection_ui(runs: &[RunInfo], selected: usize) {
         for (idx, run) in &inactive_runs {
             let marker = if *idx == selected { ">" } else { " " };
             let short_id: String = run.state.run_id.chars().take(8).collect();
+            let status_str = format!("{:?}", run.state.status);
+            let name = truncate_str(&run.state.run_name, 25);
             println!(
-                "{} [{:?}] {}  {}",
-                marker, run.state.status, short_id, run.state.run_name
+                "{} [{:<10}] {:<8} {:<25}",
+                marker, status_str, short_id, name
             );
         }
         println!();
