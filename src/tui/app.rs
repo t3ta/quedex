@@ -316,11 +316,11 @@ impl App {
     }
 
     pub fn scroll_log_left(&mut self) {
-        self.log_horizontal_offset = self.log_horizontal_offset.saturating_add(1);
+        self.log_horizontal_offset = self.log_horizontal_offset.saturating_sub(1);
     }
 
     pub fn scroll_log_right(&mut self) {
-        self.log_horizontal_offset = self.log_horizontal_offset.saturating_sub(1);
+        self.log_horizontal_offset = self.log_horizontal_offset.saturating_add(1);
     }
 
     pub fn task_status(&self, task_id: &str) -> TaskStatus {
