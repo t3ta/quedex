@@ -71,7 +71,6 @@ LLM は「計画（plan）」まで。実行・監視・状態管理は quedex �
 max_concurrency = 4
 fail_fast = false
 store = ".quedex"
-default_timeout_sec = 3600
 ```
 
 設定の優先順位: CLI オプション > quedex.toml > デフォルト値
@@ -98,8 +97,7 @@ default_timeout_sec = 3600
     "cwd": ".",
     "env": {"FOO": "bar"},
     "max_concurrency": 3,
-    "fail_fast": true,
-    "default_timeout_sec": 3600
+    "fail_fast": true
   },
   "tasks": [
     {
@@ -108,7 +106,6 @@ default_timeout_sec = 3600
       "mode": "research",
       "deps": [],
       "locks": [],
-      "timeout_sec": 1800,
       "kind": "codex",
       "codex": {
         "prompt": "このリポジトリの認証フローを調査して要点をまとめて",
@@ -156,7 +153,6 @@ default_timeout_sec = 3600
 * `tasks[].locks`: 排他リソース名
 
   * 例: `workspace`, `db-migrate`, `gpu0`, `net`, `docs` …
-* `tasks[].timeout_sec`: 個別タイムアウト（なければ run の default）
 * `kind`:
 
   * `codex`: `codex exec` を構築して実行

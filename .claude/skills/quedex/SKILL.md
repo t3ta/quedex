@@ -130,7 +130,6 @@ quedex retry <run_id> --group <name>       # Retry group
 | `condition` | 環境や前タスク結果で分岐が必要な場合 |
 | `retry_count` | 不安定なタスク（E2Eテスト等）の場合 |
 | `variables` | 同じ値を3箇所以上で使う場合 |
-| `timeout_sec` | 長時間タスクでタイムアウト制御が必要な場合 |
 | `output_files` | 特定ファイルをキャプチャしたい場合 |
 | `auto_commit` | テストで無効化したい場合（デフォルトtrue） |
 | `squash` | 最終統合タスクで全コミットを1つにまとめたい場合 |

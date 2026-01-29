@@ -17,7 +17,6 @@ run:
   name: "hybrid-workflow-implementation"
   max_concurrency: 2
   fail_fast: true
-  default_timeout_sec: 900
 
 tasks:
   # ============================================

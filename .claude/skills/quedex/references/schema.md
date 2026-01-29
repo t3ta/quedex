@@ -97,7 +97,6 @@ Array of Task objects. Must contain at least one task.
   "env": { "KEY": "value" },
   "max_concurrency": 2,
   "fail_fast": true,
-  "default_timeout_sec": 3600,
   "worktree": { "enabled": true },
   "notifications": { "url": "https://hooks.slack.com/..." },
   "system_prompt": "全タスク共通のコンテキスト"
@@ -131,11 +130,6 @@ Array of Task objects. Must contain at least one task.
 - **Type**: `boolean`
 - **Purpose**: Stop scheduling new tasks when any task fails
 - **Default**: `false`
-
-### default_timeout_sec (optional)
-
-- **Type**: `number`
-- **Purpose**: Default timeout for tasks in seconds
 
 ### worktree (optional)
 
@@ -182,7 +176,6 @@ run:
   "group": "backend",
   "deps": ["task-b"],
   "locks": ["workspace"],
-  "timeout_sec": 1800,
   "retry_count": 2,
   "retry_delay_sec": 30,
   "output_files": ["artifacts/report.md"],
@@ -229,14 +222,6 @@ run:
 - **Type**: `string[]`
 - **Purpose**: Exclusive resource names (prevents parallel execution)
 - **Example**: `["workspace", "db-migrate"]`
-
-### timeout_sec (optional)
-
-- **Type**: `number | "auto" | "2x_average"`
-- **Purpose**: Task-specific timeout
-- **Dynamic options**:
-  - `"auto"`: Calculate as average + 2σ from history
-  - `"2x_average"`: Calculate as 2× average from history
 
 ### retry_count (optional)
 

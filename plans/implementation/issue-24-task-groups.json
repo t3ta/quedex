@@ -4,8 +4,7 @@
     "name": "issue-24-task-groups",
     "cwd": ".",
     "max_concurrency": 4,
-    "fail_fast": true,
-    "default_timeout_sec": 1200
+    "fail_fast": true
   },
   "tasks": [
     {

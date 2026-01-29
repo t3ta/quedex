@@ -22,8 +22,7 @@ use quedex::config::{Config, EffectiveOptions};
 use quedex::dry_run::{detect_lock_conflicts, generate_execution_waves};
 use quedex::git::{self, GitManager};
 use quedex::notifier::Notifier;
-use quedex::plan::{Plan, PlanFormat, Task, TimeoutConfig};
-use quedex::stats::StatsCollector;
+use quedex::plan::{Plan, PlanFormat, Task};
 use quedex::runner::claude_code::ClaudeCodeRunner;
 use quedex::runner::codex::CodexRunner;
 use quedex::runner::opencode::OpencodeRunner;
@@ -70,10 +69,14 @@ async fn dispatch(cli: Cli) -> Result<i32> {
     );
 
     if cli.global.verbose {
-        eprintln!("[verbose] Config loaded: max_concurrency={:?}, fail_fast={:?}, store={:?}, default_timeout_sec={:?}",
-            config.max_concurrency, config.fail_fast, config.store, config.default_timeout_sec);
-        eprintln!("[verbose] Effective options: max_concurrency={:?}, fail_fast={}, store={:?}, default_timeout_sec={:?}",
-            effective.max_concurrency, effective.fail_fast, effective.store, effective.default_timeout_sec);
+        eprintln!(
+            "[verbose] Config loaded: max_concurrency={:?}, fail_fast={:?}, store={:?}",
+            config.max_concurrency, config.fail_fast, config.store
+        );
+        eprintln!(
+            "[verbose] Effective options: max_concurrency={:?}, fail_fast={}, store={:?}",
+            effective.max_concurrency, effective.fail_fast, effective.store
+        );
     }
 
     match cli.command {
@@ -1018,7 +1021,6 @@ async fn handle_run(
         .or(effective.max_concurrency)
         .unwrap_or(1);
     let fail_fast = plan.run.fail_fast.unwrap_or(effective.fail_fast);
-    let default_timeout_sec = plan.run.default_timeout_sec.or(effective.default_timeout_sec);
 
     // Create notifier for webhook notifications
     let run_name = plan.run.name.clone().unwrap_or_else(|| run_id.clone());
@@ -1038,9 +1040,7 @@ async fn handle_run(
         ctx,
         state_handle.clone(),
         cancel.clone(),
-        default_timeout_sec,
         notifier.clone(),
-        &store_root,
     );
     
     // Create GitManager for auto-commit functionality
@@ -1822,7 +1822,6 @@ async fn handle_retry(
         .or(effective.max_concurrency)
         .unwrap_or(1);
     let fail_fast = plan.run.fail_fast.unwrap_or(effective.fail_fast);
-    let default_timeout_sec = plan.run.default_timeout_sec.or(effective.default_timeout_sec);
 
     // Notifier for retry (no notifications for retry operations)
     let runner = PlanTaskRunner::new(
@@ -1830,9 +1829,7 @@ async fn handle_retry(
         ctx,
         state_handle.clone(),
         cancel,
-        default_timeout_sec,
         None,
-        &store_root,
     );
     
     // Create GitManager for auto-commit functionality
@@ -3129,9 +3126,8 @@ impl StateHandle {
 /// Handle for coordinating task cancellation across the system.
 ///
 /// Tracks running tasks and provides a mechanism to cancel them all
-/// when a termination signal is received (SIGTERM/SIGINT) or when
-/// a timeout occurs. Tasks register their child handles here so they
-/// can be killed on cancellation.
+/// when a termination signal is received (SIGTERM/SIGINT). Tasks register
+/// their child handles here so they can be killed on cancellation.
 #[derive(Clone)]
 struct CancelHandle {
     canceled: Arc<AtomicBool>,
@@ -3201,9 +3197,7 @@ struct PlanTaskRunner {
     codex: CodexRunner,
     claude_code: ClaudeCodeRunner,
     opencode: OpencodeRunner,
-    default_timeout_sec: Option<u64>,
     notifier: Option<Notifier>,
-    stats: StatsCollector,
 }
 
 impl PlanTaskRunner {
@@ -3212,12 +3206,8 @@ impl PlanTaskRunner {
         ctx: RunContext,
         state: StateHandle,
         cancel: CancelHandle,
-        default_timeout_sec: Option<u64>,
         notifier: Option<Notifier>,
-        store_root: &std::path::Path,
     ) -> Self {
-        let stats = StatsCollector::collect_from_store(store_root)
-            .unwrap_or_else(|_| StatsCollector::new());
         Self {
             tasks,
             ctx,
@@ -3226,23 +3216,7 @@ impl PlanTaskRunner {
             codex: CodexRunner::new(),
             claude_code: ClaudeCodeRunner::new(),
             opencode: OpencodeRunner::new(),
-            default_timeout_sec,
             notifier,
-            stats,
-        }
-    }
-
-    /// Resolve the effective timeout for a task.
-    #[allow(dead_code)]
-    fn resolve_timeout(&self, task_id: &str, timeout_config: Option<&TimeoutConfig>) -> Option<u64> {
-        match timeout_config {
-            Some(TimeoutConfig::Fixed(secs)) => Some(*secs),
-            Some(TimeoutConfig::Dynamic(dynamic)) => {
-                // Try to resolve from stats, fall back to default
-                self.stats.resolve_timeout(task_id, dynamic)
-                    .or(self.default_timeout_sec)
-            }
-            None => self.default_timeout_sec,
         }
     }
 }
@@ -3258,9 +3232,7 @@ impl TaskRunner for PlanTaskRunner {
         let codex = self.codex;
         let claude_code = self.claude_code;
         let opencode = self.opencode;
-        let default_timeout_sec = self.default_timeout_sec;
         let notifier = self.notifier.clone();
-        let stats = self.stats.clone();
 
         Box::pin(async move {
             let Some(task) = tasks.get(&task_spec.id) else {
@@ -3293,17 +3265,6 @@ impl TaskRunner for PlanTaskRunner {
             let mut task_ctx = ctx.clone();
             task_ctx.cwd = workdir.path().to_path_buf();
 
-            let timeout_sec = {
-                let task_id = &task_spec.id;
-                match task.timeout_sec.as_ref() {
-                    Some(TimeoutConfig::Fixed(secs)) => Some(*secs),
-                    Some(TimeoutConfig::Dynamic(dynamic)) => {
-                        stats.resolve_timeout(task_id, dynamic)
-                            .or(default_timeout_sec)
-                    }
-                    None => default_timeout_sec,
-                }
-            };
             let mut attempt = 0u32;
             let max_attempts = retry_count + 1; // Original attempt + retries
             let mut executed = false;
@@ -3354,41 +3315,7 @@ impl TaskRunner for PlanTaskRunner {
                 let _ = state.task_started(&task_id, child.pid);
 
                 let wait_future = tokio::task::spawn_blocking(move || child.wait());
-                let wait_result = if let Some(timeout_secs) = timeout_sec {
-                    let timeout_duration = Duration::from_secs(timeout_secs);
-                    match tokio::time::timeout(timeout_duration, wait_future).await {
-                        Ok(result) => result,
-                        Err(_) => {
-                            // Write timeout message to task's stderr log file
-                            let timeout_msg =
-                                format!("task {task_id} timed out after {timeout_secs} seconds\n");
-                            if let Ok(mut stderr_log) =
-                                task_ctx.store.open_log(&task_id, LogStream::Stderr)
-                            {
-                                let _ = stderr_log.write_all(timeout_msg.as_bytes());
-                            }
-                            eprintln!("{}", timeout_msg.trim());
-
-                            // Kill the process on timeout
-                            #[allow(clippy::collapsible_if)]
-                            if let Ok(active) = cancel.active.lock() {
-                                if let Some(child_handle) = active.get(&task_id) {
-                                    let _ = child_handle.kill();
-                                }
-                            }
-                            cancel.unregister(&task_id);
-
-                            if attempt >= max_attempts {
-                                let _ =
-                                    state.task_finished(&task_id, TaskStatus::Failed, Some(124));
-                                break TaskResult::failed(124);
-                            }
-                            continue;
-                        }
-                    }
-                } else {
-                    wait_future.await
-                };
+                let wait_result = wait_future.await;
 
                 cancel.unregister(&task_id);
 

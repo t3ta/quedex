@@ -17,10 +17,46 @@ pub struct Config {
     pub fail_fast: Option<bool>,
     /// Path to store directory
     pub store: Option<PathBuf>,
-    /// Default timeout for tasks in seconds
-    pub default_timeout_sec: Option<u64>,
+    #[serde(
+        rename = "timeout_sec",
+        default,
+        deserialize_with = "reject_timeout_sec",
+        skip_serializing
+    )]
+    pub _timeout_sec_rejected: Option<serde::de::IgnoredAny>,
+    #[serde(
+        rename = "default_timeout_sec",
+        default,
+        deserialize_with = "reject_default_timeout_sec",
+        skip_serializing
+    )]
+    pub _default_timeout_sec_rejected: Option<serde::de::IgnoredAny>,
     /// System prompt to prepend to all task prompts
     pub system_prompt: Option<String>,
+}
+
+fn reject_timeout_sec<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde::de::IgnoredAny>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let _ = serde::de::IgnoredAny::deserialize(deserializer)?;
+    Err(serde::de::Error::custom(
+        "timeout_sec は削除済みです。Codex CLI のタイムアウト設定を使用してください。",
+    ))
+}
+
+fn reject_default_timeout_sec<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde::de::IgnoredAny>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let _ = serde::de::IgnoredAny::deserialize(deserializer)?;
+    Err(serde::de::Error::custom(
+        "default_timeout_sec は削除済みです。Codex CLI のタイムアウト設定を使用してください。",
+    ))
 }
 
 impl Config {
@@ -59,7 +95,6 @@ pub struct EffectiveOptions {
     pub max_concurrency: Option<usize>,
     pub fail_fast: bool,
     pub store: Option<PathBuf>,
-    pub default_timeout_sec: Option<u64>,
 }
 
 impl EffectiveOptions {
@@ -87,14 +122,10 @@ impl EffectiveOptions {
             config.fail_fast.unwrap_or(true)
         };
 
-        // default_timeout_sec: config only (no CLI option for this)
-        let default_timeout_sec = config.default_timeout_sec;
-
         Self {
             max_concurrency,
             fail_fast,
             store,
-            default_timeout_sec,
         }
     }
 }
@@ -109,7 +140,6 @@ mod tests {
         assert!(config.max_concurrency.is_none());
         assert!(config.fail_fast.is_none());
         assert!(config.store.is_none());
-        assert!(config.default_timeout_sec.is_none());
         assert!(config.system_prompt.is_none());
     }
 
@@ -119,14 +149,12 @@ mod tests {
 max_concurrency = 4
 fail_fast = false
 store = "/tmp/quedex"
-default_timeout_sec = 300
 system_prompt = "You are a helpful assistant."
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.max_concurrency, Some(4));
         assert_eq!(config.fail_fast, Some(false));
         assert_eq!(config.store, Some(PathBuf::from("/tmp/quedex")));
-        assert_eq!(config.default_timeout_sec, Some(300));
         assert_eq!(config.system_prompt, Some("You are a helpful assistant.".to_string()));
     }
 
@@ -139,7 +167,6 @@ max_concurrency = 2
         assert_eq!(config.max_concurrency, Some(2));
         assert!(config.fail_fast.is_none());
         assert!(config.store.is_none());
-        assert!(config.default_timeout_sec.is_none());
     }
 
     #[test]
@@ -148,8 +175,8 @@ max_concurrency = 2
             max_concurrency: Some(4),
             fail_fast: Some(false),
             store: Some(PathBuf::from("/config/store")),
-            default_timeout_sec: Some(300),
             system_prompt: None,
+            ..Default::default()
         };
 
         // CLI values should override config
@@ -165,7 +192,6 @@ max_concurrency = 2
         assert_eq!(effective.store, Some(PathBuf::from("/cli/store")));
         // fail_fast from config since CLI doesn't explicitly set it
         assert!(!effective.fail_fast);
-        assert_eq!(effective.default_timeout_sec, Some(300));
     }
 
     #[test]
@@ -174,8 +200,8 @@ max_concurrency = 2
             max_concurrency: Some(4),
             fail_fast: Some(false),
             store: Some(PathBuf::from("/config/store")),
-            default_timeout_sec: Some(300),
             system_prompt: None,
+            ..Default::default()
         };
 
         // No CLI values, should use config
@@ -184,7 +210,6 @@ max_concurrency = 2
         assert_eq!(effective.max_concurrency, Some(4));
         assert_eq!(effective.store, Some(PathBuf::from("/config/store")));
         assert!(!effective.fail_fast);
-        assert_eq!(effective.default_timeout_sec, Some(300));
     }
 
     #[test]
@@ -193,8 +218,8 @@ max_concurrency = 2
             max_concurrency: None,
             fail_fast: Some(true),
             store: None,
-            default_timeout_sec: None,
             system_prompt: None,
+            ..Default::default()
         };
 
         // --no-fail-fast should override config

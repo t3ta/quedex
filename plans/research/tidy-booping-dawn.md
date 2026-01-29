@@ -1,71 +1,10 @@
-# 実装計画: Issue #26 (Web UI) と Issue #27 (動的タイムアウト)
+# 実装計画: Issue #26 (Web UI)
 
 ## 実装順序
 
 | 順序 | Issue | 理由 |
 |------|-------|------|
-| 1 | **#27 動的タイムアウト** | 変更範囲が限定的、新規依存なし |
-| 2 | **#26 Web UI** | 依存関係追加が必要、実装規模が大きい |
-
----
-
-## Issue #27: タスクタイムアウトの動的調整
-
-### 概要
-- `"timeout_sec": "auto"` - 過去の平均 + 2σ（標準偏差）
-- `"timeout_sec": "2x_average"` - 過去の平均の2倍
-- 履歴がない場合はデフォルト値を使用
-
-### 実装ステップ
-
-#### Step 1: TimeoutConfig enum の定義
-**ファイル:** `src/plan.rs`
-
-```rust
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-pub enum TimeoutConfig {
-    Fixed(u64),
-    Dynamic(DynamicTimeout),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DynamicTimeout {
-    Auto,
-    #[serde(rename = "2x_average")]
-    TwoXAverage,
-    Multiplier(f64),
-}
-```
-
-#### Step 2: 統計計算モジュールの追加
-**ファイル:** `src/stats.rs` (新規)
-
-- `TaskStats` 構造体（平均、標準偏差計算）
-- `collect_task_stats()` - store_rootから全runの実行時間を収集
-- `auto_timeout()` - 平均 + 2σ
-- `multiplied_timeout()` - 平均 × 倍率
-
-#### Step 3: タイムアウト解決ロジック
-**ファイル:** `src/main.rs`
-
-- `PlanTaskRunner`に`task_stats`フィールド追加
-- `resolve_timeout()`メソッドで動的計算
-
-### 変更ファイル一覧
-
-| ファイル | 変更内容 |
-|---------|---------|
-| `src/plan.rs` | `TimeoutConfig` enum追加、`Task.timeout_sec`の型変更 |
-| `src/stats.rs` (新規) | 統計計算ロジック |
-| `src/lib.rs` | `pub mod stats;` 追加 |
-| `src/main.rs` | `resolve_timeout()`実装 |
-
-### テスト
-- `TimeoutConfig`のシリアライズ/デシリアライズ
-- 統計計算の正確性
-- 履歴なし時のフォールバック
+| 1 | **#26 Web UI** | 依存関係追加が必要、実装規模が大きい |
 
 ---
 
@@ -160,21 +99,6 @@ src/web/
 ---
 
 ## 検証方法
-
-### Issue #27
-```bash
-# 1. 既存のrunがある状態でautoタイムアウトをテスト
-cat > test-plan.json << 'EOF'
-{
-  "version": 1,
-  "tasks": [
-    { "id": "test", "timeout_sec": "auto", "codex": { "prompt": "echo test" } }
-  ]
-}
-EOF
-cargo run -- dry-run test-plan.json
-cargo run -- run test-plan.json
-```
 
 ### Issue #26
 ```bash
