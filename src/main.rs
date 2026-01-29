@@ -745,7 +745,7 @@ fn expand_env_placeholders(value: &str, base_env: &HashMap<String, String>) -> S
                 chars.next();
                 let mut token = String::new();
                 let mut closed = false;
-                while let Some(c) = chars.next() {
+                for c in chars.by_ref() {
                     if c == '}' {
                         closed = true;
                         break;
