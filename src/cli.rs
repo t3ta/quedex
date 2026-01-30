@@ -51,14 +51,6 @@ pub enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         dry_run: bool,
     },
-    /// Start a plan in background
-    Start {
-        plan: String,
-        #[command(flatten)]
-        recovery: RecoveryOptions,
-        #[arg(long, hide = true)]
-        run_id: Option<String>,
-    },
     /// Show run status
     Status {
         run_id: Option<String>,
