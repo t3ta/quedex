@@ -74,11 +74,8 @@ tasks:
 ### 3. 実行
 
 ```bash
-# 前面実行
+# 実行（バックグラウンド実行も兼ねる）
 quedex run plan.yaml
-
-# バックグラウンド実行
-quedex start plan.yaml
 # → run_id: abc123...
 
 # TUI で監視
@@ -96,7 +93,7 @@ cargo run -- run plan.yaml
 ### 基本コマンド
 
 - **`quedex init [-o <path>] [--force]`**: plan テンプレートを生成（JSON/YAML）
-- **`quedex run <plan.json|->` / `quedex start <plan.json|->`**: plan を実行
+- **`quedex run <plan.json|->`**: plan を実行
   - `--resume`: 途中から再開（Running タスクのプロセス状態を確認）
   - `--clean-start`: 状態をクリアして最初から実行
   - `--dry-run`: 実行せずに計画を表示
@@ -526,8 +523,8 @@ tasks:
 #### 実行コマンド例
 
 ```bash
-# planを実行（バックグラウンド）
-quedex start examples/hybrid-workflow-sample.yaml
+# planを実行
+quedex run examples/hybrid-workflow-sample.yaml
 # → run_id: abc123...
 
 # TUIで監視（draft-auth と draft-api が並列実行される様子が確認できる）
@@ -682,7 +679,7 @@ quedex outputs abc123 --task generate-report
 
 ```bash
 # planを実行
-quedex start plan.yaml
+quedex run plan.yaml
 # → run_id: abc123...
 
 # TUIで監視
@@ -774,7 +771,7 @@ tasks:
 
 ```bash
 # 実行
-quedex start plan.yaml
+quedex run plan.yaml
 
 # 結果:
 # - implement-api 完了 → commit: "feat: APIの実装 [implement-api]"

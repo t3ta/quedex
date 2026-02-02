@@ -94,11 +94,6 @@ async fn dispatch(cli: Cli) -> Result<i32> {
                 handle_run(&cli.global, &effective, &config, &plan, recovery, run_id, base_dir).await
             }
         }
-        Commands::Start {
-            plan,
-            recovery,
-            run_id,
-        } => handle_start(&cli.global, &effective, &plan, recovery, run_id).await,
         Commands::Status { run_id, group, json } => handle_status(&effective, run_id, group, json),
         Commands::Tui { run_id } => handle_tui(&effective, run_id),
         Commands::Logs {
@@ -1121,113 +1116,6 @@ async fn handle_run(
     }
 
     Ok(exit_code)
-}
-
-async fn handle_start(
-    _global: &GlobalOptions,
-    effective: &EffectiveOptions,
-    plan_arg: &str,
-    recovery: RecoveryOptions,
-    run_id: Option<String>,
-) -> Result<i32> {
-    if recovery.resume && run_id.is_none() {
-        return Err(anyhow!("--resume requires --run-id"));
-    }
-    let (mut plan, base_dir) = load_plan(plan_arg)?;
-
-    let store_root = resolve_store_path(effective.store.as_ref())?;
-    let run_id = run_id.unwrap_or_else(|| Uuid::new_v4().to_string());
-    let snapshot_path = plan_snapshot_path(&store_root, &run_id);
-
-    if recovery.resume {
-        if !snapshot_path.exists() {
-            return Err(anyhow!("run {run_id} has no plan snapshot to resume"));
-        }
-        plan = load_plan_snapshot(&store_root, &run_id)?;
-        let store = FsStore::new(&store_root, &run_id)?;
-        let report = recover_running_tasks(&store)?;
-        if !report.alive_tasks.is_empty() {
-            return Err(anyhow!(
-                "run {} still has running tasks: {}",
-                run_id,
-                report.alive_tasks.join(", ")
-            ));
-        }
-    }
-
-    if let Err(err) = plan.validate() {
-        eprintln!("plan validation error: {err}");
-        return Ok(3);
-    }
-    #[allow(clippy::collapsible_if)]
-    if plan
-        .tasks
-        .iter()
-        .any(|task| matches!(task.kind.as_deref(), Some("codex")) || task.codex.is_some())
-    {
-        if let Err(err) = check_codex_available() {
-            eprintln!("environment error: {err}");
-            return Ok(4);
-        }
-    }
-    #[allow(clippy::collapsible_if)]
-    if plan.tasks.iter().any(|task| {
-        matches!(task.kind.as_deref(), Some("claude_code")) || task.claude_code.is_some()
-    }) {
-        if let Err(err) = check_claude_code_available() {
-            eprintln!("environment error: {err}");
-            return Ok(4);
-        }
-    }
-
-    #[allow(clippy::collapsible_if)]
-    if plan
-        .tasks
-        .iter()
-        .any(|task| matches!(task.kind.as_deref(), Some("opencode")) || task.opencode.is_some())
-    {
-        if let Err(err) = check_opencode_available() {
-            eprintln!("environment error: {err}");
-            return Ok(4);
-        }
-    }
-
-    let plan_path = if recovery.resume {
-        snapshot_path
-    } else {
-        write_plan_snapshot(&store_root, &run_id, &plan)?
-    };
-
-    let exe = env::current_exe().context("resolve current executable")?;
-    let mut cmd = std::process::Command::new(exe);
-    cmd.arg("run")
-        .arg(plan_path)
-        .arg("--run-id")
-        .arg(&run_id)
-        .arg("--base-dir")
-        .arg(&base_dir);
-    if recovery.resume {
-        cmd.arg("--resume");
-    }
-    if recovery.clean_start {
-        cmd.arg("--clean-start");
-    }
-    if let Some(store_path) = effective.store.as_ref() {
-        cmd.arg("--store").arg(store_path);
-    }
-    if let Some(max) = effective.max_concurrency {
-        cmd.arg("--max-concurrency").arg(max.to_string());
-    }
-    if !effective.fail_fast {
-        cmd.arg("--no-fail-fast");
-    }
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    cmd.spawn().context("spawn background run")?;
-
-    println!("{run_id}");
-    Ok(0)
 }
 
 fn handle_status(
