@@ -125,4 +125,8 @@ pub trait Store: Send + Sync {
     fn get_output(&self, task_id: &str, filename: &str) -> Result<Vec<u8>>;
     /// List output files for a task as relative paths.
     fn list_outputs(&self, task_id: &str) -> Result<Vec<String>>;
+    /// Save shared context data under a key.
+    fn save_context(&self, key: &str, content: &[u8]) -> Result<()>;
+    /// Load shared context data by key.
+    fn get_context(&self, key: &str) -> Result<Vec<u8>>;
 }

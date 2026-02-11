@@ -515,6 +515,7 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
         id: "main".to_string(),
         title: None,
         mode: TaskMode::Implement,
+        profile: None,
         group: None,
         deps: vec![],
         locks: vec![],
@@ -535,6 +536,8 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        retry_strategy: None,
+        context: None,
         auto_commit: true,
         squash: false,
         condition: Some(TaskCondition::TaskResult(TaskResultCondition {
@@ -546,6 +549,7 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
     let plan = Plan {
         version: 1,
         run: RunConfig::default(),
+        profiles: HashMap::new(),
         groups: HashMap::new(),
         tasks: vec![task],
         _timeout_sec_rejected: None,
@@ -568,6 +572,7 @@ fn plan_rejects_condition_referencing_self() {
         id: "main".to_string(),
         title: None,
         mode: TaskMode::Implement,
+        profile: None,
         group: None,
         deps: vec![],
         locks: vec![],
@@ -588,6 +593,8 @@ fn plan_rejects_condition_referencing_self() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        retry_strategy: None,
+        context: None,
         auto_commit: true,
         squash: false,
         condition: Some(TaskCondition::TaskResult(TaskResultCondition {
@@ -599,6 +606,7 @@ fn plan_rejects_condition_referencing_self() {
     let plan = Plan {
         version: 1,
         run: RunConfig::default(),
+        profiles: HashMap::new(),
         groups: HashMap::new(),
         tasks: vec![task],
         _timeout_sec_rejected: None,

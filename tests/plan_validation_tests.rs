@@ -6,6 +6,7 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
         id: id.to_string(),
         title: None,
         mode: TaskMode::Implement,
+        profile: None,
         group: None,
         deps: deps.into_iter().map(|dep| dep.to_string()).collect(),
         locks: vec![],
@@ -26,6 +27,8 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        retry_strategy: None,
+        context: None,
         condition: None,
         auto_commit: true,
         squash: false,
@@ -38,6 +41,7 @@ fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
         id: id.to_string(),
         title: None,
         mode: TaskMode::Implement,
+        profile: None,
         group: None,
         deps: deps.into_iter().map(|dep| dep.to_string()).collect(),
         locks: vec![],
@@ -55,6 +59,8 @@ fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
         }),
         retry_count: 0,
         retry_delay_sec: 0,
+        retry_strategy: None,
+        context: None,
         condition: None,
         auto_commit: true,
         squash: false,
@@ -65,6 +71,7 @@ fn plan_with_tasks(tasks: Vec<Task>) -> Plan {
     Plan {
         version: 1,
         run: RunConfig::default(),
+        profiles: HashMap::new(),
         groups: HashMap::new(),
         tasks,
         _timeout_sec_rejected: None,
@@ -105,6 +112,7 @@ fn plan_rejects_empty_codex_prompt() {
         id: "codex".to_string(),
         title: None,
         mode: TaskMode::Implement,
+        profile: None,
         group: None,
         deps: vec![],
         locks: vec![],
@@ -125,6 +133,8 @@ fn plan_rejects_empty_codex_prompt() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        retry_strategy: None,
+        context: None,
         condition: None,
         auto_commit: true,
         squash: false,
@@ -140,6 +150,7 @@ fn plan_rejects_empty_claude_code_prompt() {
         id: "claude".to_string(),
         title: None,
         mode: TaskMode::Implement,
+        profile: None,
         group: None,
         deps: vec![],
         locks: vec![],
@@ -157,6 +168,8 @@ fn plan_rejects_empty_claude_code_prompt() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        retry_strategy: None,
+        context: None,
         condition: None,
         auto_commit: true,
         squash: false,
@@ -172,6 +185,7 @@ fn plan_rejects_multiple_runner_configs() {
         id: "multi".to_string(),
         title: None,
         mode: TaskMode::Implement,
+        profile: None,
         group: None,
         deps: vec![],
         locks: vec![],
@@ -196,6 +210,8 @@ fn plan_rejects_multiple_runner_configs() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        retry_strategy: None,
+        context: None,
         condition: None,
             auto_commit: true,
         squash: false,
@@ -211,6 +227,7 @@ fn plan_accepts_valid_claude_code_task() {
         id: "claude".to_string(),
         title: None,
         mode: TaskMode::Implement,
+        profile: None,
         group: None,
         deps: vec![],
         locks: vec![],
@@ -228,6 +245,8 @@ fn plan_accepts_valid_claude_code_task() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        retry_strategy: None,
+        context: None,
         condition: None,
             auto_commit: true,
         squash: false,
@@ -243,6 +262,7 @@ fn plan_rejects_kind_mismatch_claude_code() {
         id: "mismatch".to_string(),
         title: None,
         mode: TaskMode::Implement,
+        profile: None,
         group: None,
         deps: vec![],
         locks: vec![],
@@ -263,6 +283,8 @@ fn plan_rejects_kind_mismatch_claude_code() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        retry_strategy: None,
+        context: None,
         condition: None,
             auto_commit: true,
         squash: false,
@@ -278,6 +300,7 @@ fn plan_rejects_empty_opencode_prompt() {
         id: "opencode".to_string(),
         title: None,
         mode: TaskMode::Implement,
+        profile: None,
         group: None,
         deps: vec![],
         locks: vec![],
@@ -295,6 +318,8 @@ fn plan_rejects_empty_opencode_prompt() {
         }),
         retry_count: 0,
         retry_delay_sec: 0,
+        retry_strategy: None,
+        context: None,
         condition: None,
             auto_commit: true,
         squash: false,
@@ -328,6 +353,7 @@ fn plan_accepts_valid_opencode_task() {
         id: "opencode".to_string(),
         title: None,
         mode: TaskMode::Implement,
+        profile: None,
         group: None,
         deps: vec![],
         locks: vec![],
@@ -345,6 +371,8 @@ fn plan_accepts_valid_opencode_task() {
         }),
         retry_count: 0,
         retry_delay_sec: 0,
+        retry_strategy: None,
+        context: None,
         condition: None,
             auto_commit: true,
         squash: false,
@@ -360,6 +388,7 @@ fn plan_rejects_kind_mismatch_opencode() {
         id: "mismatch".to_string(),
         title: None,
         mode: TaskMode::Implement,
+        profile: None,
         group: None,
         deps: vec![],
         locks: vec![],
@@ -380,6 +409,8 @@ fn plan_rejects_kind_mismatch_opencode() {
         opencode: None,
         retry_count: 0,
         retry_delay_sec: 0,
+        retry_strategy: None,
+        context: None,
         condition: None,
             auto_commit: true,
         squash: false,
@@ -395,6 +426,7 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
         id: "multi".to_string(),
         title: None,
         mode: TaskMode::Implement,
+        profile: None,
         group: None,
         deps: vec![],
         locks: vec![],
@@ -416,6 +448,8 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
         }),
         retry_count: 0,
         retry_delay_sec: 0,
+        retry_strategy: None,
+        context: None,
         condition: None,
             auto_commit: true,
         squash: false,
@@ -486,4 +520,246 @@ fn plan_accepts_empty_run_config_system_prompt() {
     let plan = Plan::parse_str(json, PlanFormat::Json).unwrap();
     assert!(plan.validate().is_ok());
     assert!(plan.run.system_prompt.is_none());
+}
+
+// --- Agent Role Profiles tests ---
+
+#[test]
+fn plan_accepts_valid_profile_reference() {
+    use quedex::plan::PlanFormat;
+
+    let yaml = r#"
+version: 1
+profiles:
+  architect:
+    system_prompt: "You are a software architect."
+    model: "opus"
+tasks:
+  - id: design
+    mode: research
+    profile: architect
+    codex:
+      prompt: "Design the API"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    assert!(plan.validate().is_ok());
+    assert_eq!(plan.profiles.len(), 1);
+    let profile = plan.profiles.get("architect").unwrap();
+    assert_eq!(profile.system_prompt.as_deref(), Some("You are a software architect."));
+    assert_eq!(profile.model.as_deref(), Some("opus"));
+    assert_eq!(plan.tasks[0].profile.as_deref(), Some("architect"));
+}
+
+#[test]
+fn plan_rejects_non_existent_profile_reference() {
+    let mut task = codex_task("design", vec![]);
+    task.profile = Some("non_existent".to_string());
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "references non-existent profile");
+}
+
+#[test]
+fn plan_accepts_tasks_without_profile() {
+    let task = codex_task("impl", vec![]);
+    let plan = plan_with_tasks(vec![task]);
+    assert!(plan.validate().is_ok());
+}
+
+#[test]
+fn plan_accepts_profiles_section_without_references() {
+    use quedex::plan::PlanFormat;
+
+    let yaml = r#"
+version: 1
+profiles:
+  architect:
+    system_prompt: "You are a software architect."
+tasks:
+  - id: impl
+    mode: implement
+    codex:
+      prompt: "Implement feature"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    assert!(plan.validate().is_ok());
+    assert_eq!(plan.profiles.len(), 1);
+}
+
+// --- Adaptive Retry tests ---
+
+#[test]
+fn plan_accepts_retry_strategy() {
+    use quedex::plan::PlanFormat;
+
+    let yaml = r#"
+version: 1
+tasks:
+  - id: impl
+    mode: implement
+    retry_count: 2
+    retry_strategy:
+      inject_error_context: true
+      escalate_model: "opus"
+      max_stderr_lines: 30
+    claude_code:
+      prompt: "Implement feature"
+      model: "sonnet"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    assert!(plan.validate().is_ok());
+    let strategy = plan.tasks[0].retry_strategy.as_ref().unwrap();
+    assert!(strategy.inject_error_context);
+    assert_eq!(strategy.escalate_model.as_deref(), Some("opus"));
+    assert_eq!(strategy.max_stderr_lines, 30);
+}
+
+#[test]
+fn plan_accepts_retry_strategy_with_defaults() {
+    use quedex::plan::PlanFormat;
+
+    let yaml = r#"
+version: 1
+tasks:
+  - id: impl
+    mode: implement
+    retry_count: 1
+    retry_strategy:
+      inject_error_context: true
+    claude_code:
+      prompt: "Implement feature"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    assert!(plan.validate().is_ok());
+    let strategy = plan.tasks[0].retry_strategy.as_ref().unwrap();
+    assert!(strategy.inject_error_context);
+    assert!(strategy.escalate_model.is_none());
+    assert_eq!(strategy.max_stderr_lines, 50); // default
+}
+
+// --- Shared Context Store tests ---
+
+#[test]
+fn plan_accepts_context_config() {
+    use quedex::plan::PlanFormat;
+
+    let yaml = r#"
+version: 1
+tasks:
+  - id: research
+    mode: research
+    context:
+      publish:
+        key: "auth_analysis"
+        source: "artifacts/auth.md"
+    codex:
+      prompt: "Analyze authentication"
+  - id: implement
+    mode: implement
+    deps: [research]
+    context:
+      inject:
+        - from: "auth_analysis"
+          as: "Authentication Analysis"
+    codex:
+      prompt: "Implement authentication"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    assert!(plan.validate().is_ok());
+
+    let research = &plan.tasks[0];
+    let ctx = research.context.as_ref().unwrap();
+    let publish = ctx.publish.as_ref().unwrap();
+    assert_eq!(publish.key, "auth_analysis");
+    assert_eq!(publish.source, "artifacts/auth.md");
+
+    let implement = &plan.tasks[1];
+    let ctx = implement.context.as_ref().unwrap();
+    let injections = ctx.inject.as_ref().unwrap();
+    assert_eq!(injections.len(), 1);
+    assert_eq!(injections[0].from, "auth_analysis");
+    assert_eq!(injections[0].r#as.as_deref(), Some("Authentication Analysis"));
+}
+
+#[test]
+fn plan_rejects_absolute_path_in_publish_source() {
+    use quedex::plan::{PlanFormat};
+
+    let yaml = r#"
+version: 1
+tasks:
+  - id: research
+    mode: research
+    context:
+      publish:
+        key: "data"
+        source: "/etc/passwd"
+    codex:
+      prompt: "analyze"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let err = plan.validate().expect_err("expected validation error");
+    assert!(err.to_string().contains("absolute path"), "unexpected: {err}");
+}
+
+#[test]
+fn plan_rejects_parent_dir_in_publish_source() {
+    use quedex::plan::PlanFormat;
+
+    let yaml = r#"
+version: 1
+tasks:
+  - id: research
+    mode: research
+    context:
+      publish:
+        key: "data"
+        source: "../../secret.txt"
+    codex:
+      prompt: "analyze"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let err = plan.validate().expect_err("expected validation error");
+    assert!(err.to_string().contains("'..'"), "unexpected: {err}");
+}
+
+#[test]
+fn plan_rejects_invalid_publish_key() {
+    use quedex::plan::PlanFormat;
+
+    let yaml = r#"
+version: 1
+tasks:
+  - id: research
+    mode: research
+    context:
+      publish:
+        key: "../../escape"
+        source: "output.md"
+    codex:
+      prompt: "analyze"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let err = plan.validate().expect_err("expected validation error");
+    assert!(err.to_string().contains("invalid characters"), "unexpected: {err}");
+}
+
+#[test]
+fn plan_rejects_invalid_inject_from_key() {
+    use quedex::plan::PlanFormat;
+
+    let yaml = r#"
+version: 1
+tasks:
+  - id: impl
+    mode: implement
+    context:
+      inject:
+        - from: "../../tasks/other/stderr.log"
+    codex:
+      prompt: "implement"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let err = plan.validate().expect_err("expected validation error");
+    assert!(err.to_string().contains("invalid characters"), "unexpected: {err}");
 }
