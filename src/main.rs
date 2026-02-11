@@ -3231,6 +3231,14 @@ impl TaskRunner for PlanTaskRunner {
             let mut executed = false;
             let retry_strategy = task.retry_strategy.clone();
 
+            // Save original prompts before retry loop to prevent accumulation
+            let original_prompt_cc = task.claude_code.as_ref().map(|c| c.prompt.clone());
+            let original_prompt_cx = task.codex.as_ref().map(|c| c.prompt.clone());
+            let original_prompt_oc = task.opencode.as_ref().map(|c| c.prompt.clone());
+            // Save original models for potential escalation reset
+            let original_model_cc = task.claude_code.as_ref().and_then(|c| c.model.clone());
+            let original_model_oc = task.opencode.as_ref().and_then(|c| c.model.clone());
+
             let result = loop {
                 attempt += 1;
 
@@ -3247,6 +3255,19 @@ impl TaskRunner for PlanTaskRunner {
                     );
                     if retry_delay_sec > 0 {
                         tokio::time::sleep(Duration::from_secs(retry_delay_sec)).await;
+                    }
+
+                    // Restore original prompts and models to prevent accumulation
+                    if let (Some(cc), Some(orig)) = (&mut task.claude_code, &original_prompt_cc) {
+                        cc.prompt = orig.clone();
+                        cc.model = original_model_cc.clone();
+                    }
+                    if let (Some(cx), Some(orig)) = (&mut task.codex, &original_prompt_cx) {
+                        cx.prompt = orig.clone();
+                    }
+                    if let (Some(oc), Some(orig)) = (&mut task.opencode, &original_prompt_oc) {
+                        oc.prompt = orig.clone();
+                        oc.model = original_model_oc.clone();
                     }
 
                     // Adaptive retry: inject error context and escalate model

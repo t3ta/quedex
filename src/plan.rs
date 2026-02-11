@@ -474,6 +474,49 @@ impl Plan {
                     }
                 }
             }
+            // Validate context.publish.source path
+            if let Some(ref ctx) = task.context {
+                if let Some(ref publish) = ctx.publish {
+                    let path = &publish.source;
+                    if path.trim().is_empty() {
+                        bail!("task {} context.publish.source is empty", task.id);
+                    }
+                    if path.starts_with('/') || path.starts_with('\\') {
+                        bail!(
+                            "task {} context.publish.source contains absolute path: {}",
+                            task.id,
+                            path
+                        );
+                    }
+                    if path.contains("..") {
+                        bail!(
+                            "task {} context.publish.source contains '..': {}",
+                            task.id,
+                            path
+                        );
+                    }
+                    // Validate publish key contains only safe characters
+                    if !publish.key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                        bail!(
+                            "task {} context.publish.key '{}' contains invalid characters",
+                            task.id,
+                            publish.key
+                        );
+                    }
+                }
+                // Validate inject keys contain only safe characters
+                if let Some(ref injections) = ctx.inject {
+                    for inject in injections {
+                        if !inject.from.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                            bail!(
+                                "task {} context.inject.from '{}' contains invalid characters",
+                                task.id,
+                                inject.from
+                            );
+                        }
+                    }
+                }
+            }
             if let Some(codex) = task.codex.as_ref() {
                 if codex.prompt.trim().is_empty() {
                     bail!("task {} codex.prompt is empty", task.id);

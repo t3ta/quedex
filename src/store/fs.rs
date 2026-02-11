@@ -244,6 +244,13 @@ impl Store for FsStore {
     }
 
     fn get_context(&self, key: &str) -> Result<Vec<u8>> {
+        if key.trim().is_empty() {
+            bail!("context key is empty");
+        }
+        // Validate key contains only safe characters (same as save_context)
+        if !key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+            bail!("context key '{}' contains invalid characters", key);
+        }
         let context_path = self.context_dir().join(key);
         fs::read(&context_path)
             .with_context(|| format!("read context '{}' at {}", key, context_path.display()))

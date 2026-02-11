@@ -680,3 +680,86 @@ tasks:
     assert_eq!(injections[0].from, "auth_analysis");
     assert_eq!(injections[0].r#as.as_deref(), Some("Authentication Analysis"));
 }
+
+#[test]
+fn plan_rejects_absolute_path_in_publish_source() {
+    use quedex::plan::{PlanFormat};
+
+    let yaml = r#"
+version: 1
+tasks:
+  - id: research
+    mode: research
+    context:
+      publish:
+        key: "data"
+        source: "/etc/passwd"
+    codex:
+      prompt: "analyze"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let err = plan.validate().expect_err("expected validation error");
+    assert!(err.to_string().contains("absolute path"), "unexpected: {err}");
+}
+
+#[test]
+fn plan_rejects_parent_dir_in_publish_source() {
+    use quedex::plan::PlanFormat;
+
+    let yaml = r#"
+version: 1
+tasks:
+  - id: research
+    mode: research
+    context:
+      publish:
+        key: "data"
+        source: "../../secret.txt"
+    codex:
+      prompt: "analyze"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let err = plan.validate().expect_err("expected validation error");
+    assert!(err.to_string().contains("'..'"), "unexpected: {err}");
+}
+
+#[test]
+fn plan_rejects_invalid_publish_key() {
+    use quedex::plan::PlanFormat;
+
+    let yaml = r#"
+version: 1
+tasks:
+  - id: research
+    mode: research
+    context:
+      publish:
+        key: "../../escape"
+        source: "output.md"
+    codex:
+      prompt: "analyze"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let err = plan.validate().expect_err("expected validation error");
+    assert!(err.to_string().contains("invalid characters"), "unexpected: {err}");
+}
+
+#[test]
+fn plan_rejects_invalid_inject_from_key() {
+    use quedex::plan::PlanFormat;
+
+    let yaml = r#"
+version: 1
+tasks:
+  - id: impl
+    mode: implement
+    context:
+      inject:
+        - from: "../../tasks/other/stderr.log"
+    codex:
+      prompt: "implement"
+"#;
+    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let err = plan.validate().expect_err("expected validation error");
+    assert!(err.to_string().contains("invalid characters"), "unexpected: {err}");
+}
