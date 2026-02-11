@@ -77,11 +77,27 @@ pub struct RunConfig {
     pub system_prompt: Option<String>,
 }
 
+/// Agent profile for role-based task specialization.
+/// Profiles define system_prompt and model overrides that can be shared across tasks.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AgentProfile {
+    /// System prompt for this profile (merged with run-level system_prompt)
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+    /// Model override for this profile
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Plan {
     pub version: u32,
     #[serde(default)]
     pub run: RunConfig,
+    /// Agent role profiles for task specialization.
+    /// Maps profile name to AgentProfile configuration.
+    #[serde(default)]
+    pub profiles: HashMap<String, AgentProfile>,
     /// Task groups for logical organization.
     /// Maps group name to list of task IDs belonging to that group.
     #[serde(default)]
@@ -154,6 +170,58 @@ where
     ))
 }
 
+/// Configuration for shared context between tasks.
+/// Allows tasks to publish data to a key-value store and inject upstream context into prompts.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ContextConfig {
+    /// Publish context after task completion
+    #[serde(default)]
+    pub publish: Option<PublishConfig>,
+    /// Inject context from upstream tasks before task starts
+    #[serde(default)]
+    pub inject: Option<Vec<InjectConfig>>,
+}
+
+/// Configuration for publishing context data after task completion.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PublishConfig {
+    /// Key to publish the context under
+    pub key: String,
+    /// Source file to read the context from (relative path)
+    pub source: String,
+}
+
+/// Configuration for injecting context data into a task's prompt.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct InjectConfig {
+    /// Key of the context to inject (published by an upstream task)
+    pub from: String,
+    /// Label to display in the injected context section
+    #[serde(default)]
+    pub r#as: Option<String>,
+}
+
+/// Strategy for adaptive retry behavior.
+/// When configured, retry attempts can inject error context from previous failures
+/// and optionally escalate to a more capable model.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RetryStrategy {
+    /// Inject stderr from the previous failed attempt into the retry prompt
+    #[serde(default)]
+    pub inject_error_context: bool,
+    /// Model to escalate to on retry (e.g., "opus" for a more capable model)
+    #[serde(default)]
+    pub escalate_model: Option<String>,
+    /// Maximum number of stderr lines to include in error context injection (default: 50)
+    #[serde(default = "default_max_stderr_lines")]
+    #[schemars(default = "default_max_stderr_lines")]
+    pub max_stderr_lines: usize,
+}
+
+fn default_max_stderr_lines() -> usize {
+    50
+}
+
 /// Condition for conditional task execution.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
@@ -223,6 +291,10 @@ pub struct Task {
     #[serde(default)]
     pub title: Option<String>,
     pub mode: TaskMode,
+    /// Optional agent profile for role-based specialization.
+    /// If specified, must match a key in Plan.profiles.
+    #[serde(default)]
+    pub profile: Option<String>,
     /// Optional group this task belongs to.
     /// If specified, should match a key in Plan.groups.
     #[serde(default)]
@@ -265,6 +337,12 @@ pub struct Task {
     /// Delay in seconds between retry attempts
     #[serde(default)]
     pub retry_delay_sec: u64,
+    /// Adaptive retry strategy for smarter retry behavior
+    #[serde(default)]
+    pub retry_strategy: Option<RetryStrategy>,
+    /// Shared context configuration for publishing and injecting data between tasks
+    #[serde(default)]
+    pub context: Option<ContextConfig>,
     /// Condition for conditional execution. If the condition is not met, the task is skipped.
     #[serde(default)]
     pub condition: Option<TaskCondition>,
@@ -420,6 +498,19 @@ impl Plan {
             for dep in &task.deps {
                 if dep == &task.id {
                     bail!("task {} depends on itself", task.id);
+                }
+            }
+        }
+
+        // Validate profile references
+        for task in &self.tasks {
+            if let Some(ref profile_name) = task.profile {
+                if !self.profiles.contains_key(profile_name) {
+                    bail!(
+                        "task {} references non-existent profile '{}'",
+                        task.id,
+                        profile_name
+                    );
                 }
             }
         }

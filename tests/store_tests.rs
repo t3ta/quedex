@@ -122,3 +122,69 @@ fn fs_store_writes_logs_to_expected_paths() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn fs_store_saves_and_gets_context() -> Result<()> {
+    let temp = TempDir::new("quedex-store")?;
+    let store = FsStore::new(temp.path(), "run-context")?;
+
+    let content = b"This is the auth analysis result.";
+    store.save_context("auth_analysis", content)?;
+
+    let loaded = store.get_context("auth_analysis")?;
+    assert_eq!(loaded, content);
+
+    // Verify file exists at expected path
+    let context_path = temp
+        .path()
+        .join("runs")
+        .join("run-context")
+        .join("context")
+        .join("auth_analysis");
+    assert!(context_path.exists());
+
+    Ok(())
+}
+
+#[test]
+fn fs_store_context_overwrite() -> Result<()> {
+    let temp = TempDir::new("quedex-store")?;
+    let store = FsStore::new(temp.path(), "run-ctx-overwrite")?;
+
+    store.save_context("key1", b"first")?;
+    store.save_context("key1", b"second")?;
+
+    let loaded = store.get_context("key1")?;
+    assert_eq!(loaded, b"second");
+
+    Ok(())
+}
+
+#[test]
+fn fs_store_context_rejects_empty_key() {
+    let temp = TempDir::new("quedex-store").unwrap();
+    let store = FsStore::new(temp.path(), "run-ctx-empty").unwrap();
+
+    let result = store.save_context("", b"data");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("context key is empty"));
+}
+
+#[test]
+fn fs_store_context_rejects_invalid_key() {
+    let temp = TempDir::new("quedex-store").unwrap();
+    let store = FsStore::new(temp.path(), "run-ctx-invalid").unwrap();
+
+    let result = store.save_context("key/with/slash", b"data");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("invalid characters"));
+}
+
+#[test]
+fn fs_store_get_context_returns_error_for_missing_key() {
+    let temp = TempDir::new("quedex-store").unwrap();
+    let store = FsStore::new(temp.path(), "run-ctx-missing").unwrap();
+
+    let result = store.get_context("nonexistent");
+    assert!(result.is_err());
+}

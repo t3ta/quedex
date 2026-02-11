@@ -1032,18 +1032,19 @@ async fn handle_run(
 
     let runner = PlanTaskRunner::new(
         Arc::new(tasks_map),
+        Arc::new(plan.profiles.clone()),
         ctx,
         state_handle.clone(),
         cancel.clone(),
         notifier.clone(),
     );
-    
+
     // Create GitManager for auto-commit functionality
     let git_manager = match crate::git::GitManager::open() {
         Ok(gm) => Some(Arc::new(std::sync::Mutex::new(gm))),
         Err(_) => None, // Not in a git repository, skip auto-commit
     };
-    
+
     let scheduler = if let Some(initial_states) = initial_states {
         let sched = Scheduler::new_with_initial_state(
             task_specs,
@@ -1714,12 +1715,13 @@ async fn handle_retry(
     // Notifier for retry (no notifications for retry operations)
     let runner = PlanTaskRunner::new(
         Arc::new(tasks_map),
+        Arc::new(plan.profiles.clone()),
         ctx,
         state_handle.clone(),
         cancel,
         None,
     );
-    
+
     // Create GitManager for auto-commit functionality
     let git_manager = match crate::git::GitManager::open() {
         Ok(gm) => Some(Arc::new(std::sync::Mutex::new(gm))),
@@ -3079,6 +3081,7 @@ impl CancelHandle {
 
 struct PlanTaskRunner {
     tasks: Arc<HashMap<String, Task>>,
+    profiles: Arc<HashMap<String, quedex::plan::AgentProfile>>,
     ctx: RunContext,
     state: StateHandle,
     cancel: CancelHandle,
@@ -3091,6 +3094,7 @@ struct PlanTaskRunner {
 impl PlanTaskRunner {
     fn new(
         tasks: Arc<HashMap<String, Task>>,
+        profiles: Arc<HashMap<String, quedex::plan::AgentProfile>>,
         ctx: RunContext,
         state: StateHandle,
         cancel: CancelHandle,
@@ -3098,6 +3102,7 @@ impl PlanTaskRunner {
     ) -> Self {
         Self {
             tasks,
+            profiles,
             ctx,
             state,
             cancel,
@@ -3114,6 +3119,7 @@ impl TaskRunner for PlanTaskRunner {
 
     fn spawn(&self, task_spec: TaskSpec) -> Self::Future {
         let tasks = Arc::clone(&self.tasks);
+        let profiles = Arc::clone(&self.profiles);
         let ctx = self.ctx.clone();
         let state = self.state.clone();
         let cancel = self.cancel.clone();
@@ -3126,6 +3132,30 @@ impl TaskRunner for PlanTaskRunner {
             let Some(task) = tasks.get(&task_spec.id) else {
                 return TaskResult::failed(1);
             };
+
+            // Resolve agent profile for this task
+            let profile = task
+                .profile
+                .as_ref()
+                .and_then(|name| profiles.get(name));
+
+            // Clone task for potential profile-based model override
+            let mut task = task.clone();
+            if let Some(profile) = profile {
+                // Profile model override: only if task runner config doesn't specify a model
+                if let Some(ref profile_model) = profile.model {
+                    if let Some(ref mut cc) = task.claude_code {
+                        if cc.model.is_none() {
+                            cc.model = Some(profile_model.clone());
+                        }
+                    }
+                    if let Some(ref mut oc) = task.opencode {
+                        if oc.model.is_none() {
+                            oc.model = Some(profile_model.clone());
+                        }
+                    }
+                }
+            }
 
             let task_id = task.id.clone();
             let output_files = task_spec.output_files.clone();
@@ -3153,9 +3183,53 @@ impl TaskRunner for PlanTaskRunner {
             let mut task_ctx = ctx.clone();
             task_ctx.cwd = workdir.path().to_path_buf();
 
+            // Apply profile system_prompt override
+            // Priority: task runner config (N/A for system_prompt) > profile > run.system_prompt > quedex.toml
+            if let Some(profile) = profile {
+                if let Some(ref profile_prompt) = profile.system_prompt {
+                    task_ctx.system_prompt = Some(profile_prompt.clone());
+                }
+            }
+
+            // Inject shared context from upstream tasks into prompt
+            if let Some(ref context_config) = task.context {
+                if let Some(ref injections) = context_config.inject {
+                    let mut context_prefix = String::new();
+                    for inject in injections {
+                        match task_ctx.store.get_context(&inject.from) {
+                            Ok(content) => {
+                                let label = inject.r#as.as_deref().unwrap_or(&inject.from);
+                                let text = String::from_utf8_lossy(&content);
+                                context_prefix.push_str(&format!(
+                                    "--- {} ---\n{}\n--- end {} ---\n\n",
+                                    label, text.trim(), label
+                                ));
+                            }
+                            Err(err) => {
+                                eprintln!(
+                                    "task {task_id} context inject warning: failed to load context '{}': {err}",
+                                    inject.from
+                                );
+                            }
+                        }
+                    }
+                    if !context_prefix.is_empty() {
+                        // Prepend injected context to the task's prompt
+                        if let Some(ref mut cc) = task.claude_code {
+                            cc.prompt = format!("{}{}", context_prefix, cc.prompt);
+                        } else if let Some(ref mut cx) = task.codex {
+                            cx.prompt = format!("{}{}", context_prefix, cx.prompt);
+                        } else if let Some(ref mut oc) = task.opencode {
+                            oc.prompt = format!("{}{}", context_prefix, oc.prompt);
+                        }
+                    }
+                }
+            }
+
             let mut attempt = 0u32;
             let max_attempts = retry_count + 1; // Original attempt + retries
             let mut executed = false;
+            let retry_strategy = task.retry_strategy.clone();
 
             let result = loop {
                 attempt += 1;
@@ -3174,15 +3248,56 @@ impl TaskRunner for PlanTaskRunner {
                     if retry_delay_sec > 0 {
                         tokio::time::sleep(Duration::from_secs(retry_delay_sec)).await;
                     }
+
+                    // Adaptive retry: inject error context and escalate model
+                    if let Some(ref strategy) = retry_strategy {
+                        // Inject stderr from previous attempt into prompt
+                        if strategy.inject_error_context {
+                            let stderr_path = task_ctx.store.log_path(&task_id, LogStream::Stderr);
+                            if let Ok(stderr_content) = std::fs::read_to_string(&stderr_path) {
+                                let max_lines = strategy.max_stderr_lines;
+                                let lines: Vec<&str> = stderr_content.lines().collect();
+                                let tail: Vec<&str> = if lines.len() > max_lines {
+                                    lines[lines.len() - max_lines..].to_vec()
+                                } else {
+                                    lines
+                                };
+                                if !tail.is_empty() {
+                                    let error_context = tail.join("\n");
+                                    let prefix = format!(
+                                        "[RETRY CONTEXT] The previous attempt failed with the following error output:\n```\n{}\n```\nPlease fix the issues and try again.\n\n",
+                                        error_context
+                                    );
+                                    // Inject error context into runner prompt
+                                    if let Some(ref mut cc) = task.claude_code {
+                                        cc.prompt = format!("{}{}", prefix, cc.prompt);
+                                    } else if let Some(ref mut cx) = task.codex {
+                                        cx.prompt = format!("{}{}", prefix, cx.prompt);
+                                    } else if let Some(ref mut oc) = task.opencode {
+                                        oc.prompt = format!("{}{}", prefix, oc.prompt);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Escalate model on retry
+                        if let Some(ref escalate_model) = strategy.escalate_model {
+                            if let Some(ref mut cc) = task.claude_code {
+                                cc.model = Some(escalate_model.clone());
+                            } else if let Some(ref mut oc) = task.opencode {
+                                oc.model = Some(escalate_model.clone());
+                            }
+                        }
+                    }
                 }
 
                 // Select runner and spawn child process
                 let child = if task.codex.is_some() {
-                    codex.spawn(task, &task_ctx)
+                    codex.spawn(&task, &task_ctx)
                 } else if task.claude_code.is_some() {
-                    claude_code.spawn(task, &task_ctx)
+                    claude_code.spawn(&task, &task_ctx)
                 } else {
-                    opencode.spawn(task, &task_ctx)
+                    opencode.spawn(&task, &task_ctx)
                 };
                 let child = match child {
                     Ok(child) => {
@@ -3304,6 +3419,31 @@ impl TaskRunner for PlanTaskRunner {
                     if !saved_outputs.is_empty() {
                         if let Err(err) = state.task_outputs_saved(&task_id, saved_outputs) {
                             eprintln!("task {task_id} output state update error: {err:#}");
+                        }
+                    }
+                }
+            }
+
+            // Publish shared context after successful completion
+            if result.status == TaskStatus::Succeeded {
+                if let Some(ref context_config) = task.context {
+                    if let Some(ref publish) = context_config.publish {
+                        let source_path = task_ctx.cwd.join(&publish.source);
+                        match std::fs::read(&source_path) {
+                            Ok(content) => {
+                                if let Err(err) = task_ctx.store.save_context(&publish.key, &content) {
+                                    eprintln!(
+                                        "task {task_id} context publish error for key '{}': {err:#}",
+                                        publish.key
+                                    );
+                                }
+                            }
+                            Err(err) => {
+                                eprintln!(
+                                    "task {task_id} context publish warning: failed to read source '{}': {err}",
+                                    source_path.display()
+                                );
+                            }
                         }
                     }
                 }

@@ -50,6 +50,10 @@ impl FsStore {
         self.outputs_dir().join(task_id)
     }
 
+    fn context_dir(&self) -> PathBuf {
+        self.run_dir().join("context")
+    }
+
     fn output_path(&self, task_id: &str, filename: &str) -> Result<PathBuf> {
         if filename.trim().is_empty() {
             bail!("output filename is empty");
@@ -206,5 +210,42 @@ impl Store for FsStore {
         }
         outputs.sort();
         Ok(outputs)
+    }
+
+    fn save_context(&self, key: &str, content: &[u8]) -> Result<()> {
+        if key.trim().is_empty() {
+            bail!("context key is empty");
+        }
+        // Validate key contains only safe characters
+        if !key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+            bail!("context key '{}' contains invalid characters", key);
+        }
+        let context_dir = self.context_dir();
+        fs::create_dir_all(&context_dir)
+            .with_context(|| format!("create context dir {}", context_dir.display()))?;
+        let context_path = context_dir.join(key);
+        let tmp_path = context_path.with_extension("tmp");
+        {
+            let mut file = File::create(&tmp_path)
+                .with_context(|| format!("create context file {}", tmp_path.display()))?;
+            file.write_all(content)
+                .with_context(|| format!("write context {}", context_path.display()))?;
+            file.sync_all()
+                .with_context(|| format!("sync context {}", context_path.display()))?;
+        }
+        fs::rename(&tmp_path, &context_path).with_context(|| {
+            format!(
+                "rename {} -> {}",
+                tmp_path.display(),
+                context_path.display()
+            )
+        })?;
+        Ok(())
+    }
+
+    fn get_context(&self, key: &str) -> Result<Vec<u8>> {
+        let context_path = self.context_dir().join(key);
+        fs::read(&context_path)
+            .with_context(|| format!("read context '{}' at {}", key, context_path.display()))
     }
 }

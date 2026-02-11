@@ -246,6 +246,7 @@ mod tests {
                 notifications: None,
                 system_prompt: None,
             },
+            profiles: std::collections::HashMap::new(),
             groups: std::collections::HashMap::new(),
             tasks,
             _timeout_sec_rejected: None,
@@ -258,6 +259,7 @@ mod tests {
             id: id.to_string(),
             title: None,
             mode: TaskMode::Implement,
+            profile: None,
             group: None,
             deps: deps.into_iter().map(|s| s.to_string()).collect(),
             locks: locks.into_iter().map(|s| s.to_string()).collect(),
@@ -280,6 +282,8 @@ mod tests {
             opencode: None,
             retry_count: 0,
             retry_delay_sec: 0,
+            retry_strategy: None,
+            context: None,
             condition: None,
         }
     }
