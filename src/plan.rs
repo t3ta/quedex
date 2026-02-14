@@ -16,12 +16,18 @@ pub enum TaskMode {
     Verify,
 }
 
+/// Configuration for git worktree isolation.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct WorktreeRunConfig {
+    /// Enable worktree isolation for parallel task execution.
     #[serde(default)]
     pub enabled: bool,
+    /// Base directory for worktrees (default: `.quedex/worktrees`).
     #[serde(default)]
     pub base_dir: Option<PathBuf>,
+    /// DEPRECATED: This field has no effect.
+    /// Git worktree does not support shallow clone (--depth option).
+    /// Shallow clone is only available with `git clone`, not `git worktree add`.
     #[serde(default)]
     pub shallow_depth: Option<u32>,
 }
@@ -201,6 +207,156 @@ pub struct InjectConfig {
     pub r#as: Option<String>,
 }
 
+/// Classification of failure types for retry decision making.
+///
+/// This helps determine whether a failure is worth retrying:
+/// - Transient failures (network issues, rate limits) should be retried
+/// - Permanent failures (invalid config, missing files) should not be retried
+/// - Unknown failures are retried by default
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureType {
+    /// Temporary failure that may succeed on retry (e.g., network timeout, rate limit)
+    Transient,
+    /// Permanent failure that will not succeed on retry (e.g., invalid config, auth failure)
+    Permanent,
+    /// Unknown failure type - retry by default
+    #[default]
+    Unknown,
+}
+
+impl FailureType {
+    /// Classify a failure based on exit code using common Unix conventions.
+    ///
+    /// Exit code heuristics:
+    /// - 0: Success (shouldn't be called for failures)
+    /// - 1: General error - Unknown
+    /// - 2: Misuse of shell command - Permanent
+    /// - 126: Permission problem - Permanent
+    /// - 127: Command not found - Permanent
+    /// - 128+: Signal-based termination (128+N where N is signal number) - Transient
+    ///   - 130 (SIGINT): User interrupt - Permanent
+    ///   - 137 (SIGKILL): Force killed (OOM, etc.) - Transient
+    ///   - 143 (SIGTERM): Graceful termination - Transient
+    pub fn from_exit_code(exit_code: Option<i32>) -> Self {
+        match exit_code {
+            None => FailureType::Unknown, // Process didn't exit normally
+            Some(0) => FailureType::Unknown, // Success, shouldn't happen
+            Some(1) => FailureType::Unknown, // Generic error
+            Some(2) => FailureType::Permanent, // Misuse of command
+            Some(126) => FailureType::Permanent, // Permission denied
+            Some(127) => FailureType::Permanent, // Command not found
+            Some(128) => FailureType::Unknown, // Invalid exit argument
+            Some(130) => FailureType::Permanent, // SIGINT (Ctrl+C)
+            Some(137) => FailureType::Transient, // SIGKILL (OOM or force kill)
+            Some(143) => FailureType::Transient, // SIGTERM (graceful shutdown)
+            Some(code) if code > 128 => FailureType::Transient, // Other signals
+            Some(_) => FailureType::Unknown,
+        }
+    }
+
+    /// Classify a failure based on common error patterns in stderr.
+    ///
+    /// Pattern matching for common transient vs permanent errors.
+    pub fn from_stderr_patterns(stderr: &str) -> Self {
+        let stderr_lower = stderr.to_lowercase();
+
+        // Permanent failure patterns
+        let permanent_patterns = [
+            "permission denied",
+            "access denied",
+            "authentication failed",
+            "invalid credentials",
+            "unauthorized",
+            "forbidden",
+            "not found",
+            "does not exist",
+            "no such file or directory",
+            "invalid configuration",
+            "syntax error",
+            "parse error",
+            "compilation failed",
+            "type error",
+            "undefined reference",
+        ];
+
+        // Transient failure patterns
+        let transient_patterns = [
+            "timeout",
+            "timed out",
+            "connection refused",
+            "connection reset",
+            "connection closed",
+            "network unreachable",
+            "host unreachable",
+            "temporary failure",
+            "too many requests",
+            "rate limit",
+            "quota exceeded",
+            "service unavailable",
+            "503",
+            "502",
+            "504",
+            "out of memory",
+            "oom",
+            "killed",
+            "retry",
+            "try again",
+            "temporarily unavailable",
+        ];
+
+        for pattern in permanent_patterns {
+            if stderr_lower.contains(pattern) {
+                return FailureType::Permanent;
+            }
+        }
+
+        for pattern in transient_patterns {
+            if stderr_lower.contains(pattern) {
+                return FailureType::Transient;
+            }
+        }
+
+        FailureType::Unknown
+    }
+
+    /// Combine exit code and stderr analysis to classify failure.
+    ///
+    /// Stderr patterns take precedence over exit codes for more accurate classification.
+    pub fn classify(exit_code: Option<i32>, stderr: &str) -> Self {
+        // First check stderr patterns (more specific)
+        let from_stderr = Self::from_stderr_patterns(stderr);
+        if from_stderr != FailureType::Unknown {
+            return from_stderr;
+        }
+
+        // Fall back to exit code classification
+        Self::from_exit_code(exit_code)
+    }
+
+    /// Returns true if this failure type should be retried.
+    pub fn should_retry(&self) -> bool {
+        match self {
+            FailureType::Transient => true,
+            FailureType::Permanent => false,
+            FailureType::Unknown => true, // Retry by default for unknown failures
+        }
+    }
+}
+
+/// Type of backoff strategy for retry delays.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackoffType {
+    /// Fixed delay between retries (default)
+    #[default]
+    Fixed,
+    /// Exponential backoff: delay = base * 2^(attempt-1)
+    Exponential,
+    /// Linear backoff: delay = base * attempt
+    Linear,
+}
+
 /// Strategy for adaptive retry behavior.
 /// When configured, retry attempts can inject error context from previous failures
 /// and optionally escalate to a more capable model.
@@ -216,10 +372,80 @@ pub struct RetryStrategy {
     #[serde(default = "default_max_stderr_lines")]
     #[schemars(default = "default_max_stderr_lines")]
     pub max_stderr_lines: usize,
+    /// Type of backoff strategy for retry delays (default: fixed)
+    #[serde(default)]
+    pub backoff_type: BackoffType,
+    /// Maximum delay in seconds (caps exponential/linear growth). Default: 300 (5 minutes)
+    #[serde(default = "default_max_delay_sec")]
+    #[schemars(default = "default_max_delay_sec")]
+    pub max_delay_sec: u64,
+    /// Jitter percentage (0-100) to add randomness to delays for thundering herd prevention.
+    /// Default: 0 (no jitter)
+    #[serde(default)]
+    pub jitter_percent: u8,
+    /// Skip retries for failures classified as permanent (e.g., auth errors, missing files).
+    /// When enabled, uses exit code and stderr pattern analysis to identify permanent failures.
+    /// Default: false (retry all failures)
+    #[serde(default)]
+    pub skip_permanent_failures: bool,
 }
 
 fn default_max_stderr_lines() -> usize {
     50
+}
+
+fn default_max_delay_sec() -> u64 {
+    300 // 5 minutes
+}
+
+impl RetryStrategy {
+    /// Calculate the delay for a retry attempt with backoff and jitter.
+    ///
+    /// # Arguments
+    /// * `base_delay_sec` - Base delay in seconds (from Task.retry_delay_sec)
+    /// * `attempt` - Current retry attempt number (1-indexed)
+    ///
+    /// # Returns
+    /// The calculated delay in seconds with backoff and optional jitter applied.
+    pub fn calculate_delay(&self, base_delay_sec: u64, attempt: u32) -> u64 {
+        if base_delay_sec == 0 {
+            return 0;
+        }
+
+        // Calculate base delay based on backoff type
+        let delay = match self.backoff_type {
+            BackoffType::Fixed => base_delay_sec,
+            BackoffType::Exponential => {
+                // delay = base * 2^(attempt-1), capped at max_delay_sec
+                let exponent = attempt.saturating_sub(1);
+                base_delay_sec.saturating_mul(2u64.saturating_pow(exponent))
+            }
+            BackoffType::Linear => {
+                // delay = base * attempt, capped at max_delay_sec
+                base_delay_sec.saturating_mul(attempt as u64)
+            }
+        };
+
+        // Cap at max_delay_sec
+        let delay = delay.min(self.max_delay_sec);
+
+        // Apply jitter if configured
+        if self.jitter_percent > 0 && delay > 0 {
+            let jitter_percent = self.jitter_percent.min(100) as f64 / 100.0;
+            let jitter_range = (delay as f64 * jitter_percent) as u64;
+            if jitter_range > 0 {
+                // Generate random jitter using simple thread-local RNG
+                use std::collections::hash_map::RandomState;
+                use std::hash::{BuildHasher, Hasher};
+                let random = RandomState::new().build_hasher().finish();
+                let jitter = (random % (jitter_range * 2 + 1)) as i64 - jitter_range as i64;
+                // Apply jitter but ensure delay doesn't go below 1 second
+                return (delay as i64 + jitter).max(1) as u64;
+            }
+        }
+
+        delay
+    }
 }
 
 /// Condition for conditional task execution.
@@ -707,4 +933,233 @@ impl Plan {
 /// Generate JSON Schema for Plan
 pub fn plan_json_schema() -> schemars::schema::RootSchema {
     schemars::schema_for!(Plan)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_delay_fixed_backoff() {
+        let strategy = RetryStrategy {
+            inject_error_context: false,
+            escalate_model: None,
+            max_stderr_lines: 50,
+            backoff_type: BackoffType::Fixed,
+            max_delay_sec: 300,
+            jitter_percent: 0,
+            skip_permanent_failures: false,
+        };
+
+        // Fixed delay should remain constant regardless of attempt
+        assert_eq!(strategy.calculate_delay(10, 1), 10);
+        assert_eq!(strategy.calculate_delay(10, 2), 10);
+        assert_eq!(strategy.calculate_delay(10, 5), 10);
+    }
+
+    #[test]
+    fn test_calculate_delay_exponential_backoff() {
+        let strategy = RetryStrategy {
+            inject_error_context: false,
+            escalate_model: None,
+            max_stderr_lines: 50,
+            backoff_type: BackoffType::Exponential,
+            max_delay_sec: 300,
+            jitter_percent: 0,
+            skip_permanent_failures: false,
+        };
+
+        // Exponential: base * 2^(attempt-1)
+        assert_eq!(strategy.calculate_delay(5, 1), 5); // 5 * 2^0 = 5
+        assert_eq!(strategy.calculate_delay(5, 2), 10); // 5 * 2^1 = 10
+        assert_eq!(strategy.calculate_delay(5, 3), 20); // 5 * 2^2 = 20
+        assert_eq!(strategy.calculate_delay(5, 4), 40); // 5 * 2^3 = 40
+    }
+
+    #[test]
+    fn test_calculate_delay_linear_backoff() {
+        let strategy = RetryStrategy {
+            inject_error_context: false,
+            escalate_model: None,
+            max_stderr_lines: 50,
+            backoff_type: BackoffType::Linear,
+            max_delay_sec: 300,
+            jitter_percent: 0,
+            skip_permanent_failures: false,
+        };
+
+        // Linear: base * attempt
+        assert_eq!(strategy.calculate_delay(5, 1), 5); // 5 * 1 = 5
+        assert_eq!(strategy.calculate_delay(5, 2), 10); // 5 * 2 = 10
+        assert_eq!(strategy.calculate_delay(5, 3), 15); // 5 * 3 = 15
+        assert_eq!(strategy.calculate_delay(5, 4), 20); // 5 * 4 = 20
+    }
+
+    #[test]
+    fn test_calculate_delay_max_cap() {
+        let strategy = RetryStrategy {
+            inject_error_context: false,
+            escalate_model: None,
+            max_stderr_lines: 50,
+            backoff_type: BackoffType::Exponential,
+            max_delay_sec: 60, // Cap at 60 seconds
+            jitter_percent: 0,
+            skip_permanent_failures: false,
+        };
+
+        // Should cap at max_delay_sec
+        assert_eq!(strategy.calculate_delay(10, 1), 10); // 10 * 2^0 = 10
+        assert_eq!(strategy.calculate_delay(10, 2), 20); // 10 * 2^1 = 20
+        assert_eq!(strategy.calculate_delay(10, 3), 40); // 10 * 2^2 = 40
+        assert_eq!(strategy.calculate_delay(10, 4), 60); // 10 * 2^3 = 80, capped to 60
+        assert_eq!(strategy.calculate_delay(10, 5), 60); // 10 * 2^4 = 160, capped to 60
+    }
+
+    #[test]
+    fn test_calculate_delay_zero_base() {
+        let strategy = RetryStrategy {
+            inject_error_context: false,
+            escalate_model: None,
+            max_stderr_lines: 50,
+            backoff_type: BackoffType::Exponential,
+            max_delay_sec: 300,
+            jitter_percent: 25,
+            skip_permanent_failures: false,
+        };
+
+        // Zero base delay should return 0 regardless of jitter
+        assert_eq!(strategy.calculate_delay(0, 1), 0);
+        assert_eq!(strategy.calculate_delay(0, 5), 0);
+    }
+
+    #[test]
+    fn test_calculate_delay_with_jitter() {
+        let strategy = RetryStrategy {
+            inject_error_context: false,
+            escalate_model: None,
+            max_stderr_lines: 50,
+            backoff_type: BackoffType::Fixed,
+            max_delay_sec: 300,
+            jitter_percent: 50, // 50% jitter
+            skip_permanent_failures: false,
+        };
+
+        // With jitter, delay should be within ±50% of base
+        let base = 100u64;
+        let delay = strategy.calculate_delay(base, 1);
+        // Delay should be at least 1 (minimum) and within reasonable range
+        assert!(delay >= 1);
+        assert!(delay >= 50 && delay <= 150); // 100 ± 50%
+    }
+
+    #[test]
+    fn test_backoff_type_default() {
+        // Default should be Fixed
+        assert_eq!(BackoffType::default(), BackoffType::Fixed);
+    }
+
+    // ==================== FailureType tests ====================
+
+    #[test]
+    fn test_failure_type_from_exit_code_permanent() {
+        assert_eq!(FailureType::from_exit_code(Some(2)), FailureType::Permanent);
+        assert_eq!(FailureType::from_exit_code(Some(126)), FailureType::Permanent);
+        assert_eq!(FailureType::from_exit_code(Some(127)), FailureType::Permanent);
+        assert_eq!(FailureType::from_exit_code(Some(130)), FailureType::Permanent);
+    }
+
+    #[test]
+    fn test_failure_type_from_exit_code_transient() {
+        assert_eq!(FailureType::from_exit_code(Some(137)), FailureType::Transient);
+        assert_eq!(FailureType::from_exit_code(Some(143)), FailureType::Transient);
+        assert_eq!(FailureType::from_exit_code(Some(141)), FailureType::Transient); // SIGPIPE
+    }
+
+    #[test]
+    fn test_failure_type_from_exit_code_unknown() {
+        assert_eq!(FailureType::from_exit_code(None), FailureType::Unknown);
+        assert_eq!(FailureType::from_exit_code(Some(0)), FailureType::Unknown);
+        assert_eq!(FailureType::from_exit_code(Some(1)), FailureType::Unknown);
+        assert_eq!(FailureType::from_exit_code(Some(42)), FailureType::Unknown);
+    }
+
+    #[test]
+    fn test_failure_type_from_stderr_permanent() {
+        assert_eq!(
+            FailureType::from_stderr_patterns("Permission denied: /etc/passwd"),
+            FailureType::Permanent
+        );
+        assert_eq!(
+            FailureType::from_stderr_patterns("No such file or directory"),
+            FailureType::Permanent
+        );
+        assert_eq!(
+            FailureType::from_stderr_patterns("Compilation failed with errors"),
+            FailureType::Permanent
+        );
+        assert_eq!(
+            FailureType::from_stderr_patterns("type error: undefined is not a function"),
+            FailureType::Permanent
+        );
+    }
+
+    #[test]
+    fn test_failure_type_from_stderr_transient() {
+        assert_eq!(
+            FailureType::from_stderr_patterns("Connection refused"),
+            FailureType::Transient
+        );
+        assert_eq!(
+            FailureType::from_stderr_patterns("Request timeout after 30s"),
+            FailureType::Transient
+        );
+        assert_eq!(
+            FailureType::from_stderr_patterns("Error 503 Service Unavailable"),
+            FailureType::Transient
+        );
+        assert_eq!(
+            FailureType::from_stderr_patterns("Rate limit exceeded"),
+            FailureType::Transient
+        );
+    }
+
+    #[test]
+    fn test_failure_type_from_stderr_unknown() {
+        assert_eq!(
+            FailureType::from_stderr_patterns("Something went wrong"),
+            FailureType::Unknown
+        );
+        assert_eq!(FailureType::from_stderr_patterns(""), FailureType::Unknown);
+    }
+
+    #[test]
+    fn test_failure_type_classify() {
+        // Stderr takes precedence
+        assert_eq!(
+            FailureType::classify(Some(1), "Connection timeout"),
+            FailureType::Transient
+        );
+        // Exit code fallback
+        assert_eq!(
+            FailureType::classify(Some(127), "Something happened"),
+            FailureType::Permanent
+        );
+        // Both unknown
+        assert_eq!(
+            FailureType::classify(Some(1), "Some error"),
+            FailureType::Unknown
+        );
+    }
+
+    #[test]
+    fn test_failure_type_should_retry() {
+        assert!(FailureType::Transient.should_retry());
+        assert!(!FailureType::Permanent.should_retry());
+        assert!(FailureType::Unknown.should_retry());
+    }
+
+    #[test]
+    fn test_failure_type_default() {
+        assert_eq!(FailureType::default(), FailureType::Unknown);
+    }
 }
