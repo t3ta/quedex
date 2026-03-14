@@ -431,16 +431,20 @@ impl RetryStrategy {
 
         // Apply jitter if configured
         if self.jitter_percent > 0 && delay > 0 {
-            let jitter_percent = self.jitter_percent.min(100) as f64 / 100.0;
-            let jitter_range = (delay as f64 * jitter_percent) as u64;
+            let jitter_percent = self.jitter_percent.min(100) as u64;
+            let jitter_range = delay.saturating_mul(jitter_percent) / 100;
             if jitter_range > 0 {
                 // Generate random jitter using simple thread-local RNG
                 use std::collections::hash_map::RandomState;
                 use std::hash::{BuildHasher, Hasher};
                 let random = RandomState::new().build_hasher().finish();
-                let jitter = (random % (jitter_range * 2 + 1)) as i64 - jitter_range as i64;
-                // Apply jitter but ensure delay doesn't go below 1 second
-                return (delay as i64 + jitter).max(1) as u64;
+                // Compute modulus safely: range is [0, 2*jitter_range]
+                let modulus = jitter_range.saturating_mul(2).saturating_add(1);
+                let random_offset = random % modulus;
+                // Apply jitter: delay + random_offset - jitter_range
+                // Ensure delay doesn't go below 1 second
+                let jittered = delay.saturating_add(random_offset).saturating_sub(jitter_range);
+                return jittered.max(1);
             }
         }
 

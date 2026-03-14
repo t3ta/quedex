@@ -3375,8 +3375,29 @@ impl TaskRunner for PlanTaskRunner {
 
                 let result = map_exit_status(status, cancel.is_canceled());
 
-                // If failed but have retries remaining, continue
+                // If failed but have retries remaining, check if we should retry
                 if result.status == TaskStatus::Failed && attempt < max_attempts {
+                    // Check if this is a permanent failure that should not be retried
+                    if let Some(ref strategy) = retry_strategy {
+                        if strategy.skip_permanent_failures {
+                            let stderr_path = task_ctx.store.log_path(&task_id, LogStream::Stderr);
+                            let stderr_tail = std::fs::read_to_string(&stderr_path)
+                                .unwrap_or_default();
+                            let failure_type = quedex::plan::FailureType::classify(
+                                result.exit_code,
+                                &stderr_tail,
+                            );
+                            if !failure_type.should_retry() {
+                                eprintln!(
+                                    "task {task_id} failed with permanent failure (exit code {:?}), skipping retry",
+                                    result.exit_code
+                                );
+                                let _ = state.task_finished(&task_id, result.status, result.exit_code);
+                                break result;
+                            }
+                        }
+                    }
+
                     eprintln!(
                         "task {task_id} failed with exit code {:?}, will retry",
                         result.exit_code

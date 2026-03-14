@@ -277,7 +277,21 @@ impl Store for FsStore {
 
         let meta_path = context_dir.join(format!("{}.meta", key));
 
-        // Load existing metadata if present
+        // Acquire exclusive file lock to prevent concurrent writers
+        let lock_path = context_dir.join(format!("{}.lock", key));
+        let lock_file = File::create(&lock_path)?;
+        use std::os::unix::io::AsRawFd;
+        let fd = lock_file.as_raw_fd();
+        let ret = unsafe { libc::flock(fd, libc::LOCK_EX) };
+        if ret != 0 {
+            bail!(
+                "failed to acquire lock for context '{}': {}",
+                key,
+                std::io::Error::last_os_error()
+            );
+        }
+
+        // Load existing metadata if present (under lock)
         let existing_meta: Option<ContextMetadata> = if meta_path.exists() {
             let meta_content = fs::read_to_string(&meta_path)?;
             Some(serde_json::from_str(&meta_content)?)
@@ -326,6 +340,7 @@ impl Store for FsStore {
         }
         fs::rename(&tmp_meta_path, &meta_path)?;
 
+        // Lock is released when lock_file is dropped
         Ok(new_meta)
     }
 

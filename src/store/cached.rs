@@ -92,9 +92,13 @@ impl<S: Store> Store for CachedStore<S> {
     }
 
     fn write_state(&self, state: State) -> Result<()> {
-        // Sync write - just delegate to inner
-        // The cache will be out of sync until next async read
-        self.inner.write_state(state)
+        self.inner.write_state(state)?;
+        // Invalidate cache so next async read fetches fresh state
+        // Use try_write to avoid blocking; if locked, cache will be refreshed on next read
+        if let Ok(mut cache) = self.state_cache.try_write() {
+            *cache = None;
+        }
+        Ok(())
     }
 
     fn read_state(&self) -> Result<State> {

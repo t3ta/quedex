@@ -23,7 +23,7 @@ pub enum CircuitState {
     Closed = 0,
     /// Circuit tripped - requests are blocked
     Open = 1,
-    /// Testing recovery - limited requests allowed
+    /// Testing recovery - requests allowed to probe service health
     HalfOpen = 2,
 }
 
@@ -59,9 +59,10 @@ impl Default for CircuitBreakerConfig {
     }
 }
 
-/// A circuit breaker implementation using atomic operations.
+/// A circuit breaker implementation using atomic operations for state storage
+/// and a Mutex for serializing state transitions.
 ///
-/// Thread-safe and lock-free for state checks and updates.
+/// Thread-safe with lock-free reads and mutex-guarded transitions.
 pub struct CircuitBreaker {
     /// Current state (Closed=0, Open=1, HalfOpen=2)
     state: AtomicU32,
@@ -127,6 +128,8 @@ impl CircuitBreaker {
     /// Check if a request is allowed.
     ///
     /// Returns true if the circuit is closed or half-open, false if open.
+    /// Note: In HalfOpen state, all requests are currently allowed.
+    /// A single-flight probe mechanism is not yet implemented.
     pub fn allow_request(&self) -> bool {
         match self.state() {
             CircuitState::Closed => true,
@@ -159,10 +162,9 @@ impl CircuitBreaker {
                 }
             }
             CircuitState::Open => {
-                // Shouldn't happen, but reset state
-                self.state
-                    .store(CircuitState::HalfOpen as u32, Ordering::Release);
-                self.success_count.store(1, Ordering::Release);
+                // Ignore successes while circuit is open.
+                // Late successes from in-flight requests should not
+                // bypass the recovery_timeout window.
             }
         }
     }

@@ -26,6 +26,7 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 futures = "0.3"
 git2 = "0.18"
+libc = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 opentelemetry = { version = "0.27", features = ["trace"] }

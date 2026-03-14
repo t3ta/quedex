@@ -30,13 +30,25 @@ pub struct TelemetryConfig {
 
 impl Default for TelemetryConfig {
     fn default() -> Self {
+        Self::from_env(|key| std::env::var(key))
+    }
+}
+
+impl TelemetryConfig {
+    /// Create a TelemetryConfig by reading from the given env reader function.
+    /// This allows injecting a custom env reader for testing without mutating
+    /// process-wide environment variables.
+    pub fn from_env<F>(env_reader: F) -> Self
+    where
+        F: for<'a> Fn(&'a str) -> Result<String, std::env::VarError>,
+    {
         Self {
-            enabled: std::env::var("QUEDEX_TELEMETRY_ENABLED")
+            enabled: env_reader("QUEDEX_TELEMETRY_ENABLED")
                 .map(|v| v == "1" || v.to_lowercase() == "true")
                 .unwrap_or(false),
-            otlp_endpoint: std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+            otlp_endpoint: env_reader("OTEL_EXPORTER_OTLP_ENDPOINT")
                 .unwrap_or_else(|_| "http://localhost:4317".to_string()),
-            service_name: std::env::var("OTEL_SERVICE_NAME")
+            service_name: env_reader("OTEL_SERVICE_NAME")
                 .unwrap_or_else(|_| "quedex".to_string()),
         }
     }
@@ -65,10 +77,10 @@ pub fn init(config: &TelemetryConfig) -> Result<()> {
 }
 
 fn init_console_only(env_filter: EnvFilter) -> Result<()> {
-    tracing_subscriber::registry()
+    let _ = tracing_subscriber::registry()
         .with(env_filter)
         .with(tracing_subscriber::fmt::layer())
-        .init();
+        .try_init();
     Ok(())
 }
 
@@ -93,16 +105,21 @@ fn init_with_otel(config: &TelemetryConfig, env_filter: EnvFilter) -> Result<()>
         .with_batch_exporter(exporter, runtime::Tokio)
         .build();
 
-    let tracer = provider.tracer("quedex");
-    let _ = TRACER_PROVIDER.set(provider);
+    let tracer = match TRACER_PROVIDER.set(provider) {
+        Ok(()) => TRACER_PROVIDER.get().unwrap().tracer("quedex"),
+        Err(_) => {
+            // Provider already set; reuse existing provider's tracer
+            TRACER_PROVIDER.get().unwrap().tracer("quedex")
+        }
+    };
 
     let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    tracing_subscriber::registry()
+    let _ = tracing_subscriber::registry()
         .with(env_filter)
         .with(tracing_subscriber::fmt::layer())
         .with(telemetry_layer)
-        .init();
+        .try_init();
 
     Ok(())
 }
@@ -184,18 +201,24 @@ pub fn record_circuit_breaker_state(task_id: &str, from_state: &str, to_state: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    fn mock_env(vars: HashMap<&str, &str>) -> impl Fn(&str) -> Result<String, std::env::VarError> {
+        let owned: HashMap<String, String> = vars
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |key: &str| {
+            owned
+                .get(key)
+                .cloned()
+                .ok_or(std::env::VarError::NotPresent)
+        }
+    }
 
     #[test]
     fn test_telemetry_config_default() {
-        // Clear env vars for test
-        // SAFETY: Single-threaded test execution
-        unsafe {
-            std::env::remove_var("QUEDEX_TELEMETRY_ENABLED");
-            std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
-            std::env::remove_var("OTEL_SERVICE_NAME");
-        }
-
-        let config = TelemetryConfig::default();
+        let config = TelemetryConfig::from_env(mock_env(HashMap::new()));
         assert!(!config.enabled);
         assert_eq!(config.otlp_endpoint, "http://localhost:4317");
         assert_eq!(config.service_name, "quedex");
@@ -203,24 +226,14 @@ mod tests {
 
     #[test]
     fn test_telemetry_config_from_env() {
-        // SAFETY: Single-threaded test execution
-        unsafe {
-            std::env::set_var("QUEDEX_TELEMETRY_ENABLED", "true");
-            std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4317");
-            std::env::set_var("OTEL_SERVICE_NAME", "my-quedex");
-        }
-
-        let config = TelemetryConfig::default();
+        let vars = HashMap::from([
+            ("QUEDEX_TELEMETRY_ENABLED", "true"),
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4317"),
+            ("OTEL_SERVICE_NAME", "my-quedex"),
+        ]);
+        let config = TelemetryConfig::from_env(mock_env(vars));
         assert!(config.enabled);
         assert_eq!(config.otlp_endpoint, "http://jaeger:4317");
         assert_eq!(config.service_name, "my-quedex");
-
-        // Cleanup
-        // SAFETY: Single-threaded test execution
-        unsafe {
-            std::env::remove_var("QUEDEX_TELEMETRY_ENABLED");
-            std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
-            std::env::remove_var("OTEL_SERVICE_NAME");
-        }
     }
 }
