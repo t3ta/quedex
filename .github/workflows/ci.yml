@@ -20,10 +20,13 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.85
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --check
 
       - name: Build
         run: cargo build

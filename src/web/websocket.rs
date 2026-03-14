@@ -66,6 +66,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     }
 }
 
+fn try_parse_state(state_path: &std::path::Path) -> Option<serde_json::Value> {
+    let content = std::fs::read_to_string(state_path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
 /// Get current state as JSON string.
 async fn get_current_state(state: &AppState) -> Result<String, ()> {
     let runs_dir = state.store_root.join("runs");
@@ -78,25 +83,15 @@ async fn get_current_state(state: &AppState) -> Result<String, ()> {
 
     if let Some(ref run_id) = state.run_id {
         let state_path = runs_dir.join(run_id).join("state.json");
-        if state_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&state_path) {
-                if let Ok(run_state) = serde_json::from_str::<serde_json::Value>(&content) {
-                    runs.push(run_state);
-                }
-            }
+        if let Some(run_state) = try_parse_state(&state_path) {
+            runs.push(run_state);
         }
     } else if let Ok(entries) = std::fs::read_dir(&runs_dir) {
         for entry in entries.flatten() {
             if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 let state_path = entry.path().join("state.json");
-                if state_path.exists() {
-                    if let Ok(content) = std::fs::read_to_string(&state_path) {
-                        if let Ok(run_state) =
-                            serde_json::from_str::<serde_json::Value>(&content)
-                        {
-                            runs.push(run_state);
-                        }
-                    }
+                if let Some(run_state) = try_parse_state(&state_path) {
+                    runs.push(run_state);
                 }
             }
         }

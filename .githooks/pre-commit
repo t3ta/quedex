@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "pre-commit: cargo fmt --check"
+cargo fmt --check 2>&1 || {
+    echo ""
+    echo "ERROR: formatting issues found. Run 'cargo fmt' to fix."
+    exit 1
+}
+
+echo "pre-commit: cargo clippy"
+cargo clippy -- -D warnings 2>&1 || {
+    echo ""
+    echo "ERROR: clippy warnings found. Fix them before committing."
+    exit 1
+}
