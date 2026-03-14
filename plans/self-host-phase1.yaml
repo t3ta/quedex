@@ -1,0 +1,449 @@
+version: 1
+
+run:
+  name: "self-host-phase1"
+  cwd: /Users/t3ta/workspace/quedex
+  max_concurrency: 3
+  fail_fast: true
+
+tasks:
+  # ===== Research (3 tasks in parallel) =====
+
+  - id: research-concurrency
+    title: "調査: Per-Mode Concurrency の対象コード"
+    mode: research
+    deps: []
+    auto_commit: false
+    claude_code:
+      prompt: |
+        quedex の Per-Mode Concurrency 機能の実装に必要な情報を調査してください。
+
+        ## 調査対象
+        1. `src/plan.rs` の `RunConfig` struct と `TaskMode` enum の定義
+        2. `src/scheduler.rs` の `SchedulerOptions` struct と `Scheduler::run()` メソッド内の Semaphore 管理ロジック
+        3. `src/main.rs` の `SchedulerOptions` 構築箇所（handle_run 関数内）
+        4. `src/plan.rs` の `Plan::validate()` メソッドのバリデーションパターン
+
+        ## 出力
+        以下を `artifacts/research-concurrency.md` に書き出してください:
+        - 各変更対象の現在のコード構造（struct 定義、関連する関数シグネチャ）
+        - 変更方針:
+          - `TaskMode` に `Hash` derive を追加
+          - `RunConfig` に `max_concurrency_by_mode: Option<HashMap<String, usize>>` を追加
+          - `SchedulerOptions` に `mode_concurrency: HashMap<TaskMode, usize>` を追加
+          - `Scheduler::run()` でモード別 Semaphore を作成し、タスク起動時に global + mode semaphore を両方取得
+          - `main.rs` で plan の `max_concurrency_by_mode` を parse して `SchedulerOptions` に渡す
+        - 注意点（既存テストへの影響、serde rename の考慮等）
+
+        specs/proposal-per-mode-concurrency.md も参照してください。
+      model: sonnet
+    context:
+      publish:
+        key: research-concurrency
+        source: artifacts/research-concurrency.md
+    output_files:
+      - artifacts/research-concurrency.md
+
+  - id: research-stall
+    title: "調査: Stall Detection の対象コード"
+    mode: research
+    deps: []
+    auto_commit: false
+    claude_code:
+      prompt: |
+        quedex の Stall Detection 機能の実装に必要な情報を調査してください。
+
+        ## 調査対象
+        1. `src/main.rs` の `PlanTaskRunner::spawn()` 内のタスク実行ループ（child.wait() 呼び出し箇所）
+        2. `src/runner/mod.rs` の `ChildHandle` struct（kill メソッド、stdout_path/stderr_path）
+        3. `src/store/mod.rs` の `Event` enum と `TaskState` struct
+        4. `src/plan.rs` の `RunConfig` と `Task` struct
+
+        ## 出力
+        以下を `artifacts/research-stall.md` に書き出してください:
+        - タスク実行ループの現在の構造（spawn_blocking + child.wait のフロー）
+        - 変更方針:
+          - `RunConfig` に `stall_timeout_sec: Option<u64>` を追加
+          - `Task` に `stall_timeout_sec: Option<u64>` を追加
+          - `Event::TaskStalled` バリアントを追加
+          - `PlanTaskRunner::spawn()` 内で stall monitor を tokio::spawn し、stdout/stderr ファイルサイズを1秒間隔で監視
+          - タイムアウト時: child.kill() → Event::TaskStalled 記録 → Failed（retry 対象）
+          - `0` で無効化、`None` は RunConfig のデフォルトにフォールバック
+        - 注意点（cancel 操作との競合、retry との統合）
+
+        specs/proposal-stall-detection.md も参照してください。
+      model: sonnet
+    context:
+      publish:
+        key: research-stall
+        source: artifacts/research-stall.md
+    output_files:
+      - artifacts/research-stall.md
+
+  - id: research-gates
+    title: "調査: Completion Gates の対象コード"
+    mode: research
+    deps: []
+    auto_commit: false
+    claude_code:
+      prompt: |
+        quedex の Completion Gates 機能の実装に必要な情報を調査してください。
+
+        ## 調査対象
+        1. `src/plan.rs` の `Task` struct と `RunConfig` struct（フィールド追加箇所）
+        2. `src/main.rs` の `PlanTaskRunner` struct と spawn メソッド（runner 成功後のフロー）
+        3. `src/store/mod.rs` の `Event` enum（GateStarted/GateFinished 追加箇所）
+        4. `src/plan.rs` の `Plan::validate()` メソッド
+
+        ## 出力
+        以下を `artifacts/research-gates.md` に書き出してください:
+        - タスク完了フローの現在の構造（exit code 判定 → TaskResult 返却のフロー）
+        - 変更方針:
+          - `CompletionGate { name, command, args, timeout_sec }` struct を追加
+          - `RunConfig` に `default_gates: Option<Vec<CompletionGate>>` を追加
+          - `Task` に `completion_gates: Option<Vec<CompletionGate>>` と `skip_gates: bool` を追加
+          - タスク exit 0 後に gate を順次実行、1つでも失敗したら即中断 → Failed
+          - gate の stdout/stderr はタスクのログに追記
+          - `default_gates` は implement/verify モードのタスクに自動適用
+          - `Event::GateStarted` / `Event::GateFinished` を追加
+        - 注意点（worktree での実行、auto_commit タイミング、retry 連携）
+
+        specs/proposal-completion-gates.md も参照してください。
+      model: sonnet
+    context:
+      publish:
+        key: research-gates
+        source: artifacts/research-gates.md
+    output_files:
+      - artifacts/research-gates.md
+
+  # ===== Implement + Verify (sequential: concurrency → stall → gates) =====
+
+  - id: impl-concurrency
+    title: "実装: Per-Mode Concurrency"
+    mode: implement
+    deps: [research-concurrency]
+    locks: [workspace]
+    codex:
+      prompt: |
+        Per-Mode Concurrency 機能を quedex に実装してください。
+
+        ## 調査結果
+        artifacts/research-concurrency.md を参照してください。
+
+        ## 実装内容
+
+        ### 1. src/plan.rs
+        - `TaskMode` enum に `Hash` derive を追加（既存: `Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default`）
+        - `TaskMode` に `Display` trait を実装（research/implement/verify を返す）
+        - `RunConfig` に以下を追加:
+          ```rust
+          /// Per-mode concurrency limits. Keys are mode names ("research", "implement", "verify").
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub max_concurrency_by_mode: Option<HashMap<String, usize>>,
+          ```
+        - `Plan::validate()` に以下を追加:
+          - `max_concurrency_by_mode` の値が 0 の場合はエラー
+          - キーが "research", "implement", "verify" 以外の場合はエラー
+
+        ### 2. src/scheduler.rs
+        - import に `TaskMode` を追加
+        - `SchedulerOptions` を `#[derive(Debug, Clone)]` に変更（Copy を外す）し、以下を追加:
+          ```rust
+          pub mode_concurrency: HashMap<TaskMode, usize>,
+          ```
+        - `Scheduler::run()` 内で:
+          - モード別 Semaphore map を作成:
+            ```rust
+            let mode_semaphores: HashMap<TaskMode, Arc<Semaphore>> = self.options.mode_concurrency
+                .iter()
+                .map(|(&mode, &limit)| (mode, Arc::new(Semaphore::new(limit.max(1)))))
+                .collect();
+            let mode_semaphores = Arc::new(mode_semaphores);
+            ```
+          - タスク起動時、global permit 取得後にモード別 permit も取得:
+            ```rust
+            let mode_permit = if let Some(mode_sem) = mode_semaphores.get(&task.mode) {
+                match mode_sem.clone().try_acquire_owned() {
+                    Ok(p) => Some(p),
+                    Err(_) => {
+                        // global permit とロックを返却して queue に戻す
+                        release_locks(&lock_table, &task_id, &task.locks);
+                        drop(permit);
+                        ready_queue.push_back(task_id);
+                        rotations += 1;
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
+            ```
+          - tokio::spawn 内で `drop(mode_permit)` を追加
+
+        ### 3. src/main.rs
+        - `handle_run()` 内で `SchedulerOptions` 構築前に mode_concurrency map を構築:
+          ```rust
+          fn build_mode_concurrency(plan: &Plan) -> HashMap<quedex::plan::TaskMode, usize> {
+              use quedex::plan::TaskMode;
+              let mut map = HashMap::new();
+              if let Some(ref by_mode) = plan.run.max_concurrency_by_mode {
+                  for (mode_str, &limit) in by_mode {
+                      let mode = match mode_str.as_str() {
+                          "research" => TaskMode::Research,
+                          "implement" => TaskMode::Implement,
+                          "verify" => TaskMode::Verify,
+                          _ => continue,
+                      };
+                      map.insert(mode, limit);
+                  }
+              }
+              map
+          }
+          ```
+        - `SchedulerOptions` 構築に `mode_concurrency: mode_concurrency.clone()` を追加（2箇所: 通常 run と resume）
+
+        ### 4. テスト
+        - `src/scheduler.rs` の既存テスト内 `SchedulerOptions` に `mode_concurrency: HashMap::new()` を追加
+        - `src/plan.rs` に `max_concurrency_by_mode` のバリデーションテストを追加
+
+        ## 重要な注意事項
+        - `SchedulerOptions` が `Copy` から `Clone` に変わるので、`.clone()` が必要な箇所がないか確認
+        - 既存のテストがコンパイルを通るよう `mode_concurrency` フィールドを追加すること
+        - serde の HashMap<String, usize> として deserialize し、内部では HashMap<TaskMode, usize> に変換する設計
+      verify_after: true
+    context:
+      inject:
+        - from: research-concurrency
+          as: "Per-Mode Concurrency 調査結果"
+
+  - id: verify-concurrency
+    title: "検証: Per-Mode Concurrency"
+    mode: verify
+    deps: [impl-concurrency]
+    locks: [workspace]
+    codex:
+      prompt: |
+        Per-Mode Concurrency の実装を検証してください。
+
+        以下のコマンドを順番に実行し、すべてパスすることを確認してください:
+
+        1. `cargo check` — コンパイルエラーがないこと
+        2. `cargo test` — 全テストがパスすること
+        3. `cargo clippy -- -D warnings` — clippy 警告がないこと
+
+        エラーがあれば修正してください。
+      verify_after: true
+
+  - id: impl-stall
+    title: "実装: Stall Detection"
+    mode: implement
+    deps: [research-stall, verify-concurrency]
+    locks: [workspace]
+    codex:
+      prompt: |
+        Stall Detection 機能を quedex に実装してください。
+
+        ## 調査結果
+        artifacts/research-stall.md を参照してください。
+
+        ## 実装内容
+
+        ### 1. src/plan.rs
+        - `RunConfig` に以下を追加:
+          ```rust
+          /// Default stall timeout in seconds for all tasks.
+          /// If a task produces no output for this duration, it is killed.
+          /// Set to 0 to disable. Individual tasks can override with their own stall_timeout_sec.
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub stall_timeout_sec: Option<u64>,
+          ```
+        - `Task` に以下を追加（`auto_commit` フィールドの前に）:
+          ```rust
+          /// Stall timeout in seconds for this task.
+          /// If the task produces no output for this duration, it is killed.
+          /// Set to 0 to disable. None falls back to run.stall_timeout_sec.
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub stall_timeout_sec: Option<u64>,
+          ```
+
+        ### 2. src/store/mod.rs
+        - `Event` enum に以下を追加:
+          ```rust
+          TaskStalled {
+              task_id: String,
+              stall_timeout_sec: u64,
+              #[serde(rename = "ts")]
+              timestamp: DateTime<Utc>,
+          },
+          ```
+
+        ### 3. src/main.rs
+        - `PlanTaskRunner` struct に `default_stall_timeout_sec: Option<u64>` フィールドを追加
+        - `PlanTaskRunner::new()` に引数追加、`PlanTaskRunner` 構築箇所（handle_run 内）で `plan.run.stall_timeout_sec` を渡す
+        - `spawn()` メソッド内の async block で `default_stall_timeout_sec` を clone
+        - タスク実行ループ内の `child.wait()` 前後を以下のように変更:
+          1. stall timeout を解決: `let stall_timeout = task.stall_timeout_sec.or(default_stall_timeout_sec);`
+          2. `stall_timeout` が `Some(t)` かつ `t > 0` の場合:
+             - stall monitor を `tokio::spawn` で起動:
+               - stdout/stderr ファイルサイズを1秒間隔で監視
+               - サイズ変化がなければカウンタ増加
+               - カウンタが stall_timeout_sec に達したら `child_for_stall.kill()` して `Event::TaskStalled` を記録し return
+             - `wait_future` と `stall_handle` を同時に待機（wait_future が先に完了したら stall_handle.abort()）
+          3. `stall_timeout` が None または 0 の場合: 従来通り `spawn_blocking(move || child.wait())`
+
+        ## 重要な注意事項
+        - `cancel.unregister()` はどちらのパスでも確実に呼ぶこと
+        - stall kill 後は `TaskResult::failed(1)` として retry ループに乗せる（既存の retry 機構がそのまま適用される）
+        - `ChildHandle` の `kill()` メソッドは既に存在する（src/runner/mod.rs）ので新規実装不要
+      verify_after: true
+    context:
+      inject:
+        - from: research-stall
+          as: "Stall Detection 調査結果"
+
+  - id: verify-stall
+    title: "検証: Stall Detection"
+    mode: verify
+    deps: [impl-stall]
+    locks: [workspace]
+    codex:
+      prompt: |
+        Stall Detection の実装を検証してください。
+
+        以下のコマンドを順番に実行し、すべてパスすることを確認してください:
+
+        1. `cargo check` — コンパイルエラーがないこと
+        2. `cargo test` — 全テストがパスすること
+        3. `cargo clippy -- -D warnings` — clippy 警告がないこと
+
+        エラーがあれば修正してください。
+      verify_after: true
+
+  - id: impl-gates
+    title: "実装: Completion Gates"
+    mode: implement
+    deps: [research-gates, verify-stall]
+    locks: [workspace]
+    codex:
+      prompt: |
+        Completion Gates 機能を quedex に実装してください。
+
+        ## 調査結果
+        artifacts/research-gates.md を参照してください。
+
+        ## 実装内容
+
+        ### 1. src/plan.rs
+        - `CompletionGate` struct を追加:
+          ```rust
+          /// A completion gate that runs after a task exits successfully.
+          #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+          pub struct CompletionGate {
+              /// Human-readable name for this gate
+              pub name: String,
+              /// Command to execute (run via sh -c)
+              pub command: String,
+              /// Timeout in seconds for this gate (default: 300)
+              #[serde(default = "default_gate_timeout_sec")]
+              #[schemars(default = "default_gate_timeout_sec")]
+              pub timeout_sec: u64,
+          }
+
+          fn default_gate_timeout_sec() -> u64 { 300 }
+          ```
+        - `RunConfig` に以下を追加:
+          ```rust
+          /// Default completion gates applied to implement and verify mode tasks.
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub default_gates: Option<Vec<CompletionGate>>,
+          ```
+        - `Task` に以下を追加（`stall_timeout_sec` の後に）:
+          ```rust
+          /// Completion gates to run after this task exits successfully.
+          /// Overrides default_gates if set.
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub completion_gates: Option<Vec<CompletionGate>>,
+          /// Skip completion gates for this task.
+          #[serde(default)]
+          pub skip_gates: bool,
+          ```
+        - `Plan::validate()` に以下を追加:
+          - `default_gates` の各 gate について name と command が空でないことを確認
+          - タスクの `completion_gates` の各 gate について同様のバリデーション
+
+        ### 2. src/store/mod.rs
+        - `Event` enum に以下を追加:
+          ```rust
+          GateStarted {
+              task_id: String,
+              gate_name: String,
+              #[serde(rename = "ts")]
+              timestamp: DateTime<Utc>,
+          },
+          GateFinished {
+              task_id: String,
+              gate_name: String,
+              #[serde(rename = "code")]
+              exit_code: i32,
+              #[serde(rename = "ts")]
+              timestamp: DateTime<Utc>,
+          },
+          ```
+
+        ### 3. src/main.rs
+        - `PlanTaskRunner` struct に `default_gates: Option<Vec<quedex::plan::CompletionGate>>` フィールドを追加
+        - `PlanTaskRunner::new()` に引数追加、構築箇所で `plan.run.default_gates.clone()` を渡す
+        - `spawn()` メソッド内の async block で `default_gates` を clone
+        - タスク実行ループ内、`map_exit_status` で result を取得した直後に以下のロジックを追加:
+          1. `result.status == TaskStatus::Succeeded` かつ `!task.skip_gates` の場合:
+          2. ゲートを解決: `task.completion_gates` があればそれを使用、なければ implement/verify モードなら `default_gates` を使用
+          3. ゲートがある場合、順次実行:
+             - `Event::GateStarted` を記録
+             - `sh -c "{command}"` を cwd で実行（`tokio::time::timeout` で gate.timeout_sec を適用）
+             - stdout/stderr をタスクのログファイルに追記
+             - `Event::GateFinished` を記録
+             - exit code != 0 またはタイムアウトの場合: `result = TaskResult::failed(1)` にして break
+
+        - ゲート実行用のヘルパー関数を追加:
+          ```rust
+          async fn run_completion_gate(
+              gate: &quedex::plan::CompletionGate,
+              cwd: &Path,
+              task_id: &str,
+              store: &Arc<FsStore>,
+          ) -> bool {
+              // sh -c でコマンド実行、stdout/stderr をタスクログに追記
+              // timeout_sec でタイムアウト
+              // 成功なら true、失敗なら false
+          }
+          ```
+
+        ## 重要な注意事項
+        - ゲート実行は runner 成功後・retry 判定前に行う
+        - ゲート失敗時は `result` を `TaskResult::failed(1)` に書き換えて、既存の retry ループに乗せる
+        - `auto_commit` はゲートがすべてパスした後に実行される（scheduler 側の handle_event で処理されるため変更不要）
+        - gate の stdout/stderr はタスクの既存ログファイル（stdout.log/stderr.log）に追記する
+      verify_after: true
+    context:
+      inject:
+        - from: research-gates
+          as: "Completion Gates 調査結果"
+
+  - id: verify-gates
+    title: "検証: Completion Gates"
+    mode: verify
+    deps: [impl-gates]
+    locks: [workspace]
+    codex:
+      prompt: |
+        Completion Gates の実装を検証してください。
+
+        以下のコマンドを順番に実行し、すべてパスすることを確認してください:
+
+        1. `cargo check` — コンパイルエラーがないこと
+        2. `cargo test` — 全テストがパスすること
+        3. `cargo clippy -- -D warnings` — clippy 警告がないこと
+
+        エラーがあれば修正してください。
+      verify_after: true

@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result};
 
 use crate::plan::Task;
-use crate::runner::{resolve_command_path, ChildHandle, RunContext, Runner};
+use crate::runner::{ChildHandle, RunContext, Runner, resolve_command_path};
 use crate::store::LogStream;
 
 #[derive(Clone, Copy)]
@@ -23,10 +23,7 @@ impl Default for OpencodeRunner {
 
 impl Runner for OpencodeRunner {
     fn spawn(&self, task: &Task, ctx: &RunContext) -> Result<ChildHandle> {
-        let config = task
-            .opencode
-            .as_ref()
-            .context("opencode config missing")?;
+        let config = task.opencode.as_ref().context("opencode config missing")?;
 
         // Build prompt with optional system prompt prefix
         let mut prompt = String::new();

@@ -1,8 +1,8 @@
 use std::process::Command;
 
-use anyhow::{Context, Result};
 #[cfg(not(unix))]
 use anyhow::anyhow;
+use anyhow::{Context, Result};
 use chrono::Utc;
 
 use crate::store::{Event, State, Store, TaskStatus};

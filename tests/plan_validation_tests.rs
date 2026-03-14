@@ -1,5 +1,7 @@
+use quedex::plan::{
+    ClaudeCodeConfig, CodexConfig, OpencodeConfig, Plan, RunConfig, Task, TaskMode,
+};
 use std::collections::HashMap;
-use quedex::plan::{ClaudeCodeConfig, CodexConfig, OpencodeConfig, Plan, RunConfig, Task, TaskMode};
 
 fn codex_task(id: &str, deps: Vec<&str>) -> Task {
     Task {
@@ -32,7 +34,7 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
         condition: None,
         auto_commit: true,
         squash: false,
-}
+    }
 }
 
 #[allow(dead_code)]
@@ -64,7 +66,7 @@ fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
         condition: None,
         auto_commit: true,
         squash: false,
-}
+    }
 }
 
 fn plan_with_tasks(tasks: Vec<Task>) -> Plan {
@@ -138,7 +140,7 @@ fn plan_rejects_empty_codex_prompt() {
         condition: None,
         auto_commit: true,
         squash: false,
-};
+    };
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "codex.prompt is empty");
@@ -173,7 +175,7 @@ fn plan_rejects_empty_claude_code_prompt() {
         condition: None,
         auto_commit: true,
         squash: false,
-};
+    };
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "claude_code.prompt is empty");
@@ -213,9 +215,9 @@ fn plan_rejects_multiple_runner_configs() {
         retry_strategy: None,
         context: None,
         condition: None,
-            auto_commit: true,
+        auto_commit: true,
         squash: false,
-};
+    };
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "multiple runner configs");
@@ -248,9 +250,9 @@ fn plan_accepts_valid_claude_code_task() {
         retry_strategy: None,
         context: None,
         condition: None,
-            auto_commit: true,
+        auto_commit: true,
         squash: false,
-};
+    };
 
     let plan = plan_with_tasks(vec![task]);
     assert!(plan.validate().is_ok());
@@ -286,9 +288,9 @@ fn plan_rejects_kind_mismatch_claude_code() {
         retry_strategy: None,
         context: None,
         condition: None,
-            auto_commit: true,
+        auto_commit: true,
         squash: false,
-};
+    };
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "kind=claude_code without claude_code config");
@@ -321,9 +323,9 @@ fn plan_rejects_empty_opencode_prompt() {
         retry_strategy: None,
         context: None,
         condition: None,
-            auto_commit: true,
+        auto_commit: true,
         squash: false,
-};
+    };
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "opencode.prompt is empty");
@@ -374,9 +376,9 @@ fn plan_accepts_valid_opencode_task() {
         retry_strategy: None,
         context: None,
         condition: None,
-            auto_commit: true,
+        auto_commit: true,
         squash: false,
-};
+    };
 
     let plan = plan_with_tasks(vec![task]);
     assert!(plan.validate().is_ok());
@@ -412,9 +414,9 @@ fn plan_rejects_kind_mismatch_opencode() {
         retry_strategy: None,
         context: None,
         condition: None,
-            auto_commit: true,
+        auto_commit: true,
         squash: false,
-};
+    };
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "kind=opencode without opencode config");
@@ -451,9 +453,9 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
         retry_strategy: None,
         context: None,
         condition: None,
-            auto_commit: true,
+        auto_commit: true,
         squash: false,
-};
+    };
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "multiple runner configs");
@@ -545,7 +547,10 @@ tasks:
     assert!(plan.validate().is_ok());
     assert_eq!(plan.profiles.len(), 1);
     let profile = plan.profiles.get("architect").unwrap();
-    assert_eq!(profile.system_prompt.as_deref(), Some("You are a software architect."));
+    assert_eq!(
+        profile.system_prompt.as_deref(),
+        Some("You are a software architect.")
+    );
     assert_eq!(profile.model.as_deref(), Some("opus"));
     assert_eq!(plan.tasks[0].profile.as_deref(), Some("architect"));
 }
@@ -678,12 +683,15 @@ tasks:
     let injections = ctx.inject.as_ref().unwrap();
     assert_eq!(injections.len(), 1);
     assert_eq!(injections[0].from, "auth_analysis");
-    assert_eq!(injections[0].r#as.as_deref(), Some("Authentication Analysis"));
+    assert_eq!(
+        injections[0].r#as.as_deref(),
+        Some("Authentication Analysis")
+    );
 }
 
 #[test]
 fn plan_rejects_absolute_path_in_publish_source() {
-    use quedex::plan::{PlanFormat};
+    use quedex::plan::PlanFormat;
 
     let yaml = r#"
 version: 1
@@ -699,7 +707,10 @@ tasks:
 "#;
     let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
     let err = plan.validate().expect_err("expected validation error");
-    assert!(err.to_string().contains("absolute path"), "unexpected: {err}");
+    assert!(
+        err.to_string().contains("absolute path"),
+        "unexpected: {err}"
+    );
 }
 
 #[test]
@@ -741,7 +752,10 @@ tasks:
 "#;
     let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
     let err = plan.validate().expect_err("expected validation error");
-    assert!(err.to_string().contains("invalid characters"), "unexpected: {err}");
+    assert!(
+        err.to_string().contains("invalid characters"),
+        "unexpected: {err}"
+    );
 }
 
 #[test]
@@ -761,5 +775,8 @@ tasks:
 "#;
     let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
     let err = plan.validate().expect_err("expected validation error");
-    assert!(err.to_string().contains("invalid characters"), "unexpected: {err}");
+    assert!(
+        err.to_string().contains("invalid characters"),
+        "unexpected: {err}"
+    );
 }

@@ -1,19 +1,31 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use petgraph::algo::is_cyclic_directed;
 use petgraph::graphmap::DiGraphMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskMode {
     Research,
     #[default]
     Implement,
     Verify,
+}
+
+impl fmt::Display for TaskMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mode = match self {
+            TaskMode::Research => "research",
+            TaskMode::Implement => "implement",
+            TaskMode::Verify => "verify",
+        };
+        f.write_str(mode)
+    }
 }
 
 /// Configuration for git worktree isolation.
@@ -57,6 +69,9 @@ pub struct RunConfig {
     pub env: Option<HashMap<String, String>>,
     #[serde(default)]
     pub max_concurrency: Option<usize>,
+    /// Per-mode concurrency limits. Keys are mode names ("research", "implement", "verify").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrency_by_mode: Option<HashMap<String, usize>>,
     #[serde(default)]
     pub fail_fast: Option<bool>,
     #[serde(
@@ -152,9 +167,7 @@ fn default_verify_after() -> bool {
     true
 }
 
-fn reject_timeout_sec<'de, D>(
-    deserializer: D,
-) -> Result<Option<serde::de::IgnoredAny>, D::Error>
+fn reject_timeout_sec<'de, D>(deserializer: D) -> Result<Option<serde::de::IgnoredAny>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -240,13 +253,13 @@ impl FailureType {
     ///   - 143 (SIGTERM): Graceful termination - Transient
     pub fn from_exit_code(exit_code: Option<i32>) -> Self {
         match exit_code {
-            None => FailureType::Unknown, // Process didn't exit normally
-            Some(0) => FailureType::Unknown, // Success, shouldn't happen
-            Some(1) => FailureType::Unknown, // Generic error
-            Some(2) => FailureType::Permanent, // Misuse of command
+            None => FailureType::Unknown,        // Process didn't exit normally
+            Some(0) => FailureType::Unknown,     // Success, shouldn't happen
+            Some(1) => FailureType::Unknown,     // Generic error
+            Some(2) => FailureType::Permanent,   // Misuse of command
             Some(126) => FailureType::Permanent, // Permission denied
             Some(127) => FailureType::Permanent, // Command not found
-            Some(128) => FailureType::Unknown, // Invalid exit argument
+            Some(128) => FailureType::Unknown,   // Invalid exit argument
             Some(130) => FailureType::Permanent, // SIGINT (Ctrl+C)
             Some(137) => FailureType::Transient, // SIGKILL (OOM or force kill)
             Some(143) => FailureType::Transient, // SIGTERM (graceful shutdown)
@@ -443,7 +456,9 @@ impl RetryStrategy {
                 let random_offset = random % modulus;
                 // Apply jitter: delay + random_offset - jitter_range
                 // Ensure delay doesn't go below 1 second
-                let jittered = delay.saturating_add(random_offset).saturating_sub(jitter_range);
+                let jittered = delay
+                    .saturating_add(random_offset)
+                    .saturating_sub(jitter_range);
                 return jittered.max(1);
             }
         }
@@ -616,17 +631,30 @@ impl Plan {
         // Validate cwd is absolute path if specified
         if let Some(cwd) = self.run.cwd.as_ref() {
             if cwd.is_relative() {
-                bail!(
-                    "run.cwd must be an absolute path, got: {}",
-                    cwd.display()
-                );
+                bail!("run.cwd must be an absolute path, got: {}", cwd.display());
+            }
+        }
+
+        if let Some(max_concurrency_by_mode) = self.run.max_concurrency_by_mode.as_ref() {
+            for (mode, limit) in max_concurrency_by_mode {
+                if *limit == 0 {
+                    bail!("run.max_concurrency_by_mode.{mode} must be greater than 0");
+                }
+                match mode.as_str() {
+                    "research" | "implement" | "verify" => {}
+                    _ => bail!(
+                        "run.max_concurrency_by_mode contains unknown mode '{mode}' (expected one of: research, implement, verify)"
+                    ),
+                }
             }
         }
 
         // Warn if env block is explicitly set but empty (likely a mistake)
         if let Some(env) = &self.run.env {
             if env.is_empty() {
-                eprintln!("warning: run.env is empty; if you don't need custom env vars, remove the env block entirely");
+                eprintln!(
+                    "warning: run.env is empty; if you don't need custom env vars, remove the env block entirely"
+                );
             }
         }
 
@@ -636,7 +664,11 @@ impl Plan {
                 bail!("task id is empty");
             }
             // Validate task ID contains only safe characters
-            if !task.id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+            if !task
+                .id
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+            {
                 bail!(
                     "task id '{}' contains invalid characters (only alphanumeric, underscore, and hyphen are allowed)",
                     task.id
@@ -645,10 +677,14 @@ impl Plan {
             if !seen.insert(task.id.clone()) {
                 bail!("duplicate task id {}", task.id);
             }
-            let runner_count = [task.codex.is_some(), task.claude_code.is_some(), task.opencode.is_some()]
-                .iter()
-                .filter(|&&x| x)
-                .count();
+            let runner_count = [
+                task.codex.is_some(),
+                task.claude_code.is_some(),
+                task.opencode.is_some(),
+            ]
+            .iter()
+            .filter(|&&x| x)
+            .count();
             if runner_count > 1 {
                 bail!(
                     "task {} has multiple runner configs (only one of codex, claude_code, or opencode allowed)",
@@ -667,7 +703,10 @@ impl Plan {
                     }
                     "claude_code" => {
                         if task.claude_code.is_none() {
-                            bail!("task {} kind=claude_code without claude_code config", task.id);
+                            bail!(
+                                "task {} kind=claude_code without claude_code config",
+                                task.id
+                            );
                         }
                     }
                     "opencode" => {
@@ -696,11 +735,7 @@ impl Plan {
                     }
                     // Reject parent directory references
                     if path.contains("..") {
-                        bail!(
-                            "task {} output_files contains '..': {}",
-                            task.id,
-                            path
-                        );
+                        bail!("task {} output_files contains '..': {}", task.id, path);
                     }
                 }
             }
@@ -726,7 +761,11 @@ impl Plan {
                         );
                     }
                     // Validate publish key contains only safe characters
-                    if !publish.key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                    if !publish
+                        .key
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+                    {
                         bail!(
                             "task {} context.publish.key '{}' contains invalid characters",
                             task.id,
@@ -737,7 +776,11 @@ impl Plan {
                 // Validate inject keys contain only safe characters
                 if let Some(ref injections) = ctx.inject {
                     for inject in injections {
-                        if !inject.from.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                        if !inject
+                            .from
+                            .chars()
+                            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+                        {
                             bail!(
                                 "task {} context.inject.from '{}' contains invalid characters",
                                 task.id,
@@ -805,10 +848,7 @@ impl Plan {
                     );
                 }
                 if cond.task == task.id {
-                    bail!(
-                        "task {} condition cannot reference itself",
-                        task.id
-                    );
+                    bail!("task {} condition cannot reference itself", task.id);
                 }
                 // Condition-referenced task must be declared as a dependency
                 if !task.deps.contains(&cond.task) {
@@ -823,7 +863,10 @@ impl Plan {
 
         // Validate group names contain only safe characters
         for group_name in self.groups.keys() {
-            if !group_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+            if !group_name
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+            {
                 bail!(
                     "group name '{group_name}' contains invalid characters (only alphanumeric, underscore, and hyphen allowed)"
                 );
@@ -834,9 +877,7 @@ impl Plan {
         for (group_name, task_list) in &self.groups {
             for task_id in task_list {
                 if !ids.contains(task_id.as_str()) {
-                    bail!(
-                        "group '{group_name}' references non-existent task '{task_id}'"
-                    );
+                    bail!("group '{group_name}' references non-existent task '{task_id}'");
                 }
             }
         }
@@ -853,9 +894,7 @@ impl Plan {
         }
         for (task_id, groups) in &task_to_groups {
             if groups.len() > 1 {
-                bail!(
-                    "task '{task_id}' is listed in multiple groups: {groups:?}"
-                );
+                bail!("task '{task_id}' is listed in multiple groups: {groups:?}");
             }
         }
 
@@ -1067,16 +1106,34 @@ mod tests {
     #[test]
     fn test_failure_type_from_exit_code_permanent() {
         assert_eq!(FailureType::from_exit_code(Some(2)), FailureType::Permanent);
-        assert_eq!(FailureType::from_exit_code(Some(126)), FailureType::Permanent);
-        assert_eq!(FailureType::from_exit_code(Some(127)), FailureType::Permanent);
-        assert_eq!(FailureType::from_exit_code(Some(130)), FailureType::Permanent);
+        assert_eq!(
+            FailureType::from_exit_code(Some(126)),
+            FailureType::Permanent
+        );
+        assert_eq!(
+            FailureType::from_exit_code(Some(127)),
+            FailureType::Permanent
+        );
+        assert_eq!(
+            FailureType::from_exit_code(Some(130)),
+            FailureType::Permanent
+        );
     }
 
     #[test]
     fn test_failure_type_from_exit_code_transient() {
-        assert_eq!(FailureType::from_exit_code(Some(137)), FailureType::Transient);
-        assert_eq!(FailureType::from_exit_code(Some(143)), FailureType::Transient);
-        assert_eq!(FailureType::from_exit_code(Some(141)), FailureType::Transient); // SIGPIPE
+        assert_eq!(
+            FailureType::from_exit_code(Some(137)),
+            FailureType::Transient
+        );
+        assert_eq!(
+            FailureType::from_exit_code(Some(143)),
+            FailureType::Transient
+        );
+        assert_eq!(
+            FailureType::from_exit_code(Some(141)),
+            FailureType::Transient
+        ); // SIGPIPE
     }
 
     #[test]
@@ -1165,5 +1222,106 @@ mod tests {
     #[test]
     fn test_failure_type_default() {
         assert_eq!(FailureType::default(), FailureType::Unknown);
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_concurrency_by_mode() {
+        let plan = Plan {
+            version: 1,
+            run: RunConfig {
+                max_concurrency_by_mode: Some(HashMap::from([("research".to_string(), 0)])),
+                ..RunConfig::default()
+            },
+            profiles: HashMap::new(),
+            groups: HashMap::new(),
+            tasks: vec![Task {
+                id: "task1".to_string(),
+                title: None,
+                deps: Vec::new(),
+                mode: TaskMode::Implement,
+                kind: None,
+                profile: None,
+                group: None,
+                locks: Vec::new(),
+                _timeout_sec_rejected: None,
+                _default_timeout_sec_rejected: None,
+                no_worktree: false,
+                output_files: None,
+                codex: Some(CodexConfig {
+                    prompt: "do it".to_string(),
+                    output_last_message: None,
+                    verify_after: true,
+                    sandbox: None,
+                    ask_for_approval: None,
+                    json: true,
+                }),
+                claude_code: None,
+                opencode: None,
+                retry_count: 0,
+                retry_delay_sec: 0,
+                retry_strategy: None,
+                context: None,
+                condition: None,
+                auto_commit: true,
+                squash: false,
+            }],
+            _timeout_sec_rejected: None,
+            _default_timeout_sec_rejected: None,
+        };
+
+        let err = plan.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("run.max_concurrency_by_mode.research")
+        );
+    }
+
+    #[test]
+    fn validate_rejects_unknown_max_concurrency_by_mode_key() {
+        let plan = Plan {
+            version: 1,
+            run: RunConfig {
+                max_concurrency_by_mode: Some(HashMap::from([("unknown".to_string(), 1)])),
+                ..RunConfig::default()
+            },
+            profiles: HashMap::new(),
+            groups: HashMap::new(),
+            tasks: vec![Task {
+                id: "task1".to_string(),
+                title: None,
+                deps: Vec::new(),
+                mode: TaskMode::Implement,
+                kind: None,
+                profile: None,
+                group: None,
+                locks: Vec::new(),
+                _timeout_sec_rejected: None,
+                _default_timeout_sec_rejected: None,
+                no_worktree: false,
+                output_files: None,
+                codex: Some(CodexConfig {
+                    prompt: "do it".to_string(),
+                    output_last_message: None,
+                    verify_after: true,
+                    sandbox: None,
+                    ask_for_approval: None,
+                    json: true,
+                }),
+                claude_code: None,
+                opencode: None,
+                retry_count: 0,
+                retry_delay_sec: 0,
+                retry_strategy: None,
+                context: None,
+                condition: None,
+                auto_commit: true,
+                squash: false,
+            }],
+            _timeout_sec_rejected: None,
+            _default_timeout_sec_rejected: None,
+        };
+
+        let err = plan.validate().unwrap_err();
+        assert!(err.to_string().contains("unknown mode 'unknown'"));
     }
 }

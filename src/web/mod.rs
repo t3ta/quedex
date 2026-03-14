@@ -13,8 +13,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 use tower_http::cors::{Any, CorsLayer};
 
@@ -45,7 +45,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/runs", get(handlers::list_runs))
         .route("/api/logs/{run_id}/{task_id}", get(handlers::get_logs))
         .route("/api/retry/{run_id}/{task_id}", post(handlers::retry_task))
-        .route("/api/cancel/{run_id}/{task_id}", post(handlers::cancel_task))
+        .route(
+            "/api/cancel/{run_id}/{task_id}",
+            post(handlers::cancel_task),
+        )
         // WebSocket
         .route("/ws", get(websocket::ws_handler))
         .layer(cors)
@@ -55,10 +58,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 /// Start the web server with file watching.
 pub async fn serve(config: ServerConfig) -> anyhow::Result<()> {
     let state = Arc::new(AppState::new(config.store_root.clone(), config.run_id));
-    
+
     // Start file watcher
     watcher::start_watcher(Arc::clone(&state))?;
-    
+
     let app = build_router(state);
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;

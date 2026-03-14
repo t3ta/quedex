@@ -2,9 +2,9 @@ use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{Semaphore, mpsc};
 
-use crate::plan::{TaskCondition, TaskResultCondition};
+use crate::plan::{TaskCondition, TaskMode, TaskResultCondition};
 use crate::store::{SkipReason, TaskStatus};
 
 pub type TaskId = String;
@@ -40,10 +40,11 @@ impl Default for TaskSpec {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SchedulerOptions {
     pub max_concurrency: usize,
     pub fail_fast: bool,
+    pub mode_concurrency: HashMap<TaskMode, usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -122,7 +123,10 @@ where
         }
     }
 
-    pub fn with_git_manager(mut self, git_manager: std::sync::Arc<std::sync::Mutex<crate::git::GitManager>>) -> Self {
+    pub fn with_git_manager(
+        mut self,
+        git_manager: std::sync::Arc<std::sync::Mutex<crate::git::GitManager>>,
+    ) -> Self {
         self.git_manager = Some(git_manager);
         self
     }
@@ -157,6 +161,13 @@ where
     pub async fn run(self, env_vars: &HashMap<String, String>) -> ScheduleReport {
         let max_concurrency = self.options.max_concurrency.max(1);
         let semaphore = Arc::new(Semaphore::new(max_concurrency));
+        let mode_semaphores: HashMap<TaskMode, Arc<Semaphore>> = self
+            .options
+            .mode_concurrency
+            .iter()
+            .map(|(&mode, &limit)| (mode, Arc::new(Semaphore::new(limit.max(1)))))
+            .collect();
+        let mode_semaphores = Arc::new(mode_semaphores);
         let lock_table = Arc::new(Mutex::new(init_lock_table(&self.tasks)));
         let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -228,6 +239,21 @@ where
                     }
                 };
 
+                let mode_permit = if let Some(mode_sem) = mode_semaphores.get(&task.mode) {
+                    match mode_sem.clone().try_acquire_owned() {
+                        Ok(permit) => Some(permit),
+                        Err(_) => {
+                            release_locks(&lock_table, &task_id, &task.locks);
+                            drop(permit);
+                            ready_queue.push_back(task_id);
+                            rotations += 1;
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
+
                 if let Some(record) = states.get_mut(&task_id) {
                     record.status = TaskStatus::Running;
                     record.exit_code = None;
@@ -240,12 +266,14 @@ where
                 let task_id_clone = task_id.clone();
                 let locks = task.locks.clone();
                 let lock_table = Arc::clone(&lock_table);
+                let mode_permit = mode_permit;
                 let tx = tx.clone();
                 let future = self.runner.spawn(task_clone);
 
                 tokio::spawn(async move {
                     let result = future.await;
                     release_locks(&lock_table, &task_id_clone, &locks);
+                    drop(mode_permit);
                     drop(permit);
                     let task_spec_for_event = task_spec_for_event.clone();
                     let _ = tx.send(SchedulerEvent::TaskFinished {
@@ -283,13 +311,20 @@ where
             );
         }
 
-        ScheduleReport { tasks: states, commit_hashes }
+        ScheduleReport {
+            tasks: states,
+            commit_hashes,
+        }
     }
 }
 
 #[derive(Debug)]
 enum SchedulerEvent {
-    TaskFinished { task_id: TaskId, result: TaskResult, task_spec: TaskSpec },
+    TaskFinished {
+        task_id: TaskId,
+        result: TaskResult,
+        task_spec: TaskSpec,
+    },
 }
 
 fn init_lock_table(tasks: &HashMap<TaskId, TaskSpec>) -> LockTable {
@@ -328,7 +363,9 @@ fn try_acquire_locks(
     let mut table = match lock_table.lock() {
         Ok(guard) => guard,
         Err(_) => {
-            eprintln!("Error: lock table mutex poisoned, refusing to acquire locks (cannot safely proceed)");
+            eprintln!(
+                "Error: lock table mutex poisoned, refusing to acquire locks (cannot safely proceed)"
+            );
             return false;
         }
     };
@@ -362,7 +399,9 @@ fn release_locks(lock_table: &Arc<Mutex<LockTable>>, task_id: &TaskId, locks: &[
     let mut table = match lock_table.lock() {
         Ok(guard) => guard,
         Err(_) => {
-            eprintln!("Error: lock table mutex poisoned, skipping lock release (locks may remain held)");
+            eprintln!(
+                "Error: lock table mutex poisoned, skipping lock release (locks may remain held)"
+            );
             return;
         }
     };
@@ -504,7 +543,11 @@ fn evaluate_condition(
 fn deps_satisfied(task: &TaskSpec, states: &HashMap<TaskId, TaskRecord>) -> bool {
     // Get the task ID that is referenced in a TaskResultCondition with Failed status
     let condition_expects_failure: Option<&str> = task.condition.as_ref().and_then(|cond| {
-        if let TaskCondition::TaskResult(TaskResultCondition { task: task_id, status }) = cond {
+        if let TaskCondition::TaskResult(TaskResultCondition {
+            task: task_id,
+            status,
+        }) = cond
+        {
             if *status == crate::plan::ConditionStatus::Failed {
                 return Some(task_id.as_str());
             }
@@ -531,7 +574,11 @@ fn deps_satisfied(task: &TaskSpec, states: &HashMap<TaskId, TaskRecord>) -> bool
 fn deps_failed(task: &TaskSpec, states: &HashMap<TaskId, TaskRecord>) -> bool {
     // Get the task ID that is referenced in a TaskResultCondition with Failed status
     let condition_expects_failure: Option<&str> = task.condition.as_ref().and_then(|cond| {
-        if let TaskCondition::TaskResult(TaskResultCondition { task: task_id, status }) = cond {
+        if let TaskCondition::TaskResult(TaskResultCondition {
+            task: task_id,
+            status,
+        }) = cond
+        {
             if *status == crate::plan::ConditionStatus::Failed {
                 return Some(task_id.as_str());
             }
@@ -569,7 +616,11 @@ fn handle_event(
     git_manager: &Option<std::sync::Arc<std::sync::Mutex<crate::git::GitManager>>>,
 ) {
     match event {
-        SchedulerEvent::TaskFinished { task_id, result, task_spec } => {
+        SchedulerEvent::TaskFinished {
+            task_id,
+            result,
+            task_spec,
+        } => {
             // Handle git commit if task succeeded and auto_commit is enabled
             if result.status == TaskStatus::Succeeded
                 && task_spec.auto_commit
@@ -584,7 +635,10 @@ fn handle_event(
                         // Try to create commit
                         match gm_locked.ensure_on_branch() {
                             Ok(_) => {
-                                let title = task_spec.title.clone().unwrap_or_else(|| task_spec.id.clone());
+                                let title = task_spec
+                                    .title
+                                    .clone()
+                                    .unwrap_or_else(|| task_spec.id.clone());
                                 let message = crate::git::generate_commit_message(
                                     &title,
                                     &task_spec.id,
@@ -594,14 +648,17 @@ fn handle_event(
                                 match gm_locked.create_commit(&message) {
                                     Ok(commit_hash) => {
                                         if !commit_hash.is_empty() {
-                                            commit_hashes.push((task_spec.id.clone(), commit_hash, task_spec.title));
+                                            commit_hashes.push((
+                                                task_spec.id.clone(),
+                                                commit_hash,
+                                                task_spec.title,
+                                            ));
                                         }
                                     }
                                     Err(err) => {
                                         eprintln!(
                                             "Warning: auto-commit create_commit failed for task {}: {:?}",
-                                            task_spec.id,
-                                            err
+                                            task_spec.id, err
                                         );
                                     }
                                 }
@@ -609,8 +666,7 @@ fn handle_event(
                             Err(err) => {
                                 eprintln!(
                                     "Warning: auto-commit ensure_on_branch failed for task {}: {:?}",
-                                    task_spec.id,
-                                    err
+                                    task_spec.id, err
                                 );
                             }
                         }
@@ -663,10 +719,7 @@ fn all_done(states: &HashMap<TaskId, TaskRecord>) -> bool {
     states.values().all(|record| {
         matches!(
             record.status,
-            TaskStatus::Succeeded
-                | TaskStatus::Failed
-                | TaskStatus::Canceled
-                | TaskStatus::Skipped
+            TaskStatus::Succeeded | TaskStatus::Failed | TaskStatus::Canceled | TaskStatus::Skipped
         )
     })
 }
@@ -674,7 +727,9 @@ fn all_done(states: &HashMap<TaskId, TaskRecord>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::{ConditionStatus, EnvCondition, TaskCondition, TaskMode, TaskResultCondition};
+    use crate::plan::{
+        ConditionStatus, EnvCondition, TaskCondition, TaskMode, TaskResultCondition,
+    };
 
     fn make_task_spec(id: &str, deps: Vec<&str>, condition: Option<TaskCondition>) -> TaskSpec {
         TaskSpec {
@@ -711,8 +766,14 @@ mod tests {
     fn test_deps_satisfied_all_succeeded() {
         let task = make_task_spec("task_c", vec!["task_a", "task_b"], None);
         let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
-        states.insert("task_a".to_string(), make_record(TaskStatus::Succeeded, None));
-        states.insert("task_b".to_string(), make_record(TaskStatus::Succeeded, None));
+        states.insert(
+            "task_a".to_string(),
+            make_record(TaskStatus::Succeeded, None),
+        );
+        states.insert(
+            "task_b".to_string(),
+            make_record(TaskStatus::Succeeded, None),
+        );
         assert!(deps_satisfied(&task, &states));
     }
 
@@ -720,7 +781,10 @@ mod tests {
     fn test_deps_satisfied_one_pending() {
         let task = make_task_spec("task_c", vec!["task_a", "task_b"], None);
         let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
-        states.insert("task_a".to_string(), make_record(TaskStatus::Succeeded, None));
+        states.insert(
+            "task_a".to_string(),
+            make_record(TaskStatus::Succeeded, None),
+        );
         states.insert("task_b".to_string(), make_record(TaskStatus::Pending, None));
         assert!(!deps_satisfied(&task, &states));
     }
@@ -729,7 +793,10 @@ mod tests {
     fn test_deps_satisfied_one_running() {
         let task = make_task_spec("task_c", vec!["task_a", "task_b"], None);
         let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
-        states.insert("task_a".to_string(), make_record(TaskStatus::Succeeded, None));
+        states.insert(
+            "task_a".to_string(),
+            make_record(TaskStatus::Succeeded, None),
+        );
         states.insert("task_b".to_string(), make_record(TaskStatus::Running, None));
         assert!(!deps_satisfied(&task, &states));
     }
@@ -947,7 +1014,10 @@ mod tests {
             status: ConditionStatus::Succeeded,
         });
         let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
-        states.insert("task_a".to_string(), make_record(TaskStatus::Succeeded, None));
+        states.insert(
+            "task_a".to_string(),
+            make_record(TaskStatus::Succeeded, None),
+        );
         let env_vars: HashMap<String, String> = HashMap::new();
 
         let (result, desc) = evaluate_condition(&condition, &states, &env_vars);
@@ -1096,7 +1166,11 @@ mod tests {
         release_locks(
             &lock_table,
             &"task_a".to_string(),
-            &["lock1".to_string(), "lock2".to_string(), "lock3".to_string()],
+            &[
+                "lock1".to_string(),
+                "lock2".to_string(),
+                "lock3".to_string(),
+            ],
         );
 
         // Verify only task_a's locks were released

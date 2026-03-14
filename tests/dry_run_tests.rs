@@ -13,6 +13,7 @@ fn create_test_plan(tasks: Vec<Task>) -> Plan {
             worktree: None,
             env: None,
             max_concurrency: None,
+            max_concurrency_by_mode: None,
             fail_fast: None,
             _default_timeout_sec_rejected: None,
             _timeout_sec_rejected: None,

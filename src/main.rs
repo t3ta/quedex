@@ -26,7 +26,7 @@ use quedex::plan::{Plan, PlanFormat, Task};
 use quedex::runner::claude_code::ClaudeCodeRunner;
 use quedex::runner::codex::CodexRunner;
 use quedex::runner::opencode::OpencodeRunner;
-use quedex::runner::{resolve_command_path, ChildHandle, RunContext, Runner};
+use quedex::runner::{ChildHandle, RunContext, Runner, resolve_command_path};
 use quedex::scheduler::{
     ScheduleReport, Scheduler, SchedulerOptions, TaskRecord, TaskResult, TaskRunner, TaskSpec,
 };
@@ -38,6 +38,24 @@ use quedex::worktree::{
     WorktreeConfig,
     manager::{TaskWorkdir, WorktreeManager},
 };
+
+fn build_mode_concurrency(plan: &Plan) -> HashMap<quedex::plan::TaskMode, usize> {
+    use quedex::plan::TaskMode;
+
+    let mut map = HashMap::new();
+    if let Some(ref by_mode) = plan.run.max_concurrency_by_mode {
+        for (mode_str, &limit) in by_mode {
+            let mode = match mode_str.as_str() {
+                "research" => TaskMode::Research,
+                "implement" => TaskMode::Implement,
+                "verify" => TaskMode::Verify,
+                _ => continue,
+            };
+            map.insert(mode, limit);
+        }
+    }
+    map
+}
 
 #[tokio::main]
 async fn main() {
@@ -91,10 +109,23 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             if dry_run {
                 handle_dry_run(&cli.global, &plan)
             } else {
-                handle_run(&cli.global, &effective, &config, &plan, recovery, run_id, base_dir).await
+                handle_run(
+                    &cli.global,
+                    &effective,
+                    &config,
+                    &plan,
+                    recovery,
+                    run_id,
+                    base_dir,
+                )
+                .await
             }
         }
-        Commands::Status { run_id, group, json } => handle_status(&effective, run_id, group, json),
+        Commands::Status {
+            run_id,
+            group,
+            json,
+        } => handle_status(&effective, run_id, group, json),
         Commands::Tui { run_id } => handle_tui(&effective, run_id),
         Commands::Logs {
             run_id,
@@ -108,8 +139,23 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             task_id,
             group,
             reload_plan,
-        } => handle_retry(&cli.global, &effective, &config, &run_id, task_id, group, reload_plan).await,
-        Commands::Cancel { run_id, task_id, group } => handle_cancel(&effective, &run_id, task_id, group),
+        } => {
+            handle_retry(
+                &cli.global,
+                &effective,
+                &config,
+                &run_id,
+                task_id,
+                group,
+                reload_plan,
+            )
+            .await
+        }
+        Commands::Cancel {
+            run_id,
+            task_id,
+            group,
+        } => handle_cancel(&effective, &run_id, task_id, group),
         Commands::Clean {
             run_id,
             all,
@@ -120,7 +166,9 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             mermaid,
             ascii,
         } => handle_graph(&effective, &target, mermaid, ascii),
-        Commands::History { limit, all, json } => handle_history(&cli.global, &effective, limit, all, json),
+        Commands::History { limit, all, json } => {
+            handle_history(&cli.global, &effective, limit, all, json)
+        }
         Commands::Schema { output } => handle_schema(output),
         Commands::Stats { since, json } => handle_stats(&cli.global, &effective, since, json),
         Commands::DryRun {
@@ -128,7 +176,14 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             show_order,
             check_locks,
             mermaid,
-        } => handle_dry_run_extended(&cli.global, &effective, &plan, show_order, check_locks, mermaid),
+        } => handle_dry_run_extended(
+            &cli.global,
+            &effective,
+            &plan,
+            show_order,
+            check_locks,
+            mermaid,
+        ),
         Commands::Serve { run_id, port, host } => {
             handle_serve(&cli.global, run_id, host, port, &config).await
         }
@@ -146,7 +201,10 @@ fn handle_init(global: &GlobalOptions, output: Option<PathBuf>, force: bool) -> 
     }
 
     if global.verbose {
-        eprintln!("[verbose] Creating plan template at {}", output_path.display());
+        eprintln!(
+            "[verbose] Creating plan template at {}",
+            output_path.display()
+        );
     }
 
     let is_yaml = matches!(
@@ -361,7 +419,10 @@ fn handle_dry_run_extended(
             let all_deps: Vec<String> = wave
                 .iter()
                 .filter_map(|task_id| {
-                    plan.tasks.iter().find(|t| t.id == *task_id).map(|t| t.deps.clone())
+                    plan.tasks
+                        .iter()
+                        .find(|t| t.id == *task_id)
+                        .map(|t| t.deps.clone())
                 })
                 .flatten()
                 .collect::<std::collections::HashSet<_>>()
@@ -385,7 +446,12 @@ fn handle_dry_run_extended(
                 String::new()
             };
 
-            println!("  Wave {}: [{}]{}", wave_idx + 1, task_display.join(", "), annotation);
+            println!(
+                "  Wave {}: [{}]{}",
+                wave_idx + 1,
+                task_display.join(", "),
+                annotation
+            );
 
             // Show dependencies for each task in verbose mode
             if global.verbose {
@@ -401,7 +467,9 @@ fn handle_dry_run_extended(
                         } else {
                             task.locks.join(", ")
                         };
-                        eprintln!("    [verbose] {task_id} - deps: [{deps_str}], locks: [{locks_str}]");
+                        eprintln!(
+                            "    [verbose] {task_id} - deps: [{deps_str}], locks: [{locks_str}]"
+                        );
                     }
                 }
             }
@@ -417,7 +485,11 @@ fn handle_dry_run_extended(
         } else {
             println!("Potential lock conflicts detected:");
             for conflict in &conflicts {
-                println!("  Lock '{}': tasks [{}] may compete", conflict.lock_name, conflict.task_ids.join(", "));
+                println!(
+                    "  Lock '{}': tasks [{}] may compete",
+                    conflict.lock_name,
+                    conflict.task_ids.join(", ")
+                );
                 if !conflict.notes.is_empty() {
                     println!("    Note: {}", conflict.notes);
                 }
@@ -428,7 +500,13 @@ fn handle_dry_run_extended(
     Ok(0)
 }
 
-fn handle_history(global: &GlobalOptions, effective: &EffectiveOptions, limit: usize, all: bool, json: bool) -> Result<i32> {
+fn handle_history(
+    global: &GlobalOptions,
+    effective: &EffectiveOptions,
+    limit: usize,
+    all: bool,
+    json: bool,
+) -> Result<i32> {
     let store_root = resolve_store_path(effective.store.as_ref())?;
 
     if global.verbose {
@@ -617,10 +695,7 @@ fn handle_stats(
     // Calculate average run duration
     let durations: Vec<i64> = states
         .iter()
-        .filter_map(|s| {
-            s.completed_at
-                .map(|end| (end - s.started_at).num_seconds())
-        })
+        .filter_map(|s| s.completed_at.map(|end| (end - s.started_at).num_seconds()))
         .collect();
     let avg_duration = if !durations.is_empty() {
         Some(durations.iter().sum::<i64>() / durations.len() as i64)
@@ -698,9 +773,7 @@ fn handle_stats(
         println!("Execution Statistics ({period_str})");
         println!("{}", "=".repeat(40));
         println!("Total runs:       {total_runs}");
-        println!(
-            "Success rate:     {success_rate:.1}% ({successful_runs}/{total_runs})"
-        );
+        println!("Success rate:     {success_rate:.1}% ({successful_runs}/{total_runs})");
         if let Some(avg) = avg_duration {
             println!("Avg duration:     {}", format_duration(avg));
         } else {
@@ -1016,15 +1089,12 @@ async fn handle_run(
         .max_concurrency
         .or(effective.max_concurrency)
         .unwrap_or(1);
+    let mode_concurrency = build_mode_concurrency(&plan);
     let fail_fast = plan.run.fail_fast.unwrap_or(effective.fail_fast);
 
     // Create notifier for webhook notifications
     let run_name = plan.run.name.clone().unwrap_or_else(|| run_id.clone());
-    let notifier = Notifier::new(
-        plan.run.notifications.clone(),
-        run_id.clone(),
-        run_name,
-    );
+    let notifier = Notifier::new(plan.run.notifications.clone(), run_id.clone(), run_name);
 
     // Send run started notification
     if let Some(ref n) = notifier {
@@ -1052,6 +1122,7 @@ async fn handle_run(
             SchedulerOptions {
                 max_concurrency,
                 fail_fast,
+                mode_concurrency: mode_concurrency.clone(),
             },
             runner,
             initial_states,
@@ -1067,6 +1138,7 @@ async fn handle_run(
             SchedulerOptions {
                 max_concurrency,
                 fail_fast,
+                mode_concurrency: mode_concurrency.clone(),
             },
             runner,
         );
@@ -1268,12 +1340,7 @@ fn handle_outputs(
             let size = fs::metadata(&path)
                 .with_context(|| format!("stat {}", path.display()))?
                 .len();
-            println!(
-                "{:<16} {:<40} {:>10}",
-                task_id,
-                relative.display(),
-                size
-            );
+            println!("{:<16} {:<40} {:>10}", task_id, relative.display(), size);
             let preview = read_preview_lines(&path, OUTPUT_PREVIEW_LINES)?;
             for line in preview {
                 println!("  {}", line);
@@ -1302,8 +1369,8 @@ fn resolve_output_tasks(
     }
 
     let mut tasks = Vec::new();
-    for entry in fs::read_dir(outputs_root)
-        .with_context(|| format!("read {}", outputs_root.display()))?
+    for entry in
+        fs::read_dir(outputs_root).with_context(|| format!("read {}", outputs_root.display()))?
     {
         let entry = entry?;
         let file_type = entry.file_type()?;
@@ -1324,8 +1391,8 @@ fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
 
     let mut stack = vec![dir.to_path_buf()];
     while let Some(current) = stack.pop() {
-        for entry in fs::read_dir(&current)
-            .with_context(|| format!("read {}", current.display()))?
+        for entry in
+            fs::read_dir(&current).with_context(|| format!("read {}", current.display()))?
         {
             let entry = entry?;
             let path = entry.path();
@@ -1477,9 +1544,10 @@ async fn handle_retry(
         // Check dependencies are satisfied
         let mut deps_satisfied = true;
         for dep in &task.deps {
-            let dep_state = state.tasks.get(dep).ok_or_else(|| {
-                anyhow!("task {tid} dependency {dep} not found in state")
-            })?;
+            let dep_state = state
+                .tasks
+                .get(dep)
+                .ok_or_else(|| anyhow!("task {tid} dependency {dep} not found in state"))?;
             if dep_state.status != TaskStatus::Succeeded {
                 if group.is_some() {
                     deps_satisfied = false;
@@ -1712,6 +1780,7 @@ async fn handle_retry(
         .max_concurrency
         .or(effective.max_concurrency)
         .unwrap_or(1);
+    let mode_concurrency = build_mode_concurrency(&plan);
     let fail_fast = plan.run.fail_fast.unwrap_or(effective.fail_fast);
 
     // Notifier for retry (no notifications for retry operations)
@@ -1729,16 +1798,17 @@ async fn handle_retry(
         Ok(gm) => Some(Arc::new(std::sync::Mutex::new(gm))),
         Err(_) => None, // Not in a git repository, skip auto-commit
     };
-    
+
     let scheduler = Scheduler::new(
         task_specs,
         SchedulerOptions {
             max_concurrency,
             fail_fast,
+            mode_concurrency,
         },
         runner,
     );
-    
+
     let scheduler = if let Some(gm) = git_manager {
         scheduler.with_git_manager(gm)
     } else {
@@ -2025,7 +2095,7 @@ fn run_active_reason(store_root: &Path, run_id: &str) -> Result<Option<String>> 
 /// is no longer alive. This can happen when quedex crashes or is killed without
 /// proper cleanup.
 fn fix_orphaned_runs(store_root: &Path, verbose: bool) -> Result<Vec<String>> {
-    use quedex::store::{fs::FsStore, Store};
+    use quedex::store::{Store, fs::FsStore};
 
     let mut fixed = Vec::new();
     let states = list_states(store_root)?;
@@ -2040,10 +2110,7 @@ fn fix_orphaned_runs(store_root: &Path, verbose: bool) -> Result<Vec<String>> {
         let is_active = match run_active_reason(store_root, &state.run_id) {
             Ok(Some(reason)) => {
                 if verbose {
-                    eprintln!(
-                        "[verbose] Run {} is still active: {}",
-                        state.run_id, reason
-                    );
+                    eprintln!("[verbose] Run {} is still active: {}", state.run_id, reason);
                 }
                 true
             }
@@ -2103,7 +2170,12 @@ fn fix_orphaned_runs(store_root: &Path, verbose: bool) -> Result<Vec<String>> {
     Ok(fixed)
 }
 
-fn handle_graph(effective: &EffectiveOptions, target: &str, mermaid: bool, ascii: bool) -> Result<i32> {
+fn handle_graph(
+    effective: &EffectiveOptions,
+    target: &str,
+    mermaid: bool,
+    ascii: bool,
+) -> Result<i32> {
     let store_root = resolve_store_path(effective.store.as_ref())?;
     let plan = if Path::new(target).exists() {
         load_plan(target)?.0
@@ -2156,10 +2228,15 @@ fn handle_squash_tasks(plan: &Plan, report: &ScheduleReport) -> Result<()> {
         return Ok(());
     }
 
-    let task_title = squash_task.unwrap().title.as_deref().unwrap_or("Integration");
+    let task_title = squash_task
+        .unwrap()
+        .title
+        .as_deref()
+        .unwrap_or("Integration");
 
     // Collect commit information for squash message
-    let task_summaries: Vec<(String, String)> = report.commit_hashes
+    let task_summaries: Vec<(String, String)> = report
+        .commit_hashes
         .iter()
         .map(|(id, _, title)| {
             let title_str = title.clone().unwrap_or_else(|| id.clone());
@@ -2714,7 +2791,13 @@ fn print_mermaid_graph(plan: &Plan) {
             // Sanitize group name for Mermaid ID (replace non-alphanumeric with underscore)
             let sanitized_id: String = group_name
                 .chars()
-                .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
                 .collect();
             println!("  subgraph {sanitized_id} [{group_name}]");
             let mut sorted_ids: Vec<_> = task_ids.iter().collect();
@@ -2728,10 +2811,9 @@ fn print_mermaid_graph(plan: &Plan) {
 
     // Output ungrouped tasks (tasks with no group)
     for task in &plan.tasks {
-        if !grouped_task_ids.contains(task.id.as_str())
-            && task.deps.is_empty() {
-                println!("  {};", task.id);
-            }
+        if !grouped_task_ids.contains(task.id.as_str()) && task.deps.is_empty() {
+            println!("  {};", task.id);
+        }
     }
 
     // Output all dependency edges
@@ -3136,10 +3218,7 @@ impl TaskRunner for PlanTaskRunner {
             };
 
             // Resolve agent profile for this task
-            let profile = task
-                .profile
-                .as_ref()
-                .and_then(|name| profiles.get(name));
+            let profile = task.profile.as_ref().and_then(|name| profiles.get(name));
 
             // Clone task for potential profile-based model override
             let mut task = task.clone();
@@ -3204,7 +3283,9 @@ impl TaskRunner for PlanTaskRunner {
                                 let text = String::from_utf8_lossy(&content);
                                 context_prefix.push_str(&format!(
                                     "--- {} ---\n{}\n--- end {} ---\n\n",
-                                    label, text.trim(), label
+                                    label,
+                                    text.trim(),
+                                    label
                                 ));
                             }
                             Err(err) => {
@@ -3381,18 +3462,17 @@ impl TaskRunner for PlanTaskRunner {
                     if let Some(ref strategy) = retry_strategy {
                         if strategy.skip_permanent_failures {
                             let stderr_path = task_ctx.store.log_path(&task_id, LogStream::Stderr);
-                            let stderr_tail = std::fs::read_to_string(&stderr_path)
-                                .unwrap_or_default();
-                            let failure_type = quedex::plan::FailureType::classify(
-                                result.exit_code,
-                                &stderr_tail,
-                            );
+                            let stderr_tail =
+                                std::fs::read_to_string(&stderr_path).unwrap_or_default();
+                            let failure_type =
+                                quedex::plan::FailureType::classify(result.exit_code, &stderr_tail);
                             if !failure_type.should_retry() {
                                 eprintln!(
                                     "task {task_id} failed with permanent failure (exit code {:?}), skipping retry",
                                     result.exit_code
                                 );
-                                let _ = state.task_finished(&task_id, result.status, result.exit_code);
+                                let _ =
+                                    state.task_finished(&task_id, result.status, result.exit_code);
                                 break result;
                             }
                         }
@@ -3483,7 +3563,9 @@ impl TaskRunner for PlanTaskRunner {
                         let source_path = task_ctx.cwd.join(&publish.source);
                         match std::fs::read(&source_path) {
                             Ok(content) => {
-                                if let Err(err) = task_ctx.store.save_context(&publish.key, &content) {
+                                if let Err(err) =
+                                    task_ctx.store.save_context(&publish.key, &content)
+                                {
                                     eprintln!(
                                         "task {task_id} context publish error for key '{}': {err:#}",
                                         publish.key
@@ -3580,7 +3662,9 @@ fn has_unsatisfied_external_deps(
             return false;
         }
         // Dependencies outside retry set → must be Succeeded
-        task_statuses.get(dep).is_none_or(|status| *status != TaskStatus::Succeeded)
+        task_statuses
+            .get(dep)
+            .is_none_or(|status| *status != TaskStatus::Succeeded)
     })
 }
 

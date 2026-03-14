@@ -35,9 +35,7 @@ pub struct Config {
     pub system_prompt: Option<String>,
 }
 
-fn reject_timeout_sec<'de, D>(
-    deserializer: D,
-) -> Result<Option<serde::de::IgnoredAny>, D::Error>
+fn reject_timeout_sec<'de, D>(deserializer: D) -> Result<Option<serde::de::IgnoredAny>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -155,7 +153,10 @@ system_prompt = "You are a helpful assistant."
         assert_eq!(config.max_concurrency, Some(4));
         assert_eq!(config.fail_fast, Some(false));
         assert_eq!(config.store, Some(PathBuf::from("/tmp/quedex")));
-        assert_eq!(config.system_prompt, Some("You are a helpful assistant.".to_string()));
+        assert_eq!(
+            config.system_prompt,
+            Some("You are a helpful assistant.".to_string())
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use super::{Event, LogStream, State, Store};
 
@@ -104,8 +104,9 @@ impl Store for FsStore {
             file.write_all(b"\n").context("write state newline")?;
             file.sync_all().context("sync state file")?;
         }
-        fs::rename(&tmp_path, &state_path)
-            .with_context(|| format!("rename {} -> {}", tmp_path.display(), state_path.display()))?;
+        fs::rename(&tmp_path, &state_path).with_context(|| {
+            format!("rename {} -> {}", tmp_path.display(), state_path.display())
+        })?;
         Ok(())
     }
 
@@ -146,19 +147,15 @@ impl Store for FsStore {
             .with_context(|| format!("create output dir {}", parent.display()))?;
         let tmp_path = output_path.with_extension("tmp");
         {
-            let mut file = File::create(&tmp_path)
-                .with_context(|| format!("open {}", tmp_path.display()))?;
+            let mut file =
+                File::create(&tmp_path).with_context(|| format!("open {}", tmp_path.display()))?;
             file.write_all(content)
                 .with_context(|| format!("write output {}", output_path.display()))?;
             file.sync_all()
                 .with_context(|| format!("sync output {}", output_path.display()))?;
         }
         fs::rename(&tmp_path, &output_path).with_context(|| {
-            format!(
-                "rename {} -> {}",
-                tmp_path.display(),
-                output_path.display()
-            )
+            format!("rename {} -> {}", tmp_path.display(), output_path.display())
         })?;
         Ok(output_path)
     }
@@ -177,8 +174,8 @@ impl Store for FsStore {
         let mut files = Vec::new();
         let mut stack = vec![output_dir.clone()];
         while let Some(current) = stack.pop() {
-            for entry in fs::read_dir(&current)
-                .with_context(|| format!("read {}", current.display()))?
+            for entry in
+                fs::read_dir(&current).with_context(|| format!("read {}", current.display()))?
             {
                 let entry = entry?;
                 let path = entry.path();
@@ -217,7 +214,10 @@ impl Store for FsStore {
             bail!("context key is empty");
         }
         // Validate key contains only safe characters
-        if !key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        if !key
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
             bail!("context key '{}' contains invalid characters", key);
         }
         let context_dir = self.context_dir();
@@ -248,7 +248,10 @@ impl Store for FsStore {
             bail!("context key is empty");
         }
         // Validate key contains only safe characters (same as save_context)
-        if !key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        if !key
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
             bail!("context key '{}' contains invalid characters", key);
         }
         let context_path = self.context_dir().join(key);
@@ -268,7 +271,10 @@ impl Store for FsStore {
         if key.trim().is_empty() {
             bail!("context key is empty");
         }
-        if !key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        if !key
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
             bail!("context key '{}' contains invalid characters", key);
         }
 
@@ -350,7 +356,10 @@ impl Store for FsStore {
         if key.trim().is_empty() {
             bail!("context key is empty");
         }
-        if !key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        if !key
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
             bail!("context key '{}' contains invalid characters", key);
         }
 
@@ -359,8 +368,9 @@ impl Store for FsStore {
             return Ok(None);
         }
 
-        let meta_content = fs::read_to_string(&meta_path)
-            .with_context(|| format!("read context metadata '{}' at {}", key, meta_path.display()))?;
+        let meta_content = fs::read_to_string(&meta_path).with_context(|| {
+            format!("read context metadata '{}' at {}", key, meta_path.display())
+        })?;
         let meta: ContextMetadata = serde_json::from_str(&meta_content)
             .with_context(|| format!("parse context metadata '{}'", key))?;
         Ok(Some(meta))

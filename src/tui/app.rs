@@ -79,17 +79,13 @@ impl App {
             .iter()
             .map(|task| {
                 // Task.group takes precedence over Plan.groups
-                let group = task.group.clone().or_else(|| {
-                    task_to_group
-                        .get(task.id.as_str())
-                        .map(|s| s.to_string())
-                });
+                let group = task
+                    .group
+                    .clone()
+                    .or_else(|| task_to_group.get(task.id.as_str()).map(|s| s.to_string()));
                 TaskInfo {
                     id: task.id.clone(),
-                    title: task
-                        .title
-                        .clone()
-                        .unwrap_or_else(|| task.id.clone()),
+                    title: task.title.clone().unwrap_or_else(|| task.id.clone()),
                     deps: task.deps.clone(),
                     locks: task.locks.clone(),
                     group,
@@ -167,12 +163,12 @@ impl App {
     }
 
     pub fn selected_task(&self) -> Option<&TaskInfo> {
-        self.list_state.selected().and_then(|idx| {
-            match self.display_rows.get(idx) {
+        self.list_state
+            .selected()
+            .and_then(|idx| match self.display_rows.get(idx) {
                 Some(DisplayRow::Task(task)) => Some(task),
                 _ => None,
-            }
-        })
+            })
     }
 
     pub fn selected_task_id(&self) -> Option<&str> {
@@ -403,10 +399,7 @@ fn read_log_tail(path: &Path, max_lines: usize) -> Result<Vec<String>> {
     }
     let bytes = fs::read(path).with_context(|| format!("read log {}", path.display()))?;
     let text = String::from_utf8_lossy(&bytes);
-    let mut lines = text
-        .lines()
-        .flat_map(format_log_line)
-        .collect::<Vec<_>>();
+    let mut lines = text.lines().flat_map(format_log_line).collect::<Vec<_>>();
     if lines.len() > max_lines {
         lines = lines.split_off(lines.len() - max_lines);
     }
@@ -552,10 +545,9 @@ fn format_error(
 
 fn format_json_value_lines(value: &serde_json::Value, indent: &str) -> Vec<String> {
     match value {
-        serde_json::Value::String(text) => text
-            .lines()
-            .map(|line| format!("{indent}{line}"))
-            .collect(),
+        serde_json::Value::String(text) => {
+            text.lines().map(|line| format!("{indent}{line}")).collect()
+        }
         serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
             let pretty = serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string());
             pretty

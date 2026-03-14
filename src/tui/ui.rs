@@ -50,7 +50,11 @@ fn draw_tasks(frame: &mut Frame, app: &mut App, area: Rect) {
                     Cell::from(""),
                     Cell::from(""),
                 ])
-                .style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))
+                .style(
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .fg(Color::Cyan),
+                )
             }
             DisplayRow::Task(task) => {
                 let status = app.task_status(&task.id);
@@ -107,9 +111,7 @@ fn draw_tasks(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_logs(frame: &mut Frame, app: &mut App, area: Rect) {
-    let task_label = app
-        .selected_task_id()
-        .unwrap_or("no task");
+    let task_label = app.selected_task_id().unwrap_or("no task");
     let stream = match app.log_stream {
         LogStream::Stdout => "stdout",
         LogStream::Stderr => "stderr",
@@ -202,8 +204,8 @@ fn draw_graph(frame: &mut Frame, app: &mut App) {
         "実行中: {} | 失敗: {} | ロック: {}",
         stats.running, stats.failed, locks_text
     );
-    let stats_paragraph = Paragraph::new(stats_text)
-        .block(Block::default().borders(Borders::ALL).title("統計"));
+    let stats_paragraph =
+        Paragraph::new(stats_text).block(Block::default().borders(Borders::ALL).title("統計"));
     frame.render_widget(stats_paragraph, layout[1]);
 
     // 依存関係グラフの生成
@@ -226,20 +228,14 @@ fn build_dependency_graph(app: &App) -> Vec<Line<'_>> {
     let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
     for task in &app.tasks {
         for dep in &task.deps {
-            children
-                .entry(dep.as_str())
-                .or_default()
-                .push(&task.id);
+            children.entry(dep.as_str()).or_default().push(&task.id);
         }
     }
 
     // 2. グループごとにタスクを分類
     let mut grouped: HashMap<Option<&str>, Vec<&super::app::TaskInfo>> = HashMap::new();
     for task in &app.tasks {
-        grouped
-            .entry(task.group.as_deref())
-            .or_default()
-            .push(task);
+        grouped.entry(task.group.as_deref()).or_default().push(task);
     }
 
     // 3. グループ名をソート（Some が先、None が後）
@@ -263,10 +259,19 @@ fn build_dependency_graph(app: &App) -> Vec<Line<'_>> {
                 lines.push(Line::from(""));
             }
             let header = format!("─────── {name} ───────");
-            lines.push(Line::from(header).style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+            lines.push(
+                Line::from(header).style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            );
         } else if !lines.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from("─────── (ungrouped) ───────").style(Style::default().fg(Color::DarkGray)));
+            lines.push(
+                Line::from("─────── (ungrouped) ───────")
+                    .style(Style::default().fg(Color::DarkGray)),
+            );
         }
 
         // グループ内のルートタスク（依存元がないタスク）を特定
@@ -287,7 +292,11 @@ fn build_dependency_graph(app: &App) -> Vec<Line<'_>> {
             for task in group_tasks {
                 let status = app.task_status(&task.id);
                 let duration = app.task_duration(&task.id, now);
-                let group_label = task.group.as_deref().map(|g| format!(" [{g}]")).unwrap_or_default();
+                let group_label = task
+                    .group
+                    .as_deref()
+                    .map(|g| format!(" [{g}]"))
+                    .unwrap_or_default();
                 let line_text = format!("* {}{} [{:?}] {}", task.id, group_label, status, duration);
                 lines.push(Line::from(line_text).style(status_style(status)));
             }

@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
         State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
     },
     response::IntoResponse,
 };
@@ -24,7 +24,7 @@ pub async fn ws_handler(
 /// Handle a WebSocket connection.
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
-    
+
     // Subscribe to state updates
     let mut rx = state.subscribe();
 
@@ -69,13 +69,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
 /// Get current state as JSON string.
 async fn get_current_state(state: &AppState) -> Result<String, ()> {
     let runs_dir = state.store_root.join("runs");
-    
+
     if !runs_dir.exists() {
         return Ok(r#"{"runs":[]}"#.to_string());
     }
 
     let mut runs = Vec::new();
-    
+
     if let Some(ref run_id) = state.run_id {
         let state_path = runs_dir.join(run_id).join("state.json");
         if state_path.exists() {
