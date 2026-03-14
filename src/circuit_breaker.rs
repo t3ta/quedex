@@ -112,13 +112,16 @@ impl CircuitBreaker {
             if now.saturating_sub(opened_at) >= self.config.recovery_timeout.as_secs() {
                 // Attempt transition to HalfOpen
                 let _guard = self.transition_lock.lock().unwrap();
-                // Re-check state under lock
-                if self.state.load(Ordering::Acquire) == CircuitState::Open as u32 {
+                // Re-check state under lock — another thread may have
+                // already transitioned, so always return the current value.
+                let current = self.state.load(Ordering::Acquire);
+                if current == CircuitState::Open as u32 {
                     self.state
                         .store(CircuitState::HalfOpen as u32, Ordering::Release);
                     self.success_count.store(0, Ordering::Release);
                     return CircuitState::HalfOpen;
                 }
+                return CircuitState::from(current as u8);
             }
         }
 
