@@ -3525,7 +3525,7 @@ impl TaskRunner for PlanTaskRunner {
                             timestamp: Utc::now(),
                         });
 
-                        let passed = run_completion_gate(
+                        let gate_exit_code = run_completion_gate(
                             &gate,
                             &task_ctx.cwd,
                             &task_id,
@@ -3534,7 +3534,8 @@ impl TaskRunner for PlanTaskRunner {
                         )
                         .await;
 
-                        let exit_code = if passed { 0 } else { 1 };
+                        let passed = gate_exit_code == Some(0);
+                        let exit_code = gate_exit_code.unwrap_or(1);
                         let _ = task_ctx.store.append_event(Event::GateFinished {
                             task_id: task_id.clone(),
                             gate_name: gate.name.clone(),
@@ -3543,7 +3544,7 @@ impl TaskRunner for PlanTaskRunner {
                         });
 
                         if !passed {
-                            result = TaskResult::failed(1);
+                            result = TaskResult::failed(exit_code);
                             break;
                         }
                     }
@@ -3715,13 +3716,16 @@ fn resolve_completion_gates(
     }
 }
 
+/// Run a completion gate command and return its exit code.
+/// Returns `None` if the command failed to spawn or timed out.
+/// Returns `Some(code)` with the actual exit code on completion.
 async fn run_completion_gate(
     gate: &CompletionGate,
     cwd: &Path,
     task_id: &str,
     store: &Arc<dyn Store>,
     env: &HashMap<String, String>,
-) -> bool {
+) -> Option<i32> {
     let mut command = tokio::process::Command::new("sh");
     command
         .arg("-c")
@@ -3741,7 +3745,7 @@ async fn run_completion_gate(
                     gate.name
                 );
             }
-            return false;
+            return None;
         }
     };
 
@@ -3760,7 +3764,7 @@ async fn run_completion_gate(
                     gate.name
                 );
             }
-            return false;
+            return None;
         }
         Err(_) => {
             if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
@@ -3770,7 +3774,7 @@ async fn run_completion_gate(
                     gate.name, gate.timeout_sec
                 );
             }
-            return false;
+            return None;
         }
     };
 
@@ -3783,7 +3787,7 @@ async fn run_completion_gate(
         let _ = stderr_log.write_all(&output.stderr);
     }
 
-    output.status.success()
+    output.status.code()
 }
 
 fn map_exit_status(status: std::process::ExitStatus, canceled: bool) -> TaskResult {
@@ -4068,7 +4072,10 @@ mod tests {
             timeout_sec: 1,
         };
 
-        assert!(run_completion_gate(&gate, tmp.path(), "task1", &store, &HashMap::new()).await);
+        assert_eq!(
+            run_completion_gate(&gate, tmp.path(), "task1", &store, &HashMap::new()).await,
+            Some(0)
+        );
 
         let stdout = std::fs::read_to_string(store.log_path("task1", LogStream::Stdout)).unwrap();
         let stderr = std::fs::read_to_string(store.log_path("task1", LogStream::Stderr)).unwrap();
@@ -4087,7 +4094,10 @@ mod tests {
             timeout_sec: 1,
         };
 
-        assert!(!run_completion_gate(&gate, tmp.path(), "task1", &store, &HashMap::new()).await);
+        assert_eq!(
+            run_completion_gate(&gate, tmp.path(), "task1", &store, &HashMap::new()).await,
+            None
+        );
 
         let stderr = std::fs::read_to_string(store.log_path("task1", LogStream::Stderr)).unwrap();
         assert!(stderr.contains("timed out"));
