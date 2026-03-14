@@ -1026,6 +1026,12 @@ fn validate_completion_gates(context: &str, gates: &[CompletionGate]) -> Result<
         if gate.command.trim().is_empty() {
             bail!("{context} gate '{}' has empty command", gate.name);
         }
+        if gate.timeout_sec == 0 {
+            bail!(
+                "{context} gate '{}' has timeout_sec of 0 (must be > 0)",
+                gate.name
+            );
+        }
         if !gate_names.insert(gate.name.clone()) {
             bail!("{context} has duplicate gate name '{}'", gate.name);
         }
