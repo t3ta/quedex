@@ -8,6 +8,14 @@ use anyhow::{Context, Result};
 pub struct WorktreeConfig {
     pub enabled: bool,
     pub base_dir: Option<PathBuf>,
+    /// DEPRECATED: This field has no effect.
+    /// Git worktree does not support shallow clone (--depth option).
+    /// Shallow clone is only available with `git clone`, not `git worktree add`.
+    /// This field is kept for backward compatibility but will be ignored.
+    #[deprecated(
+        since = "0.2.0",
+        note = "git worktree does not support shallow depth; this field has no effect"
+    )]
     pub shallow_depth: Option<u32>,
 }
 

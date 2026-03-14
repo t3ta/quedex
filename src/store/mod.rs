@@ -6,6 +6,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub mod cached;
 pub mod fs;
 pub mod recovery;
 
@@ -129,4 +130,47 @@ pub trait Store: Send + Sync {
     fn save_context(&self, key: &str, content: &[u8]) -> Result<()>;
     /// Load shared context data by key.
     fn get_context(&self, key: &str) -> Result<Vec<u8>>;
+    /// Save shared context data with versioning metadata.
+    /// This enables optimistic locking and audit tracking.
+    fn save_context_versioned(
+        &self,
+        key: &str,
+        content: &[u8],
+        updated_by: &str,
+        expected_version: Option<u64>,
+    ) -> Result<ContextMetadata>;
+    /// Get metadata for a context entry without loading the content.
+    fn get_context_metadata(&self, key: &str) -> Result<Option<ContextMetadata>>;
+}
+
+/// Metadata for versioned context entries.
+/// Used for optimistic locking and audit tracking.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextMetadata {
+    /// Version number, incremented on each update.
+    pub version: u64,
+    /// Identifier of the task/entity that last updated this context.
+    pub updated_by: String,
+    /// Timestamp of the last update.
+    pub updated_at: DateTime<Utc>,
+}
+
+impl ContextMetadata {
+    /// Create a new metadata entry for the first version.
+    pub fn new(updated_by: String) -> Self {
+        Self {
+            version: 1,
+            updated_by,
+            updated_at: Utc::now(),
+        }
+    }
+
+    /// Create a new version by incrementing the version number.
+    pub fn next_version(&self, updated_by: String) -> Self {
+        Self {
+            version: self.version + 1,
+            updated_by,
+            updated_at: Utc::now(),
+        }
+    }
 }

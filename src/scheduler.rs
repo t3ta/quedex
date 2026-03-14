@@ -670,3 +670,446 @@ fn all_done(states: &HashMap<TaskId, TaskRecord>) -> bool {
         )
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plan::{ConditionStatus, EnvCondition, TaskCondition, TaskMode, TaskResultCondition};
+
+    fn make_task_spec(id: &str, deps: Vec<&str>, condition: Option<TaskCondition>) -> TaskSpec {
+        TaskSpec {
+            id: id.to_string(),
+            deps: deps.into_iter().map(String::from).collect(),
+            locks: vec![],
+            output_files: None,
+            condition,
+            title: None,
+            mode: TaskMode::Implement,
+            auto_commit: false,
+            squash: false,
+        }
+    }
+
+    fn make_record(status: TaskStatus, skip_reason: Option<SkipReason>) -> TaskRecord {
+        TaskRecord {
+            status,
+            exit_code: None,
+            skip_reason,
+        }
+    }
+
+    // ==================== deps_satisfied tests ====================
+
+    #[test]
+    fn test_deps_satisfied_no_deps() {
+        let task = make_task_spec("task_a", vec![], None);
+        let states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        assert!(deps_satisfied(&task, &states));
+    }
+
+    #[test]
+    fn test_deps_satisfied_all_succeeded() {
+        let task = make_task_spec("task_c", vec!["task_a", "task_b"], None);
+        let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        states.insert("task_a".to_string(), make_record(TaskStatus::Succeeded, None));
+        states.insert("task_b".to_string(), make_record(TaskStatus::Succeeded, None));
+        assert!(deps_satisfied(&task, &states));
+    }
+
+    #[test]
+    fn test_deps_satisfied_one_pending() {
+        let task = make_task_spec("task_c", vec!["task_a", "task_b"], None);
+        let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        states.insert("task_a".to_string(), make_record(TaskStatus::Succeeded, None));
+        states.insert("task_b".to_string(), make_record(TaskStatus::Pending, None));
+        assert!(!deps_satisfied(&task, &states));
+    }
+
+    #[test]
+    fn test_deps_satisfied_one_running() {
+        let task = make_task_spec("task_c", vec!["task_a", "task_b"], None);
+        let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        states.insert("task_a".to_string(), make_record(TaskStatus::Succeeded, None));
+        states.insert("task_b".to_string(), make_record(TaskStatus::Running, None));
+        assert!(!deps_satisfied(&task, &states));
+    }
+
+    #[test]
+    fn test_deps_satisfied_condition_skipped() {
+        // Condition-skipped dependencies should be treated as success
+        let task = make_task_spec("task_b", vec!["task_a"], None);
+        let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        states.insert(
+            "task_a".to_string(),
+            make_record(
+                TaskStatus::Skipped,
+                Some(SkipReason::ConditionNotMet {
+                    condition: "env TEST".to_string(),
+                }),
+            ),
+        );
+        assert!(deps_satisfied(&task, &states));
+    }
+
+    #[test]
+    fn test_deps_satisfied_fail_fast_skipped_not_satisfied() {
+        // FailFast-skipped dependencies are NOT treated as satisfied
+        let task = make_task_spec("task_b", vec!["task_a"], None);
+        let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        states.insert(
+            "task_a".to_string(),
+            make_record(TaskStatus::Skipped, Some(SkipReason::FailFast)),
+        );
+        assert!(!deps_satisfied(&task, &states));
+    }
+
+    #[test]
+    fn test_deps_satisfied_expected_failure() {
+        // When task condition expects a dependency to fail, that failure is treated as satisfied
+        let condition = TaskCondition::TaskResult(TaskResultCondition {
+            task: "task_a".to_string(),
+            status: ConditionStatus::Failed,
+        });
+        let task = make_task_spec("task_b", vec!["task_a"], Some(condition));
+        let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        states.insert("task_a".to_string(), make_record(TaskStatus::Failed, None));
+        assert!(deps_satisfied(&task, &states));
+    }
+
+    #[test]
+    fn test_deps_satisfied_unexpected_failure() {
+        // When task does not expect failure, a failed dependency is not satisfied
+        let task = make_task_spec("task_b", vec!["task_a"], None);
+        let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        states.insert("task_a".to_string(), make_record(TaskStatus::Failed, None));
+        assert!(!deps_satisfied(&task, &states));
+    }
+
+    #[test]
+    fn test_deps_satisfied_missing_dep() {
+        // If dependency is not in states map, it's not satisfied
+        let task = make_task_spec("task_b", vec!["task_a"], None);
+        let states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        assert!(!deps_satisfied(&task, &states));
+    }
+
+    // ==================== evaluate_condition tests ====================
+
+    #[test]
+    fn test_evaluate_condition_env_equals_match() {
+        let condition = TaskCondition::Env(EnvCondition {
+            env: "MY_VAR".to_string(),
+            equals: Some("expected_value".to_string()),
+            not_equals: None,
+            exists: None,
+        });
+        let states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        let mut env_vars: HashMap<String, String> = HashMap::new();
+        env_vars.insert("MY_VAR".to_string(), "expected_value".to_string());
+
+        let (result, desc) = evaluate_condition(&condition, &states, &env_vars);
+        assert!(result);
+        assert!(desc.contains("MY_VAR"));
+    }
+
+    #[test]
+    fn test_evaluate_condition_env_equals_no_match() {
+        let condition = TaskCondition::Env(EnvCondition {
+            env: "MY_VAR".to_string(),
+            equals: Some("expected_value".to_string()),
+            not_equals: None,
+            exists: None,
+        });
+        let states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        let mut env_vars: HashMap<String, String> = HashMap::new();
+        env_vars.insert("MY_VAR".to_string(), "different_value".to_string());
+
+        let (result, _) = evaluate_condition(&condition, &states, &env_vars);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_evaluate_condition_env_equals_missing() {
+        let condition = TaskCondition::Env(EnvCondition {
+            env: "MY_VAR".to_string(),
+            equals: Some("expected_value".to_string()),
+            not_equals: None,
+            exists: None,
+        });
+        let states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        let env_vars: HashMap<String, String> = HashMap::new();
+
+        let (result, _) = evaluate_condition(&condition, &states, &env_vars);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_evaluate_condition_env_not_equals_match() {
+        let condition = TaskCondition::Env(EnvCondition {
+            env: "MY_VAR".to_string(),
+            equals: None,
+            not_equals: Some("forbidden_value".to_string()),
+            exists: None,
+        });
+        let states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        let mut env_vars: HashMap<String, String> = HashMap::new();
+        env_vars.insert("MY_VAR".to_string(), "allowed_value".to_string());
+
+        let (result, _) = evaluate_condition(&condition, &states, &env_vars);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_evaluate_condition_env_not_equals_forbidden() {
+        let condition = TaskCondition::Env(EnvCondition {
+            env: "MY_VAR".to_string(),
+            equals: None,
+            not_equals: Some("forbidden_value".to_string()),
+            exists: None,
+        });
+        let states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        let mut env_vars: HashMap<String, String> = HashMap::new();
+        env_vars.insert("MY_VAR".to_string(), "forbidden_value".to_string());
+
+        let (result, _) = evaluate_condition(&condition, &states, &env_vars);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_evaluate_condition_env_not_equals_missing() {
+        // When env var is missing and not_equals is set, it should be true
+        // (a missing value can't equal the forbidden value)
+        let condition = TaskCondition::Env(EnvCondition {
+            env: "MY_VAR".to_string(),
+            equals: None,
+            not_equals: Some("forbidden_value".to_string()),
+            exists: None,
+        });
+        let states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        let env_vars: HashMap<String, String> = HashMap::new();
+
+        let (result, _) = evaluate_condition(&condition, &states, &env_vars);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_evaluate_condition_env_exists_true() {
+        let condition = TaskCondition::Env(EnvCondition {
+            env: "MY_VAR".to_string(),
+            equals: None,
+            not_equals: None,
+            exists: Some(true),
+        });
+        let states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        let mut env_vars: HashMap<String, String> = HashMap::new();
+        env_vars.insert("MY_VAR".to_string(), "any_value".to_string());
+
+        let (result, _) = evaluate_condition(&condition, &states, &env_vars);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_evaluate_condition_env_exists_false() {
+        let condition = TaskCondition::Env(EnvCondition {
+            env: "MY_VAR".to_string(),
+            equals: None,
+            not_equals: None,
+            exists: Some(false),
+        });
+        let states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        let env_vars: HashMap<String, String> = HashMap::new();
+
+        let (result, _) = evaluate_condition(&condition, &states, &env_vars);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_evaluate_condition_env_default_exists() {
+        // When no condition field is set, defaults to checking existence
+        let condition = TaskCondition::Env(EnvCondition {
+            env: "MY_VAR".to_string(),
+            equals: None,
+            not_equals: None,
+            exists: None,
+        });
+        let states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        let mut env_vars: HashMap<String, String> = HashMap::new();
+        env_vars.insert("MY_VAR".to_string(), "any_value".to_string());
+
+        let (result, _) = evaluate_condition(&condition, &states, &env_vars);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_evaluate_condition_task_result_succeeded() {
+        let condition = TaskCondition::TaskResult(TaskResultCondition {
+            task: "task_a".to_string(),
+            status: ConditionStatus::Succeeded,
+        });
+        let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        states.insert("task_a".to_string(), make_record(TaskStatus::Succeeded, None));
+        let env_vars: HashMap<String, String> = HashMap::new();
+
+        let (result, desc) = evaluate_condition(&condition, &states, &env_vars);
+        assert!(result);
+        assert!(desc.contains("task_a"));
+        assert!(desc.contains("Succeeded"));
+    }
+
+    #[test]
+    fn test_evaluate_condition_task_result_failed() {
+        let condition = TaskCondition::TaskResult(TaskResultCondition {
+            task: "task_a".to_string(),
+            status: ConditionStatus::Failed,
+        });
+        let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        states.insert("task_a".to_string(), make_record(TaskStatus::Failed, None));
+        let env_vars: HashMap<String, String> = HashMap::new();
+
+        let (result, _) = evaluate_condition(&condition, &states, &env_vars);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_evaluate_condition_task_result_mismatch() {
+        let condition = TaskCondition::TaskResult(TaskResultCondition {
+            task: "task_a".to_string(),
+            status: ConditionStatus::Succeeded,
+        });
+        let mut states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        states.insert("task_a".to_string(), make_record(TaskStatus::Failed, None));
+        let env_vars: HashMap<String, String> = HashMap::new();
+
+        let (result, _) = evaluate_condition(&condition, &states, &env_vars);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_evaluate_condition_task_result_missing() {
+        let condition = TaskCondition::TaskResult(TaskResultCondition {
+            task: "task_a".to_string(),
+            status: ConditionStatus::Succeeded,
+        });
+        let states: HashMap<TaskId, TaskRecord> = HashMap::new();
+        let env_vars: HashMap<String, String> = HashMap::new();
+
+        let (result, _) = evaluate_condition(&condition, &states, &env_vars);
+        assert!(!result);
+    }
+
+    // ==================== Lock tests ====================
+
+    #[test]
+    fn test_init_lock_table() {
+        let mut tasks: HashMap<TaskId, TaskSpec> = HashMap::new();
+        tasks.insert(
+            "task_a".to_string(),
+            TaskSpec {
+                id: "task_a".to_string(),
+                deps: vec![],
+                locks: vec!["lock1".to_string(), "lock2".to_string()],
+                output_files: None,
+                condition: None,
+                title: None,
+                mode: TaskMode::Implement,
+                auto_commit: false,
+                squash: false,
+            },
+        );
+        tasks.insert(
+            "task_b".to_string(),
+            TaskSpec {
+                id: "task_b".to_string(),
+                deps: vec![],
+                locks: vec!["lock2".to_string(), "lock3".to_string()],
+                output_files: None,
+                condition: None,
+                title: None,
+                mode: TaskMode::Implement,
+                auto_commit: false,
+                squash: false,
+            },
+        );
+
+        let lock_table = init_lock_table(&tasks);
+        assert_eq!(lock_table.len(), 3);
+        assert_eq!(lock_table.get("lock1"), Some(&None));
+        assert_eq!(lock_table.get("lock2"), Some(&None));
+        assert_eq!(lock_table.get("lock3"), Some(&None));
+    }
+
+    #[test]
+    fn test_try_acquire_locks_empty() {
+        let lock_table = Arc::new(Mutex::new(HashMap::new()));
+        let result = try_acquire_locks(&lock_table, &"task_a".to_string(), &[]);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_try_acquire_locks_success() {
+        let mut initial: LockTable = HashMap::new();
+        initial.insert("lock1".to_string(), None);
+        initial.insert("lock2".to_string(), None);
+        let lock_table = Arc::new(Mutex::new(initial));
+
+        let result = try_acquire_locks(
+            &lock_table,
+            &"task_a".to_string(),
+            &["lock1".to_string(), "lock2".to_string()],
+        );
+        assert!(result);
+
+        // Verify locks are held by task_a
+        let table = lock_table.lock().unwrap();
+        assert_eq!(table.get("lock1"), Some(&Some("task_a".to_string())));
+        assert_eq!(table.get("lock2"), Some(&Some("task_a".to_string())));
+    }
+
+    #[test]
+    fn test_try_acquire_locks_conflict() {
+        let mut initial: LockTable = HashMap::new();
+        initial.insert("lock1".to_string(), None);
+        initial.insert("lock2".to_string(), Some("task_b".to_string())); // Already held
+        let lock_table = Arc::new(Mutex::new(initial));
+
+        let result = try_acquire_locks(
+            &lock_table,
+            &"task_a".to_string(),
+            &["lock1".to_string(), "lock2".to_string()],
+        );
+        assert!(!result);
+
+        // Verify lock1 was NOT acquired (atomic failure)
+        let table = lock_table.lock().unwrap();
+        assert_eq!(table.get("lock1"), Some(&None));
+        assert_eq!(table.get("lock2"), Some(&Some("task_b".to_string())));
+    }
+
+    #[test]
+    fn test_release_locks() {
+        let mut initial: LockTable = HashMap::new();
+        initial.insert("lock1".to_string(), Some("task_a".to_string()));
+        initial.insert("lock2".to_string(), Some("task_a".to_string()));
+        initial.insert("lock3".to_string(), Some("task_b".to_string())); // Held by different task
+        let lock_table = Arc::new(Mutex::new(initial));
+
+        release_locks(
+            &lock_table,
+            &"task_a".to_string(),
+            &["lock1".to_string(), "lock2".to_string(), "lock3".to_string()],
+        );
+
+        // Verify only task_a's locks were released
+        let table = lock_table.lock().unwrap();
+        assert_eq!(table.get("lock1"), Some(&None));
+        assert_eq!(table.get("lock2"), Some(&None));
+        assert_eq!(table.get("lock3"), Some(&Some("task_b".to_string()))); // Not released
+    }
+
+    #[test]
+    fn test_release_locks_empty() {
+        let lock_table = Arc::new(Mutex::new(HashMap::new()));
+        // Should not panic
+        release_locks(&lock_table, &"task_a".to_string(), &[]);
+    }
+}

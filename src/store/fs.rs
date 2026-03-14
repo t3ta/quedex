@@ -255,4 +255,114 @@ impl Store for FsStore {
         fs::read(&context_path)
             .with_context(|| format!("read context '{}' at {}", key, context_path.display()))
     }
+
+    fn save_context_versioned(
+        &self,
+        key: &str,
+        content: &[u8],
+        updated_by: &str,
+        expected_version: Option<u64>,
+    ) -> Result<super::ContextMetadata> {
+        use super::ContextMetadata;
+
+        if key.trim().is_empty() {
+            bail!("context key is empty");
+        }
+        if !key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+            bail!("context key '{}' contains invalid characters", key);
+        }
+
+        let context_dir = self.context_dir();
+        fs::create_dir_all(&context_dir)?;
+
+        let meta_path = context_dir.join(format!("{}.meta", key));
+
+        // Acquire exclusive file lock to prevent concurrent writers
+        let lock_path = context_dir.join(format!("{}.lock", key));
+        let lock_file = File::create(&lock_path)?;
+        use std::os::unix::io::AsRawFd;
+        let fd = lock_file.as_raw_fd();
+        let ret = unsafe { libc::flock(fd, libc::LOCK_EX) };
+        if ret != 0 {
+            bail!(
+                "failed to acquire lock for context '{}': {}",
+                key,
+                std::io::Error::last_os_error()
+            );
+        }
+
+        // Load existing metadata if present (under lock)
+        let existing_meta: Option<ContextMetadata> = if meta_path.exists() {
+            let meta_content = fs::read_to_string(&meta_path)?;
+            Some(serde_json::from_str(&meta_content)?)
+        } else {
+            None
+        };
+
+        // Optimistic locking check
+        if let Some(expected) = expected_version {
+            let current_version = existing_meta.as_ref().map(|m| m.version).unwrap_or(0);
+            if current_version != expected {
+                bail!(
+                    "context '{}' version conflict: expected {}, got {}",
+                    key,
+                    expected,
+                    current_version
+                );
+            }
+        }
+
+        // Create new metadata
+        let new_meta = if let Some(ref old_meta) = existing_meta {
+            old_meta.next_version(updated_by.to_string())
+        } else {
+            ContextMetadata::new(updated_by.to_string())
+        };
+
+        // Save content (atomic write)
+        let content_path = context_dir.join(key);
+        let tmp_content_path = context_dir.join(format!("{}.tmp", key));
+        {
+            let mut file = File::create(&tmp_content_path)?;
+            file.write_all(content)?;
+            file.sync_all()?;
+        }
+        fs::rename(&tmp_content_path, &content_path)?;
+
+        // Save metadata (atomic write)
+        let tmp_meta_path = context_dir.join(format!("{}.meta.tmp", key));
+        {
+            let meta_json = serde_json::to_string_pretty(&new_meta)?;
+            let mut file = File::create(&tmp_meta_path)?;
+            file.write_all(meta_json.as_bytes())?;
+            file.write_all(b"\n")?;
+            file.sync_all()?;
+        }
+        fs::rename(&tmp_meta_path, &meta_path)?;
+
+        // Lock is released when lock_file is dropped
+        Ok(new_meta)
+    }
+
+    fn get_context_metadata(&self, key: &str) -> Result<Option<super::ContextMetadata>> {
+        use super::ContextMetadata;
+
+        if key.trim().is_empty() {
+            bail!("context key is empty");
+        }
+        if !key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+            bail!("context key '{}' contains invalid characters", key);
+        }
+
+        let meta_path = self.context_dir().join(format!("{}.meta", key));
+        if !meta_path.exists() {
+            return Ok(None);
+        }
+
+        let meta_content = fs::read_to_string(&meta_path)
+            .with_context(|| format!("read context metadata '{}' at {}", key, meta_path.display()))?;
+        let meta: ContextMetadata = serde_json::from_str(&meta_content)
+            .with_context(|| format!("parse context metadata '{}'", key))?;
+        Ok(Some(meta))
+    }
 }

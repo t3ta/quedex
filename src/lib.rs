@@ -1,3 +1,5 @@
+pub mod circuit_breaker;
+pub mod telemetry;
 pub mod config;
 pub mod dry_run;
 pub mod git;

@@ -887,6 +887,7 @@ async fn handle_run(
 
     let store = Arc::new(FsStore::new(&store_root, &run_id)?);
     let cwd = resolve_run_cwd(&plan, plan_base_dir)?;
+    #[allow(deprecated)]
     let worktree_manager = plan.run.worktree.as_ref().and_then(|wt_config| {
         if wt_config.enabled {
             Some(Arc::new(WorktreeManager::new(
@@ -1602,6 +1603,7 @@ async fn handle_retry(
 
     let base_dir = env::current_dir().context("resolve current dir for retry")?;
     let cwd = resolve_run_cwd(&plan, base_dir)?;
+    #[allow(deprecated)]
     let worktree_manager = plan.run.worktree.as_ref().and_then(|wt_config| {
         if wt_config.enabled {
             Some(Arc::new(WorktreeManager::new(
@@ -3248,13 +3250,21 @@ impl TaskRunner for PlanTaskRunner {
                 }
 
                 if attempt > 1 {
+                    // Calculate delay with backoff and jitter if strategy is configured
+                    let delay_sec = if let Some(ref strategy) = retry_strategy {
+                        strategy.calculate_delay(retry_delay_sec, attempt - 1)
+                    } else {
+                        retry_delay_sec
+                    };
+
                     eprintln!(
-                        "task {task_id} retry attempt {}/{} after failure",
+                        "task {task_id} retry attempt {}/{} after failure (delay: {}s)",
                         attempt - 1,
-                        retry_count
+                        retry_count,
+                        delay_sec
                     );
-                    if retry_delay_sec > 0 {
-                        tokio::time::sleep(Duration::from_secs(retry_delay_sec)).await;
+                    if delay_sec > 0 {
+                        tokio::time::sleep(Duration::from_secs(delay_sec)).await;
                     }
 
                     // Restore original prompts and models to prevent accumulation
@@ -3365,8 +3375,29 @@ impl TaskRunner for PlanTaskRunner {
 
                 let result = map_exit_status(status, cancel.is_canceled());
 
-                // If failed but have retries remaining, continue
+                // If failed but have retries remaining, check if we should retry
                 if result.status == TaskStatus::Failed && attempt < max_attempts {
+                    // Check if this is a permanent failure that should not be retried
+                    if let Some(ref strategy) = retry_strategy {
+                        if strategy.skip_permanent_failures {
+                            let stderr_path = task_ctx.store.log_path(&task_id, LogStream::Stderr);
+                            let stderr_tail = std::fs::read_to_string(&stderr_path)
+                                .unwrap_or_default();
+                            let failure_type = quedex::plan::FailureType::classify(
+                                result.exit_code,
+                                &stderr_tail,
+                            );
+                            if !failure_type.should_retry() {
+                                eprintln!(
+                                    "task {task_id} failed with permanent failure (exit code {:?}), skipping retry",
+                                    result.exit_code
+                                );
+                                let _ = state.task_finished(&task_id, result.status, result.exit_code);
+                                break result;
+                            }
+                        }
+                    }
+
                     eprintln!(
                         "task {task_id} failed with exit code {:?}, will retry",
                         result.exit_code
