@@ -74,6 +74,11 @@ pub struct RunConfig {
     pub max_concurrency_by_mode: Option<HashMap<String, usize>>,
     #[serde(default)]
     pub fail_fast: Option<bool>,
+    /// Default stall timeout in seconds for all tasks.
+    /// If a task produces no output for this duration, it is killed.
+    /// Set to 0 to disable. Individual tasks can override with their own stall_timeout_sec.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stall_timeout_sec: Option<u64>,
     #[serde(
         rename = "default_timeout_sec",
         default,
@@ -591,6 +596,11 @@ pub struct Task {
     /// Condition for conditional execution. If the condition is not met, the task is skipped.
     #[serde(default)]
     pub condition: Option<TaskCondition>,
+    /// Stall timeout in seconds for this task.
+    /// If the task produces no output for this duration, it is killed.
+    /// Set to 0 to disable. None falls back to run.stall_timeout_sec.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stall_timeout_sec: Option<u64>,
     /// Whether to create a git commit after this task succeeds (default: true)
     /// Only applicable for Implement and Verify modes, ignored for Research mode
     #[serde(default = "default_auto_commit")]
@@ -1091,7 +1101,7 @@ mod tests {
         let delay = strategy.calculate_delay(base, 1);
         // Delay should be at least 1 (minimum) and within reasonable range
         assert!(delay >= 1);
-        assert!(delay >= 50 && delay <= 150); // 100 ± 50%
+        assert!((50..=150).contains(&delay)); // 100 ± 50%
     }
 
     #[test]
@@ -1261,6 +1271,7 @@ mod tests {
                 retry_strategy: None,
                 context: None,
                 condition: None,
+                stall_timeout_sec: None,
                 auto_commit: true,
                 squash: false,
             }],
@@ -1313,6 +1324,7 @@ mod tests {
                 retry_strategy: None,
                 context: None,
                 condition: None,
+                stall_timeout_sec: None,
                 auto_commit: true,
                 squash: false,
             }],

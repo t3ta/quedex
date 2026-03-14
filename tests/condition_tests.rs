@@ -539,6 +539,7 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
         retry_delay_sec: 0,
         retry_strategy: None,
         context: None,
+        stall_timeout_sec: None,
         auto_commit: true,
         squash: false,
         condition: Some(TaskCondition::TaskResult(TaskResultCondition {
@@ -596,6 +597,7 @@ fn plan_rejects_condition_referencing_self() {
         retry_delay_sec: 0,
         retry_strategy: None,
         context: None,
+        stall_timeout_sec: None,
         auto_commit: true,
         squash: false,
         condition: Some(TaskCondition::TaskResult(TaskResultCondition {

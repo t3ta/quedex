@@ -51,6 +51,12 @@ pub enum Event {
         #[serde(rename = "ts")]
         timestamp: DateTime<Utc>,
     },
+    TaskStalled {
+        task_id: String,
+        stall_timeout_sec: u64,
+        #[serde(rename = "ts")]
+        timestamp: DateTime<Utc>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

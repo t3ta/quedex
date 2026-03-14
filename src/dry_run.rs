@@ -242,6 +242,7 @@ mod tests {
                 max_concurrency: None,
                 max_concurrency_by_mode: None,
                 fail_fast: None,
+                stall_timeout_sec: None,
                 _default_timeout_sec_rejected: None,
                 _timeout_sec_rejected: None,
                 notifications: None,
@@ -286,6 +287,7 @@ mod tests {
             retry_strategy: None,
             context: None,
             condition: None,
+            stall_timeout_sec: None,
         }
     }
 

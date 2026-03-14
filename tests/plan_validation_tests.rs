@@ -32,6 +32,7 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
         retry_strategy: None,
         context: None,
         condition: None,
+        stall_timeout_sec: None,
         auto_commit: true,
         squash: false,
     }
@@ -64,6 +65,7 @@ fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
         retry_strategy: None,
         context: None,
         condition: None,
+        stall_timeout_sec: None,
         auto_commit: true,
         squash: false,
     }
@@ -138,6 +140,7 @@ fn plan_rejects_empty_codex_prompt() {
         retry_strategy: None,
         context: None,
         condition: None,
+        stall_timeout_sec: None,
         auto_commit: true,
         squash: false,
     };
@@ -173,6 +176,7 @@ fn plan_rejects_empty_claude_code_prompt() {
         retry_strategy: None,
         context: None,
         condition: None,
+        stall_timeout_sec: None,
         auto_commit: true,
         squash: false,
     };
@@ -215,6 +219,7 @@ fn plan_rejects_multiple_runner_configs() {
         retry_strategy: None,
         context: None,
         condition: None,
+        stall_timeout_sec: None,
         auto_commit: true,
         squash: false,
     };
@@ -250,6 +255,7 @@ fn plan_accepts_valid_claude_code_task() {
         retry_strategy: None,
         context: None,
         condition: None,
+        stall_timeout_sec: None,
         auto_commit: true,
         squash: false,
     };
@@ -288,6 +294,7 @@ fn plan_rejects_kind_mismatch_claude_code() {
         retry_strategy: None,
         context: None,
         condition: None,
+        stall_timeout_sec: None,
         auto_commit: true,
         squash: false,
     };
@@ -323,6 +330,7 @@ fn plan_rejects_empty_opencode_prompt() {
         retry_strategy: None,
         context: None,
         condition: None,
+        stall_timeout_sec: None,
         auto_commit: true,
         squash: false,
     };
@@ -376,6 +384,7 @@ fn plan_accepts_valid_opencode_task() {
         retry_strategy: None,
         context: None,
         condition: None,
+        stall_timeout_sec: None,
         auto_commit: true,
         squash: false,
     };
@@ -414,6 +423,7 @@ fn plan_rejects_kind_mismatch_opencode() {
         retry_strategy: None,
         context: None,
         condition: None,
+        stall_timeout_sec: None,
         auto_commit: true,
         squash: false,
     };
@@ -453,6 +463,7 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
         retry_strategy: None,
         context: None,
         condition: None,
+        stall_timeout_sec: None,
         auto_commit: true,
         squash: false,
     };

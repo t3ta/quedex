@@ -1104,6 +1104,7 @@ async fn handle_run(
     let runner = PlanTaskRunner::new(
         Arc::new(tasks_map),
         Arc::new(plan.profiles.clone()),
+        plan.run.stall_timeout_sec,
         ctx,
         state_handle.clone(),
         cancel.clone(),
@@ -1783,6 +1784,7 @@ async fn handle_retry(
     let runner = PlanTaskRunner::new(
         Arc::new(tasks_map),
         Arc::new(plan.profiles.clone()),
+        plan.run.stall_timeout_sec,
         ctx,
         state_handle.clone(),
         cancel,
@@ -3162,6 +3164,7 @@ impl CancelHandle {
 struct PlanTaskRunner {
     tasks: Arc<HashMap<String, Task>>,
     profiles: Arc<HashMap<String, quedex::plan::AgentProfile>>,
+    default_stall_timeout_sec: Option<u64>,
     ctx: RunContext,
     state: StateHandle,
     cancel: CancelHandle,
@@ -3175,6 +3178,7 @@ impl PlanTaskRunner {
     fn new(
         tasks: Arc<HashMap<String, Task>>,
         profiles: Arc<HashMap<String, quedex::plan::AgentProfile>>,
+        default_stall_timeout_sec: Option<u64>,
         ctx: RunContext,
         state: StateHandle,
         cancel: CancelHandle,
@@ -3183,6 +3187,7 @@ impl PlanTaskRunner {
         Self {
             tasks,
             profiles,
+            default_stall_timeout_sec,
             ctx,
             state,
             cancel,
@@ -3200,6 +3205,7 @@ impl TaskRunner for PlanTaskRunner {
     fn spawn(&self, task_spec: TaskSpec) -> Self::Future {
         let tasks = Arc::clone(&self.tasks);
         let profiles = Arc::clone(&self.profiles);
+        let default_stall_timeout_sec = self.default_stall_timeout_sec;
         let ctx = self.ctx.clone();
         let state = self.state.clone();
         let cancel = self.cancel.clone();
@@ -3425,8 +3431,59 @@ impl TaskRunner for PlanTaskRunner {
                 cancel.register(&task_id, child.clone());
                 let _ = state.task_started(&task_id, child.pid);
 
-                let wait_future = tokio::task::spawn_blocking(move || child.wait());
-                let wait_result = wait_future.await;
+                let stall_timeout = task.stall_timeout_sec.or(default_stall_timeout_sec);
+                let child_for_wait = child.clone();
+                let mut wait_future = tokio::task::spawn_blocking(move || child_for_wait.wait());
+
+                let wait_result = if let Some(stall_timeout_sec) = stall_timeout.filter(|t| *t > 0)
+                {
+                    let child_for_stall = child.clone();
+                    let store = Arc::clone(&task_ctx.store);
+                    let stalled_task_id = task_id.clone();
+                    let mut stall_handle = tokio::spawn(async move {
+                        let mut last_size = get_output_size(&child_for_stall);
+                        let mut idle_seconds = 0u64;
+
+                        loop {
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            let current_size = get_output_size(&child_for_stall);
+                            if current_size != last_size {
+                                last_size = current_size;
+                                idle_seconds = 0;
+                                continue;
+                            }
+
+                            idle_seconds += 1;
+                            if idle_seconds >= stall_timeout_sec {
+                                let _ = child_for_stall.kill();
+                                let _ = store.append_event(Event::TaskStalled {
+                                    task_id: stalled_task_id,
+                                    stall_timeout_sec,
+                                    timestamp: Utc::now(),
+                                });
+                                return true;
+                            }
+                        }
+                    });
+
+                    tokio::select! {
+                        wait_result = &mut wait_future => {
+                            stall_handle.abort();
+                            wait_result
+                        }
+                        stall_result = &mut stall_handle => {
+                            let stalled = stall_result.unwrap_or(false);
+                            let wait_result = wait_future.await;
+                            if stalled {
+                                Ok(Err(anyhow!("task stalled after {stall_timeout_sec}s without output")))
+                            } else {
+                                wait_result
+                            }
+                        }
+                    }
+                } else {
+                    wait_future.await
+                };
 
                 cancel.unregister(&task_id);
 
@@ -3537,7 +3594,9 @@ impl TaskRunner for PlanTaskRunner {
                     match task_ctx.store.save_output(&task_id, output_file, &content) {
                         Ok(_) => saved_outputs.push(output_file.clone()),
                         Err(err) => {
-                            eprintln!("task {task_id} output save error for {output_file}: {err:#}");
+                            eprintln!(
+                                "task {task_id} output save error for {output_file}: {err:#}"
+                            );
                         }
                     }
                 }
@@ -3591,6 +3650,16 @@ impl TaskRunner for PlanTaskRunner {
             result
         })
     }
+}
+
+fn get_output_size(child: &ChildHandle) -> u64 {
+    let stdout_size = fs::metadata(&child.stdout_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let stderr_size = fs::metadata(&child.stderr_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    stdout_size + stderr_size
 }
 
 fn map_exit_status(status: std::process::ExitStatus, canceled: bool) -> TaskResult {

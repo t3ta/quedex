@@ -89,8 +89,7 @@ pub async fn get_state(
                     let state_path = entry.path().join("state.json");
                     if state_path.exists()
                         && let Ok(content) = std::fs::read_to_string(&state_path)
-                        && let Ok(run_state) =
-                            serde_json::from_str::<serde_json::Value>(&content)
+                        && let Ok(run_state) = serde_json::from_str::<serde_json::Value>(&content)
                     {
                         runs.push(run_state);
                     }
