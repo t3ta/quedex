@@ -188,12 +188,11 @@ impl Store for FsStore {
                     files.push(path);
                     continue;
                 }
-                if file_type.is_symlink() {
-                    if let Ok(metadata) = fs::metadata(&path) {
-                        if metadata.is_file() {
-                            files.push(path);
-                        }
-                    }
+                if file_type.is_symlink()
+                    && let Ok(metadata) = fs::metadata(&path)
+                    && metadata.is_file()
+                {
+                    files.push(path);
                 }
             }
         }

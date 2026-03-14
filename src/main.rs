@@ -514,7 +514,7 @@ fn handle_history(
     }
 
     let mut states = list_states(&store_root)?;
-    states.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    states.sort_by_key(|state| std::cmp::Reverse(state.started_at));
 
     let display_limit = if all { states.len() } else { limit };
     let states: Vec<_> = states.into_iter().take(display_limit).collect();
@@ -1233,7 +1233,7 @@ fn handle_status(
     }
 
     let mut states = list_states(&store_root)?;
-    states.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    states.sort_by_key(|state| std::cmp::Reverse(state.started_at));
 
     if json {
         let text = serde_json::to_string_pretty(&states)?;
@@ -1405,12 +1405,11 @@ fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
                 files.push(path);
                 continue;
             }
-            if file_type.is_symlink() {
-                if let Ok(metadata) = fs::metadata(&path) {
-                    if metadata.is_file() {
-                        files.push(path);
-                    }
-                }
+            if file_type.is_symlink()
+                && let Ok(metadata) = fs::metadata(&path)
+                && metadata.is_file()
+            {
+                files.push(path);
             }
         }
     }
@@ -1570,11 +1569,8 @@ async fn handle_retry(
     }
 
     if tasks_to_retry.is_empty() {
-        if group.is_some() {
-            println!(
-                "No retryable tasks found in group '{}'",
-                group.as_ref().unwrap()
-            );
+        if let Some(group_name) = group.as_ref() {
+            println!("No retryable tasks found in group '{}'", group_name);
             return Ok(0);
         }
         return Err(anyhow!("no tasks to retry"));
@@ -1586,35 +1582,35 @@ async fn handle_retry(
 
     let mut downstream_tasks: Vec<Task> = Vec::new();
     for task in &plan.tasks {
-        if downstream_task_ids.contains(&task.id) {
-            if let Some(task_state) = state.tasks.get(&task.id) {
-                // Only include Skipped tasks with DependencyFailed or FailFast reason
-                // ConditionNotMet tasks should NOT be auto-retried (condition should be re-evaluated)
-                if task_state.status == TaskStatus::Skipped {
-                    match &task_state.skip_reason {
-                        Some(SkipReason::DependencyFailed) | Some(SkipReason::FailFast) => {
-                            // Check if all non-retry-set dependencies are Succeeded
-                            let task_statuses: HashMap<String, TaskStatus> = state
-                                .tasks
-                                .iter()
-                                .map(|(id, ts)| (id.clone(), ts.status))
-                                .collect();
+        if downstream_task_ids.contains(&task.id)
+            && let Some(task_state) = state.tasks.get(&task.id)
+        {
+            // Only include Skipped tasks with DependencyFailed or FailFast reason
+            // ConditionNotMet tasks should NOT be auto-retried (condition should be re-evaluated)
+            if task_state.status == TaskStatus::Skipped {
+                match &task_state.skip_reason {
+                    Some(SkipReason::DependencyFailed) | Some(SkipReason::FailFast) => {
+                        // Check if all non-retry-set dependencies are Succeeded
+                        let task_statuses: HashMap<String, TaskStatus> = state
+                            .tasks
+                            .iter()
+                            .map(|(id, ts)| (id.clone(), ts.status))
+                            .collect();
 
-                            if has_unsatisfied_external_deps(
-                                &task.deps,
-                                &retry_target_ids,
-                                &task_statuses,
-                            ) {
-                                eprintln!(
-                                    "Note: Excluding downstream task '{}' from retry - has unsatisfied dependencies outside retry set",
-                                    task.id
-                                );
-                            } else {
-                                downstream_tasks.push(task.clone());
-                            }
+                        if has_unsatisfied_external_deps(
+                            &task.deps,
+                            &retry_target_ids,
+                            &task_statuses,
+                        ) {
+                            eprintln!(
+                                "Note: Excluding downstream task '{}' from retry - has unsatisfied dependencies outside retry set",
+                                task.id
+                            );
+                        } else {
+                            downstream_tasks.push(task.clone());
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
         }
@@ -1864,24 +1860,24 @@ fn handle_cancel(
             if !group_task_set.contains(tid) {
                 continue;
             }
-            if task_state.status == TaskStatus::Running {
-                if let Some(pid) = task_state.pid {
-                    if let Err(err) = terminate_pid(pid) {
-                        eprintln!("Warning: failed to terminate pid {pid} for task {tid}: {err}");
-                    } else {
-                        running_cancelled += 1;
-                    }
+            if task_state.status == TaskStatus::Running
+                && let Some(pid) = task_state.pid
+            {
+                if let Err(err) = terminate_pid(pid) {
+                    eprintln!("Warning: failed to terminate pid {pid} for task {tid}: {err}");
+                } else {
+                    running_cancelled += 1;
                 }
             }
         }
 
         // Second pass: mark Pending tasks as Canceled
         for tid in group_task_ids {
-            if let Some(task_state) = state.tasks.get_mut(tid) {
-                if task_state.status == TaskStatus::Pending {
-                    task_state.status = TaskStatus::Canceled;
-                    pending_cancelled += 1;
-                }
+            if let Some(task_state) = state.tasks.get_mut(tid)
+                && task_state.status == TaskStatus::Pending
+            {
+                task_state.status = TaskStatus::Canceled;
+                pending_cancelled += 1;
             }
         }
 
@@ -2518,11 +2514,10 @@ fn select_run_interactive(runs: &[RunInfo]) -> Result<Option<String>> {
                         KeyCode::Up | KeyCode::Char('k') => {
                             selected = selected.saturating_sub(1);
                         }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            if selected < runs.len() - 1 {
-                                selected += 1;
-                            }
+                        KeyCode::Down | KeyCode::Char('j') if selected < runs.len() - 1 => {
+                            selected += 1;
                         }
+                        KeyCode::Down | KeyCode::Char('j') => {}
                         KeyCode::Enter => {
                             return Ok(Some(runs[selected].state.run_id.clone()));
                         }
@@ -2751,12 +2746,13 @@ fn finalize_run_status(state: &State) -> (RunStatus, i32) {
     for task in state.tasks.values() {
         match task.status {
             TaskStatus::Failed => has_failed = true,
-            TaskStatus::Skipped => {
+            TaskStatus::Skipped
+                if !matches!(task.skip_reason, Some(SkipReason::ConditionNotMet { .. })) =>
+            {
                 // Condition-based skips are intentional and not failures
-                if !matches!(task.skip_reason, Some(SkipReason::ConditionNotMet { .. })) {
-                    has_skipped_not_condition = true;
-                }
+                has_skipped_not_condition = true;
             }
+            TaskStatus::Skipped => {}
             TaskStatus::Canceled => has_canceled = true,
             _ => {}
         }
@@ -3225,15 +3221,15 @@ impl TaskRunner for PlanTaskRunner {
             if let Some(profile) = profile {
                 // Profile model override: only if task runner config doesn't specify a model
                 if let Some(ref profile_model) = profile.model {
-                    if let Some(ref mut cc) = task.claude_code {
-                        if cc.model.is_none() {
-                            cc.model = Some(profile_model.clone());
-                        }
+                    if let Some(ref mut cc) = task.claude_code
+                        && cc.model.is_none()
+                    {
+                        cc.model = Some(profile_model.clone());
                     }
-                    if let Some(ref mut oc) = task.opencode {
-                        if oc.model.is_none() {
-                            oc.model = Some(profile_model.clone());
-                        }
+                    if let Some(ref mut oc) = task.opencode
+                        && oc.model.is_none()
+                    {
+                        oc.model = Some(profile_model.clone());
                     }
                 }
             }
@@ -3266,45 +3262,45 @@ impl TaskRunner for PlanTaskRunner {
 
             // Apply profile system_prompt override
             // Priority: task runner config (N/A for system_prompt) > profile > run.system_prompt > quedex.toml
-            if let Some(profile) = profile {
-                if let Some(ref profile_prompt) = profile.system_prompt {
-                    task_ctx.system_prompt = Some(profile_prompt.clone());
-                }
+            if let Some(profile) = profile
+                && let Some(ref profile_prompt) = profile.system_prompt
+            {
+                task_ctx.system_prompt = Some(profile_prompt.clone());
             }
 
             // Inject shared context from upstream tasks into prompt
-            if let Some(ref context_config) = task.context {
-                if let Some(ref injections) = context_config.inject {
-                    let mut context_prefix = String::new();
-                    for inject in injections {
-                        match task_ctx.store.get_context(&inject.from) {
-                            Ok(content) => {
-                                let label = inject.r#as.as_deref().unwrap_or(&inject.from);
-                                let text = String::from_utf8_lossy(&content);
-                                context_prefix.push_str(&format!(
-                                    "--- {} ---\n{}\n--- end {} ---\n\n",
-                                    label,
-                                    text.trim(),
-                                    label
-                                ));
-                            }
-                            Err(err) => {
-                                eprintln!(
-                                    "task {task_id} context inject warning: failed to load context '{}': {err}",
-                                    inject.from
-                                );
-                            }
+            if let Some(ref context_config) = task.context
+                && let Some(ref injections) = context_config.inject
+            {
+                let mut context_prefix = String::new();
+                for inject in injections {
+                    match task_ctx.store.get_context(&inject.from) {
+                        Ok(content) => {
+                            let label = inject.r#as.as_deref().unwrap_or(&inject.from);
+                            let text = String::from_utf8_lossy(&content);
+                            context_prefix.push_str(&format!(
+                                "--- {} ---\n{}\n--- end {} ---\n\n",
+                                label,
+                                text.trim(),
+                                label
+                            ));
+                        }
+                        Err(err) => {
+                            eprintln!(
+                                "task {task_id} context inject warning: failed to load context '{}': {err}",
+                                inject.from
+                            );
                         }
                     }
-                    if !context_prefix.is_empty() {
-                        // Prepend injected context to the task's prompt
-                        if let Some(ref mut cc) = task.claude_code {
-                            cc.prompt = format!("{}{}", context_prefix, cc.prompt);
-                        } else if let Some(ref mut cx) = task.codex {
-                            cx.prompt = format!("{}{}", context_prefix, cx.prompt);
-                        } else if let Some(ref mut oc) = task.opencode {
-                            oc.prompt = format!("{}{}", context_prefix, oc.prompt);
-                        }
+                }
+                if !context_prefix.is_empty() {
+                    // Prepend injected context to the task's prompt
+                    if let Some(ref mut cc) = task.claude_code {
+                        cc.prompt = format!("{}{}", context_prefix, cc.prompt);
+                    } else if let Some(ref mut cx) = task.codex {
+                        cx.prompt = format!("{}{}", context_prefix, cx.prompt);
+                    } else if let Some(ref mut oc) = task.opencode {
+                        oc.prompt = format!("{}{}", context_prefix, oc.prompt);
                     }
                 }
             }
@@ -3459,22 +3455,20 @@ impl TaskRunner for PlanTaskRunner {
                 // If failed but have retries remaining, check if we should retry
                 if result.status == TaskStatus::Failed && attempt < max_attempts {
                     // Check if this is a permanent failure that should not be retried
-                    if let Some(ref strategy) = retry_strategy {
-                        if strategy.skip_permanent_failures {
-                            let stderr_path = task_ctx.store.log_path(&task_id, LogStream::Stderr);
-                            let stderr_tail =
-                                std::fs::read_to_string(&stderr_path).unwrap_or_default();
-                            let failure_type =
-                                quedex::plan::FailureType::classify(result.exit_code, &stderr_tail);
-                            if !failure_type.should_retry() {
-                                eprintln!(
-                                    "task {task_id} failed with permanent failure (exit code {:?}), skipping retry",
-                                    result.exit_code
-                                );
-                                let _ =
-                                    state.task_finished(&task_id, result.status, result.exit_code);
-                                break result;
-                            }
+                    if let Some(ref strategy) = retry_strategy
+                        && strategy.skip_permanent_failures
+                    {
+                        let stderr_path = task_ctx.store.log_path(&task_id, LogStream::Stderr);
+                        let stderr_tail = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+                        let failure_type =
+                            quedex::plan::FailureType::classify(result.exit_code, &stderr_tail);
+                        if !failure_type.should_retry() {
+                            eprintln!(
+                                "task {task_id} failed with permanent failure (exit code {:?}), skipping retry",
+                                result.exit_code
+                            );
+                            let _ = state.task_finished(&task_id, result.status, result.exit_code);
+                            break result;
                         }
                     }
 
@@ -3489,96 +3483,92 @@ impl TaskRunner for PlanTaskRunner {
                 break result;
             };
 
-            if executed && result.status != TaskStatus::Canceled {
-                if let Some(output_files) = output_files.as_ref() {
-                    let mut saved_outputs = Vec::new();
-                    for output_file in output_files {
-                        let output_path = Path::new(output_file);
-                        let source_path = if output_path.is_absolute() {
-                            output_path.to_path_buf()
-                        } else {
-                            task_ctx.cwd.join(output_path)
-                        };
+            if executed
+                && result.status != TaskStatus::Canceled
+                && let Some(output_files) = output_files.as_ref()
+            {
+                let mut saved_outputs = Vec::new();
+                for output_file in output_files {
+                    let output_path = Path::new(output_file);
+                    let source_path = if output_path.is_absolute() {
+                        output_path.to_path_buf()
+                    } else {
+                        task_ctx.cwd.join(output_path)
+                    };
 
-                        if !source_path.exists() {
+                    if !source_path.exists() {
+                        eprintln!(
+                            "task {task_id} output file missing: {}",
+                            source_path.display()
+                        );
+                        continue;
+                    }
+
+                    let metadata = match fs::metadata(&source_path) {
+                        Ok(metadata) => metadata,
+                        Err(err) => {
                             eprintln!(
-                                "task {task_id} output file missing: {}",
+                                "task {task_id} output file stat error for {}: {err}",
                                 source_path.display()
                             );
                             continue;
                         }
+                    };
 
-                        let metadata = match fs::metadata(&source_path) {
-                            Ok(metadata) => metadata,
-                            Err(err) => {
-                                eprintln!(
-                                    "task {task_id} output file stat error for {}: {err}",
-                                    source_path.display()
-                                );
-                                continue;
-                            }
-                        };
+                    if !metadata.is_file() {
+                        eprintln!(
+                            "task {task_id} output path is not a file: {}",
+                            source_path.display()
+                        );
+                        continue;
+                    }
 
-                        if !metadata.is_file() {
+                    let content = match fs::read(&source_path) {
+                        Ok(content) => content,
+                        Err(err) => {
                             eprintln!(
-                                "task {task_id} output path is not a file: {}",
+                                "task {task_id} output file read error for {}: {err}",
                                 source_path.display()
                             );
                             continue;
                         }
+                    };
 
-                        let content = match fs::read(&source_path) {
-                            Ok(content) => content,
-                            Err(err) => {
-                                eprintln!(
-                                    "task {task_id} output file read error for {}: {err}",
-                                    source_path.display()
-                                );
-                                continue;
-                            }
-                        };
-
-                        match task_ctx.store.save_output(&task_id, output_file, &content) {
-                            Ok(_) => saved_outputs.push(output_file.clone()),
-                            Err(err) => {
-                                eprintln!(
-                                    "task {task_id} output save error for {output_file}: {err:#}"
-                                );
-                            }
+                    match task_ctx.store.save_output(&task_id, output_file, &content) {
+                        Ok(_) => saved_outputs.push(output_file.clone()),
+                        Err(err) => {
+                            eprintln!("task {task_id} output save error for {output_file}: {err:#}");
                         }
                     }
+                }
 
-                    if !saved_outputs.is_empty() {
-                        if let Err(err) = state.task_outputs_saved(&task_id, saved_outputs) {
-                            eprintln!("task {task_id} output state update error: {err:#}");
-                        }
-                    }
+                if !saved_outputs.is_empty()
+                    && let Err(err) = state.task_outputs_saved(&task_id, saved_outputs)
+                {
+                    eprintln!("task {task_id} output state update error: {err:#}");
                 }
             }
 
             // Publish shared context after successful completion
-            if result.status == TaskStatus::Succeeded {
-                if let Some(ref context_config) = task.context {
-                    if let Some(ref publish) = context_config.publish {
-                        let source_path = task_ctx.cwd.join(&publish.source);
-                        match std::fs::read(&source_path) {
-                            Ok(content) => {
-                                if let Err(err) =
-                                    task_ctx.store.save_context(&publish.key, &content)
-                                {
-                                    eprintln!(
-                                        "task {task_id} context publish error for key '{}': {err:#}",
-                                        publish.key
-                                    );
-                                }
-                            }
-                            Err(err) => {
-                                eprintln!(
-                                    "task {task_id} context publish warning: failed to read source '{}': {err}",
-                                    source_path.display()
-                                );
-                            }
+            if result.status == TaskStatus::Succeeded
+                && let Some(ref context_config) = task.context
+                && let Some(ref publish) = context_config.publish
+            {
+                let source_path = task_ctx.cwd.join(&publish.source);
+                match std::fs::read(&source_path) {
+                    Ok(content) => {
+                        if let Err(err) = task_ctx.store.save_context(&publish.key, &content) {
+                            eprintln!(
+                                "task {task_id} context publish error for key '{}': {err:#}",
+                                publish.key
+                            );
                         }
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "task {task_id} context publish warning: failed to read source '{}': {err}",
+                            source_path.display()
+                        );
                     }
                 }
             }

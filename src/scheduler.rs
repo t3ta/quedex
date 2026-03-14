@@ -547,10 +547,9 @@ fn deps_satisfied(task: &TaskSpec, states: &HashMap<TaskId, TaskRecord>) -> bool
             task: task_id,
             status,
         }) = cond
+            && *status == crate::plan::ConditionStatus::Failed
         {
-            if *status == crate::plan::ConditionStatus::Failed {
-                return Some(task_id.as_str());
-            }
+            return Some(task_id.as_str());
         }
         None
     });
@@ -578,10 +577,9 @@ fn deps_failed(task: &TaskSpec, states: &HashMap<TaskId, TaskRecord>) -> bool {
             task: task_id,
             status,
         }) = cond
+            && *status == crate::plan::ConditionStatus::Failed
         {
-            if *status == crate::plan::ConditionStatus::Failed {
-                return Some(task_id.as_str());
-            }
+            return Some(task_id.as_str());
         }
         None
     });
@@ -628,54 +626,53 @@ fn handle_event(
                     task_spec.mode,
                     crate::plan::TaskMode::Implement | crate::plan::TaskMode::Verify
                 )
+                && let Some(gm) = git_manager
             {
-                if let Some(gm) = git_manager {
-                    // Lock the git manager for thread-safe operations
-                    if let Ok(gm_locked) = gm.lock() {
-                        // Try to create commit
-                        match gm_locked.ensure_on_branch() {
-                            Ok(_) => {
-                                let title = task_spec
-                                    .title
-                                    .clone()
-                                    .unwrap_or_else(|| task_spec.id.clone());
-                                let message = crate::git::generate_commit_message(
-                                    &title,
-                                    &task_spec.id,
-                                    &format!("{:?}", task_spec.mode),
-                                );
+                // Lock the git manager for thread-safe operations
+                if let Ok(gm_locked) = gm.lock() {
+                    // Try to create commit
+                    match gm_locked.ensure_on_branch() {
+                        Ok(_) => {
+                            let title = task_spec
+                                .title
+                                .clone()
+                                .unwrap_or_else(|| task_spec.id.clone());
+                            let message = crate::git::generate_commit_message(
+                                &title,
+                                &task_spec.id,
+                                &format!("{:?}", task_spec.mode),
+                            );
 
-                                match gm_locked.create_commit(&message) {
-                                    Ok(commit_hash) => {
-                                        if !commit_hash.is_empty() {
-                                            commit_hashes.push((
-                                                task_spec.id.clone(),
-                                                commit_hash,
-                                                task_spec.title,
-                                            ));
-                                        }
-                                    }
-                                    Err(err) => {
-                                        eprintln!(
-                                            "Warning: auto-commit create_commit failed for task {}: {:?}",
-                                            task_spec.id, err
-                                        );
+                            match gm_locked.create_commit(&message) {
+                                Ok(commit_hash) => {
+                                    if !commit_hash.is_empty() {
+                                        commit_hashes.push((
+                                            task_spec.id.clone(),
+                                            commit_hash,
+                                            task_spec.title,
+                                        ));
                                     }
                                 }
-                            }
-                            Err(err) => {
-                                eprintln!(
-                                    "Warning: auto-commit ensure_on_branch failed for task {}: {:?}",
-                                    task_spec.id, err
-                                );
+                                Err(err) => {
+                                    eprintln!(
+                                        "Warning: auto-commit create_commit failed for task {}: {:?}",
+                                        task_spec.id, err
+                                    );
+                                }
                             }
                         }
-                    } else {
-                        eprintln!(
-                            "Warning: could not acquire git manager lock for task {}",
-                            task_spec.id
-                        );
+                        Err(err) => {
+                            eprintln!(
+                                "Warning: auto-commit ensure_on_branch failed for task {}: {:?}",
+                                task_spec.id, err
+                            );
+                        }
                     }
+                } else {
+                    eprintln!(
+                        "Warning: could not acquire git manager lock for task {}",
+                        task_spec.id
+                    );
                 }
             }
 

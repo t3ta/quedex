@@ -629,10 +629,10 @@ impl Plan {
         }
 
         // Validate cwd is absolute path if specified
-        if let Some(cwd) = self.run.cwd.as_ref() {
-            if cwd.is_relative() {
-                bail!("run.cwd must be an absolute path, got: {}", cwd.display());
-            }
+        if let Some(cwd) = self.run.cwd.as_ref()
+            && cwd.is_relative()
+        {
+            bail!("run.cwd must be an absolute path, got: {}", cwd.display());
         }
 
         if let Some(max_concurrency_by_mode) = self.run.max_concurrency_by_mode.as_ref() {
@@ -650,12 +650,12 @@ impl Plan {
         }
 
         // Warn if env block is explicitly set but empty (likely a mistake)
-        if let Some(env) = &self.run.env {
-            if env.is_empty() {
-                eprintln!(
-                    "warning: run.env is empty; if you don't need custom env vars, remove the env block entirely"
-                );
-            }
+        if let Some(env) = &self.run.env
+            && env.is_empty()
+        {
+            eprintln!(
+                "warning: run.env is empty; if you don't need custom env vars, remove the env block entirely"
+            );
         }
 
         let mut seen = HashSet::new();
@@ -801,15 +801,15 @@ impl Plan {
                     );
                 }
             }
-            if let Some(claude_code) = task.claude_code.as_ref() {
-                if claude_code.prompt.trim().is_empty() {
-                    bail!("task {} claude_code.prompt is empty", task.id);
-                }
+            if let Some(claude_code) = task.claude_code.as_ref()
+                && claude_code.prompt.trim().is_empty()
+            {
+                bail!("task {} claude_code.prompt is empty", task.id);
             }
-            if let Some(opencode) = task.opencode.as_ref() {
-                if opencode.prompt.trim().is_empty() {
-                    bail!("task {} opencode.prompt is empty", task.id);
-                }
+            if let Some(opencode) = task.opencode.as_ref()
+                && opencode.prompt.trim().is_empty()
+            {
+                bail!("task {} opencode.prompt is empty", task.id);
             }
             for dep in &task.deps {
                 if dep == &task.id {
@@ -820,14 +820,14 @@ impl Plan {
 
         // Validate profile references
         for task in &self.tasks {
-            if let Some(ref profile_name) = task.profile {
-                if !self.profiles.contains_key(profile_name) {
-                    bail!(
-                        "task {} references non-existent profile '{}'",
-                        task.id,
-                        profile_name
-                    );
-                }
+            if let Some(ref profile_name) = task.profile
+                && !self.profiles.contains_key(profile_name)
+            {
+                bail!(
+                    "task {} references non-existent profile '{}'",
+                    task.id,
+                    profile_name
+                );
             }
         }
 
@@ -900,17 +900,16 @@ impl Plan {
 
         // Validate no conflict between Plan.groups and Task.group
         for task in &self.tasks {
-            if let Some(ref task_group) = task.group {
-                if let Some(plan_groups) = task_to_groups.get(task.id.as_str()) {
-                    if !plan_groups.contains(&task_group.as_str()) {
-                        bail!(
-                            "task '{}' has group field '{}' but is listed in Plan.groups under '{}'",
-                            task.id,
-                            task_group,
-                            plan_groups[0]
-                        );
-                    }
-                }
+            if let Some(ref task_group) = task.group
+                && let Some(plan_groups) = task_to_groups.get(task.id.as_str())
+                && !plan_groups.contains(&task_group.as_str())
+            {
+                bail!(
+                    "task '{}' has group field '{}' but is listed in Plan.groups under '{}'",
+                    task.id,
+                    task_group,
+                    plan_groups[0]
+                );
             }
         }
 

@@ -260,7 +260,7 @@ fn resolve_run_id(store_root: &Path, run_id: Option<String>) -> Result<String> {
         return Ok(run_id);
     }
     let mut states = list_states(store_root)?;
-    states.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    states.sort_by_key(|state| std::cmp::Reverse(state.started_at));
     states
         .first()
         .map(|state| state.run_id.clone())

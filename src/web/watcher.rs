@@ -22,12 +22,12 @@ pub fn start_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
     let file_tx_clone = file_tx.clone();
     let mut watcher = RecommendedWatcher::new(
         move |res: Result<Event, notify::Error>| {
-            if let Ok(event) = res {
-                if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
-                    for path in event.paths {
-                        if path.file_name().map(|n| n == "state.json").unwrap_or(false) {
-                            let _ = file_tx_clone.blocking_send(path);
-                        }
+            if let Ok(event) = res
+                && matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_))
+            {
+                for path in event.paths {
+                    if path.file_name().map(|n| n == "state.json").unwrap_or(false) {
+                        let _ = file_tx_clone.blocking_send(path);
                     }
                 }
             }
@@ -49,10 +49,10 @@ pub fn start_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
             // Extract run_id from path
             if let Some(run_id) = extract_run_id(&path, &store_root) {
                 // Skip if we're filtering for a specific run
-                if let Some(ref filter) = run_id_filter {
-                    if &run_id != filter {
-                        continue;
-                    }
+                if let Some(ref filter) = run_id_filter
+                    && &run_id != filter
+                {
+                    continue;
                 }
 
                 // Read the state file

@@ -75,12 +75,11 @@ pub async fn get_state(
     if let Some(ref run_id) = state.run_id {
         // Single run mode
         let state_path = runs_dir.join(run_id).join("state.json");
-        if state_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&state_path) {
-                if let Ok(run_state) = serde_json::from_str::<serde_json::Value>(&content) {
-                    runs.push(run_state);
-                }
-            }
+        if state_path.exists()
+            && let Ok(content) = std::fs::read_to_string(&state_path)
+            && let Ok(run_state) = serde_json::from_str::<serde_json::Value>(&content)
+        {
+            runs.push(run_state);
         }
     } else {
         // All runs mode
@@ -88,14 +87,12 @@ pub async fn get_state(
             for entry in entries.flatten() {
                 if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                     let state_path = entry.path().join("state.json");
-                    if state_path.exists() {
-                        if let Ok(content) = std::fs::read_to_string(&state_path) {
-                            if let Ok(run_state) =
-                                serde_json::from_str::<serde_json::Value>(&content)
-                            {
-                                runs.push(run_state);
-                            }
-                        }
+                    if state_path.exists()
+                        && let Ok(content) = std::fs::read_to_string(&state_path)
+                        && let Ok(run_state) =
+                            serde_json::from_str::<serde_json::Value>(&content)
+                    {
+                        runs.push(run_state);
                     }
                 }
             }
@@ -125,10 +122,10 @@ pub async fn list_runs(
     let mut run_ids = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&runs_dir) {
         for entry in entries.flatten() {
-            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                if let Some(name) = entry.file_name().to_str() {
-                    run_ids.push(name.to_string());
-                }
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                && let Some(name) = entry.file_name().to_str()
+            {
+                run_ids.push(name.to_string());
             }
         }
     }

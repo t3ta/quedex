@@ -60,10 +60,10 @@ impl GitManager {
                     if let Err(e) = index.add_path(std::path::Path::new(path)) {
                         eprintln!("Warning: Could not stage {:?}: {}", path, e);
                     }
-                } else if s.intersects(git2::Status::WT_DELETED) {
-                    if let Err(e) = index.remove_path(std::path::Path::new(path)) {
-                        eprintln!("Warning: Could not unstage {:?}: {}", path, e);
-                    }
+                } else if s.intersects(git2::Status::WT_DELETED)
+                    && let Err(e) = index.remove_path(std::path::Path::new(path))
+                {
+                    eprintln!("Warning: Could not unstage {:?}: {}", path, e);
                 }
             }
         }

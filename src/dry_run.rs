@@ -167,11 +167,11 @@ pub fn detect_lock_conflicts(plan: &Plan) -> Vec<LockConflict> {
         let mut visited: HashSet<&str> = HashSet::new();
         let mut stack: Vec<&str> = task.deps.iter().map(|s| s.as_str()).collect();
         while let Some(dep) = stack.pop() {
-            if visited.insert(dep) {
-                if let Some(deps) = task_deps.get(dep) {
-                    for d in deps {
-                        stack.push(d);
-                    }
+            if visited.insert(dep)
+                && let Some(deps) = task_deps.get(dep)
+            {
+                for d in deps {
+                    stack.push(d);
                 }
             }
         }
