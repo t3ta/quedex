@@ -2,6 +2,10 @@
 name = "quedex"
 version = "0.1.0"
 edition = "2024"
+description = "DAG-based task orchestrator for LLM coding agents"
+license = "MIT"
+repository = "https://github.com/t3ta/quedex"
+authors = ["Takahito Mita <takahito.mita@t3ta.net>"]
 
 [dependencies]
 anyhow = "1"
