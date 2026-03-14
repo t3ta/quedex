@@ -67,17 +67,17 @@ impl TaskRunner for TestRunner {
                 }
             }
 
-            if let Some(lock_state) = &lock_state
-                && !locks.is_empty()
-            {
-                let mut state = lock_state.lock().expect("lock state mutex poisoned");
-                for lock in &locks {
-                    if state.contains(lock)
-                        && let Some(flag) = &lock_violation
-                    {
-                        flag.store(true, Ordering::SeqCst);
+            if let Some(lock_state) = &lock_state {
+                if !locks.is_empty() {
+                    let mut state = lock_state.lock().expect("lock state mutex poisoned");
+                    for lock in &locks {
+                        if state.contains(lock) {
+                            if let Some(flag) = &lock_violation {
+                                flag.store(true, Ordering::SeqCst);
+                            }
+                        }
+                        state.insert(lock.clone());
                     }
-                    state.insert(lock.clone());
                 }
             }
 
@@ -85,12 +85,12 @@ impl TaskRunner for TestRunner {
                 tokio::time::sleep(behavior.delay).await;
             }
 
-            if let Some(lock_state) = &lock_state
-                && !locks.is_empty()
-            {
-                let mut state = lock_state.lock().expect("lock state mutex poisoned");
-                for lock in &locks {
-                    state.remove(lock);
+            if let Some(lock_state) = &lock_state {
+                if !locks.is_empty() {
+                    let mut state = lock_state.lock().expect("lock state mutex poisoned");
+                    for lock in &locks {
+                        state.remove(lock);
+                    }
                 }
             }
 
