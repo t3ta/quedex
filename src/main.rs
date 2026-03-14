@@ -3525,9 +3525,14 @@ impl TaskRunner for PlanTaskRunner {
                             timestamp: Utc::now(),
                         });
 
-                        let passed =
-                            run_completion_gate(&gate, &task_ctx.cwd, &task_id, &task_ctx.store, &task_ctx.env)
-                                .await;
+                        let passed = run_completion_gate(
+                            &gate,
+                            &task_ctx.cwd,
+                            &task_id,
+                            &task_ctx.store,
+                            &task_ctx.env,
+                        )
+                        .await;
 
                         let exit_code = if passed { 0 } else { 1 };
                         let _ = task_ctx.store.append_event(Event::GateFinished {
@@ -3697,7 +3702,10 @@ fn get_output_size(child: &ChildHandle) -> u64 {
     stdout_size + stderr_size
 }
 
-fn resolve_completion_gates(task: &Task, default_gates: Option<&[CompletionGate]>) -> Vec<CompletionGate> {
+fn resolve_completion_gates(
+    task: &Task,
+    default_gates: Option<&[CompletionGate]>,
+) -> Vec<CompletionGate> {
     if let Some(gates) = task.completion_gates.as_ref() {
         return gates.clone();
     }
@@ -3737,7 +3745,12 @@ async fn run_completion_gate(
         }
     };
 
-    let output = match tokio::time::timeout(Duration::from_secs(gate.timeout_sec), child.wait_with_output()).await {
+    let output = match tokio::time::timeout(
+        Duration::from_secs(gate.timeout_sec),
+        child.wait_with_output(),
+    )
+    .await
+    {
         Ok(Ok(output)) => output,
         Ok(Err(err)) => {
             if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {

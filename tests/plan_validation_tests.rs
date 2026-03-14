@@ -534,7 +534,10 @@ fn plan_rejects_empty_task_gate_command() {
     }]);
 
     let plan = plan_with_tasks(vec![task]);
-    assert_validation_error(plan, "task test completion_gates gate 'lint' has empty command");
+    assert_validation_error(
+        plan,
+        "task test completion_gates gate 'lint' has empty command",
+    );
 }
 
 #[test]
