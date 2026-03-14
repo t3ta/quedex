@@ -22,7 +22,7 @@ use quedex::config::{Config, EffectiveOptions};
 use quedex::dry_run::{detect_lock_conflicts, generate_execution_waves};
 use quedex::git::{self, GitManager};
 use quedex::notifier::Notifier;
-use quedex::plan::{Plan, PlanFormat, Task};
+use quedex::plan::{CompletionGate, Plan, PlanFormat, Task, TaskMode};
 use quedex::runner::claude_code::ClaudeCodeRunner;
 use quedex::runner::codex::CodexRunner;
 use quedex::runner::opencode::OpencodeRunner;
@@ -1105,6 +1105,7 @@ async fn handle_run(
         Arc::new(tasks_map),
         Arc::new(plan.profiles.clone()),
         plan.run.stall_timeout_sec,
+        plan.run.default_gates.clone(),
         ctx,
         state_handle.clone(),
         cancel.clone(),
@@ -1785,6 +1786,7 @@ async fn handle_retry(
         Arc::new(tasks_map),
         Arc::new(plan.profiles.clone()),
         plan.run.stall_timeout_sec,
+        plan.run.default_gates.clone(),
         ctx,
         state_handle.clone(),
         cancel,
@@ -3165,6 +3167,7 @@ struct PlanTaskRunner {
     tasks: Arc<HashMap<String, Task>>,
     profiles: Arc<HashMap<String, quedex::plan::AgentProfile>>,
     default_stall_timeout_sec: Option<u64>,
+    default_gates: Option<Vec<CompletionGate>>,
     ctx: RunContext,
     state: StateHandle,
     cancel: CancelHandle,
@@ -3175,10 +3178,12 @@ struct PlanTaskRunner {
 }
 
 impl PlanTaskRunner {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         tasks: Arc<HashMap<String, Task>>,
         profiles: Arc<HashMap<String, quedex::plan::AgentProfile>>,
         default_stall_timeout_sec: Option<u64>,
+        default_gates: Option<Vec<CompletionGate>>,
         ctx: RunContext,
         state: StateHandle,
         cancel: CancelHandle,
@@ -3188,6 +3193,7 @@ impl PlanTaskRunner {
             tasks,
             profiles,
             default_stall_timeout_sec,
+            default_gates,
             ctx,
             state,
             cancel,
@@ -3206,6 +3212,7 @@ impl TaskRunner for PlanTaskRunner {
         let tasks = Arc::clone(&self.tasks);
         let profiles = Arc::clone(&self.profiles);
         let default_stall_timeout_sec = self.default_stall_timeout_sec;
+        let default_gates = self.default_gates.clone();
         let ctx = self.ctx.clone();
         let state = self.state.clone();
         let cancel = self.cancel.clone();
@@ -3507,7 +3514,35 @@ impl TaskRunner for PlanTaskRunner {
                     }
                 };
 
-                let result = map_exit_status(status, cancel.is_canceled());
+                let mut result = map_exit_status(status, cancel.is_canceled());
+
+                if result.status == TaskStatus::Succeeded && !task.skip_gates {
+                    let gates = resolve_completion_gates(&task, default_gates.as_deref());
+                    for gate in gates {
+                        let _ = task_ctx.store.append_event(Event::GateStarted {
+                            task_id: task_id.clone(),
+                            gate_name: gate.name.clone(),
+                            timestamp: Utc::now(),
+                        });
+
+                        let passed =
+                            run_completion_gate(&gate, &task_ctx.cwd, &task_id, &task_ctx.store)
+                                .await;
+
+                        let exit_code = if passed { 0 } else { 1 };
+                        let _ = task_ctx.store.append_event(Event::GateFinished {
+                            task_id: task_id.clone(),
+                            gate_name: gate.name.clone(),
+                            exit_code,
+                            timestamp: Utc::now(),
+                        });
+
+                        if !passed {
+                            result = TaskResult::failed(1);
+                            break;
+                        }
+                    }
+                }
 
                 // If failed but have retries remaining, check if we should retry
                 if result.status == TaskStatus::Failed && attempt < max_attempts {
@@ -3662,6 +3697,80 @@ fn get_output_size(child: &ChildHandle) -> u64 {
     stdout_size + stderr_size
 }
 
+fn resolve_completion_gates(task: &Task, default_gates: Option<&[CompletionGate]>) -> Vec<CompletionGate> {
+    if let Some(gates) = task.completion_gates.as_ref() {
+        return gates.clone();
+    }
+    match task.mode {
+        TaskMode::Implement | TaskMode::Verify => default_gates.unwrap_or_default().to_vec(),
+        TaskMode::Research => Vec::new(),
+    }
+}
+
+async fn run_completion_gate(
+    gate: &CompletionGate,
+    cwd: &Path,
+    task_id: &str,
+    store: &Arc<dyn Store>,
+) -> bool {
+    let mut command = tokio::process::Command::new("sh");
+    command
+        .arg("-c")
+        .arg(&gate.command)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
+                let _ = writeln!(
+                    stderr_log,
+                    "\n[completion gate:{}] failed to spawn: {err}",
+                    gate.name
+                );
+            }
+            return false;
+        }
+    };
+
+    let output = match tokio::time::timeout(Duration::from_secs(gate.timeout_sec), child.wait_with_output()).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(err)) => {
+            if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
+                let _ = writeln!(
+                    stderr_log,
+                    "\n[completion gate:{}] wait failed: {err}",
+                    gate.name
+                );
+            }
+            return false;
+        }
+        Err(_) => {
+            if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
+                let _ = writeln!(
+                    stderr_log,
+                    "\n[completion gate:{}] timed out after {}s",
+                    gate.name, gate.timeout_sec
+                );
+            }
+            return false;
+        }
+    };
+
+    if let Ok(mut stdout_log) = store.open_log(task_id, LogStream::Stdout) {
+        let _ = writeln!(stdout_log, "\n[completion gate:{}]", gate.name);
+        let _ = stdout_log.write_all(&output.stdout);
+    }
+    if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
+        let _ = writeln!(stderr_log, "\n[completion gate:{}]", gate.name);
+        let _ = stderr_log.write_all(&output.stderr);
+    }
+
+    output.status.success()
+}
+
 fn map_exit_status(status: std::process::ExitStatus, canceled: bool) -> TaskResult {
     if canceled {
         return TaskResult::canceled();
@@ -3731,6 +3840,7 @@ fn has_unsatisfied_external_deps(
 mod tests {
     use super::*;
     use std::collections::{HashMap, HashSet};
+    use tempdir::TempDir;
 
     #[test]
     fn test_has_unsatisfied_external_deps_all_in_retry_set() {
@@ -3833,5 +3943,138 @@ mod tests {
             &retry_target_ids,
             &task_statuses
         ));
+    }
+
+    #[test]
+    fn test_resolve_completion_gates_prefers_task_specific() {
+        let task = Task {
+            id: "task".to_string(),
+            title: None,
+            mode: TaskMode::Implement,
+            profile: None,
+            group: None,
+            deps: vec![],
+            locks: vec![],
+            _timeout_sec_rejected: None,
+            _default_timeout_sec_rejected: None,
+            no_worktree: false,
+            kind: None,
+            output_files: None,
+            codex: Some(quedex::plan::CodexConfig {
+                prompt: "test".to_string(),
+                output_last_message: None,
+                verify_after: true,
+                sandbox: None,
+                ask_for_approval: None,
+                json: true,
+            }),
+            claude_code: None,
+            opencode: None,
+            retry_count: 0,
+            retry_delay_sec: 0,
+            retry_strategy: None,
+            context: None,
+            condition: None,
+            stall_timeout_sec: None,
+            completion_gates: Some(vec![CompletionGate {
+                name: "task".to_string(),
+                command: "true".to_string(),
+                timeout_sec: 300,
+            }]),
+            skip_gates: false,
+            auto_commit: true,
+            squash: false,
+        };
+        let defaults = vec![CompletionGate {
+            name: "default".to_string(),
+            command: "true".to_string(),
+            timeout_sec: 300,
+        }];
+
+        let gates = resolve_completion_gates(&task, Some(&defaults));
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].name, "task");
+    }
+
+    #[test]
+    fn test_resolve_completion_gates_skips_research_defaults() {
+        let mut task = Task {
+            id: "task".to_string(),
+            title: None,
+            mode: TaskMode::Research,
+            profile: None,
+            group: None,
+            deps: vec![],
+            locks: vec![],
+            _timeout_sec_rejected: None,
+            _default_timeout_sec_rejected: None,
+            no_worktree: false,
+            kind: None,
+            output_files: None,
+            codex: Some(quedex::plan::CodexConfig {
+                prompt: "test".to_string(),
+                output_last_message: None,
+                verify_after: true,
+                sandbox: None,
+                ask_for_approval: None,
+                json: true,
+            }),
+            claude_code: None,
+            opencode: None,
+            retry_count: 0,
+            retry_delay_sec: 0,
+            retry_strategy: None,
+            context: None,
+            condition: None,
+            stall_timeout_sec: None,
+            completion_gates: None,
+            skip_gates: false,
+            auto_commit: true,
+            squash: false,
+        };
+        let defaults = vec![CompletionGate {
+            name: "default".to_string(),
+            command: "true".to_string(),
+            timeout_sec: 300,
+        }];
+        assert!(resolve_completion_gates(&task, Some(&defaults)).is_empty());
+
+        task.completion_gates = Some(defaults.clone());
+        assert_eq!(resolve_completion_gates(&task, Some(&defaults)).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_run_completion_gate_appends_logs_and_succeeds() {
+        let tmp = TempDir::new("gate-test").unwrap();
+        let store: Arc<dyn Store> = Arc::new(FsStore::new(tmp.path(), "run-1").unwrap());
+        let gate = CompletionGate {
+            name: "fmt".to_string(),
+            command: "printf 'ok-out'; printf 'ok-err' >&2".to_string(),
+            timeout_sec: 1,
+        };
+
+        assert!(run_completion_gate(&gate, tmp.path(), "task1", &store).await);
+
+        let stdout = std::fs::read_to_string(store.log_path("task1", LogStream::Stdout)).unwrap();
+        let stderr = std::fs::read_to_string(store.log_path("task1", LogStream::Stderr)).unwrap();
+        assert!(stdout.contains("[completion gate:fmt]"));
+        assert!(stdout.contains("ok-out"));
+        assert!(stderr.contains("ok-err"));
+    }
+
+    #[tokio::test]
+    async fn test_run_completion_gate_times_out() {
+        let tmp = TempDir::new("gate-timeout-test").unwrap();
+        let store: Arc<dyn Store> = Arc::new(FsStore::new(tmp.path(), "run-1").unwrap());
+        let gate = CompletionGate {
+            name: "slow".to_string(),
+            command: "sleep 2".to_string(),
+            timeout_sec: 1,
+        };
+
+        assert!(!run_completion_gate(&gate, tmp.path(), "task1", &store).await);
+
+        let stderr = std::fs::read_to_string(store.log_path("task1", LogStream::Stderr)).unwrap();
+        assert!(stderr.contains("timed out"));
     }
 }

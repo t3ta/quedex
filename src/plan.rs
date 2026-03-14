@@ -101,6 +101,9 @@ pub struct RunConfig {
     /// System prompt to prepend to all task prompts (overrides quedex.toml)
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Default completion gates applied to implement and verify mode tasks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_gates: Option<Vec<CompletionGate>>,
 }
 
 /// Agent profile for role-based task specialization.
@@ -362,6 +365,23 @@ impl FailureType {
     }
 }
 
+/// A completion gate that runs after a task exits successfully.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CompletionGate {
+    /// Human-readable name for this gate
+    pub name: String,
+    /// Command to execute (run via sh -c)
+    pub command: String,
+    /// Timeout in seconds for this gate (default: 300)
+    #[serde(default = "default_gate_timeout_sec")]
+    #[schemars(default = "default_gate_timeout_sec")]
+    pub timeout_sec: u64,
+}
+
+fn default_gate_timeout_sec() -> u64 {
+    300
+}
+
 /// Type of backoff strategy for retry delays.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -601,6 +621,13 @@ pub struct Task {
     /// Set to 0 to disable. None falls back to run.stall_timeout_sec.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stall_timeout_sec: Option<u64>,
+    /// Completion gates to run after this task exits successfully.
+    /// Overrides default_gates if set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_gates: Option<Vec<CompletionGate>>,
+    /// Skip completion gates for this task.
+    #[serde(default)]
+    pub skip_gates: bool,
     /// Whether to create a git commit after this task succeeds (default: true)
     /// Only applicable for Implement and Verify modes, ignored for Research mode
     #[serde(default = "default_auto_commit")]
@@ -666,6 +693,10 @@ impl Plan {
             eprintln!(
                 "warning: run.env is empty; if you don't need custom env vars, remove the env block entirely"
             );
+        }
+
+        if let Some(gates) = self.run.default_gates.as_ref() {
+            validate_completion_gates("run.default_gates", gates)?;
         }
 
         let mut seen = HashSet::new();
@@ -748,6 +779,9 @@ impl Plan {
                         bail!("task {} output_files contains '..': {}", task.id, path);
                     }
                 }
+            }
+            if let Some(gates) = task.completion_gates.as_ref() {
+                validate_completion_gates(&format!("task {} completion_gates", task.id), gates)?;
             }
             // Validate context.publish.source path
             if let Some(ref ctx) = task.context {
@@ -980,6 +1014,22 @@ impl Plan {
 
         resolved
     }
+}
+
+fn validate_completion_gates(context: &str, gates: &[CompletionGate]) -> Result<()> {
+    let mut gate_names = HashSet::new();
+    for gate in gates {
+        if gate.name.trim().is_empty() {
+            bail!("{context} contains gate with empty name");
+        }
+        if gate.command.trim().is_empty() {
+            bail!("{context} gate '{}' has empty command", gate.name);
+        }
+        if !gate_names.insert(gate.name.clone()) {
+            bail!("{context} has duplicate gate name '{}'", gate.name);
+        }
+    }
+    Ok(())
 }
 
 /// Generate JSON Schema for Plan
@@ -1272,6 +1322,8 @@ mod tests {
                 context: None,
                 condition: None,
                 stall_timeout_sec: None,
+                completion_gates: None,
+                skip_gates: false,
                 auto_commit: true,
                 squash: false,
             }],
@@ -1325,6 +1377,8 @@ mod tests {
                 context: None,
                 condition: None,
                 stall_timeout_sec: None,
+                completion_gates: None,
+                skip_gates: false,
                 auto_commit: true,
                 squash: false,
             }],

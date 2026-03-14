@@ -1,5 +1,5 @@
 use quedex::plan::{
-    ClaudeCodeConfig, CodexConfig, OpencodeConfig, Plan, RunConfig, Task, TaskMode,
+    ClaudeCodeConfig, CodexConfig, CompletionGate, OpencodeConfig, Plan, RunConfig, Task, TaskMode,
 };
 use std::collections::HashMap;
 
@@ -33,6 +33,8 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
         context: None,
         condition: None,
         stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
     }
@@ -66,6 +68,8 @@ fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
         context: None,
         condition: None,
         stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
     }
@@ -141,6 +145,8 @@ fn plan_rejects_empty_codex_prompt() {
         context: None,
         condition: None,
         stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
     };
@@ -177,6 +183,8 @@ fn plan_rejects_empty_claude_code_prompt() {
         context: None,
         condition: None,
         stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
     };
@@ -220,6 +228,8 @@ fn plan_rejects_multiple_runner_configs() {
         context: None,
         condition: None,
         stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
     };
@@ -256,6 +266,8 @@ fn plan_accepts_valid_claude_code_task() {
         context: None,
         condition: None,
         stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
     };
@@ -295,6 +307,8 @@ fn plan_rejects_kind_mismatch_claude_code() {
         context: None,
         condition: None,
         stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
     };
@@ -331,6 +345,8 @@ fn plan_rejects_empty_opencode_prompt() {
         context: None,
         condition: None,
         stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
     };
@@ -385,6 +401,8 @@ fn plan_accepts_valid_opencode_task() {
         context: None,
         condition: None,
         stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
     };
@@ -424,6 +442,8 @@ fn plan_rejects_kind_mismatch_opencode() {
         context: None,
         condition: None,
         stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
     };
@@ -464,6 +484,8 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
         context: None,
         condition: None,
         stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
     };
@@ -488,6 +510,31 @@ fn plan_rejects_parent_dir_in_output_files() {
 
     let plan = plan_with_tasks(vec![task]);
     assert_validation_error(plan, "contains '..'");
+}
+
+#[test]
+fn plan_rejects_empty_default_gate_name() {
+    let mut plan = plan_with_tasks(vec![codex_task("test", vec![])]);
+    plan.run.default_gates = Some(vec![CompletionGate {
+        name: " ".to_string(),
+        command: "echo ok".to_string(),
+        timeout_sec: 300,
+    }]);
+
+    assert_validation_error(plan, "run.default_gates contains gate with empty name");
+}
+
+#[test]
+fn plan_rejects_empty_task_gate_command() {
+    let mut task = codex_task("test", vec![]);
+    task.completion_gates = Some(vec![CompletionGate {
+        name: "lint".to_string(),
+        command: " ".to_string(),
+        timeout_sec: 300,
+    }]);
+
+    let plan = plan_with_tasks(vec![task]);
+    assert_validation_error(plan, "task test completion_gates gate 'lint' has empty command");
 }
 
 #[test]

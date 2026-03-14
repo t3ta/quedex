@@ -247,6 +247,7 @@ mod tests {
                 _timeout_sec_rejected: None,
                 notifications: None,
                 system_prompt: None,
+                default_gates: None,
             },
             profiles: std::collections::HashMap::new(),
             groups: std::collections::HashMap::new(),
@@ -288,6 +289,8 @@ mod tests {
             context: None,
             condition: None,
             stall_timeout_sec: None,
+            completion_gates: None,
+            skip_gates: false,
         }
     }
 

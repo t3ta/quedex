@@ -20,6 +20,7 @@ fn create_test_plan(tasks: Vec<Task>) -> Plan {
             _timeout_sec_rejected: None,
             notifications: None,
             system_prompt: None,
+            default_gates: None,
         },
         profiles: HashMap::new(),
         groups: HashMap::new(),
@@ -59,6 +60,8 @@ fn create_task(id: &str, deps: Vec<&str>, locks: Vec<&str>) -> Task {
         context: None,
         condition: None,
         stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
     }
