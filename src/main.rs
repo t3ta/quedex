@@ -3484,7 +3484,10 @@ impl TaskRunner for PlanTaskRunner {
                         stall_result = &mut stall_handle => {
                             let stalled = stall_result.unwrap_or(false);
                             let wait_result = wait_future.await;
-                            if stalled {
+                            // If stalled but process already exited successfully (race
+                            // between kill() and natural exit), honor the real result.
+                            let exited_ok = matches!(&wait_result, Ok(Ok(status)) if status.success());
+                            if stalled && !exited_ok {
                                 Ok(Err(anyhow!("task stalled after {stall_timeout_sec}s without output")))
                             } else {
                                 wait_result
