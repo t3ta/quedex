@@ -3526,7 +3526,7 @@ impl TaskRunner for PlanTaskRunner {
                         });
 
                         let passed =
-                            run_completion_gate(&gate, &task_ctx.cwd, &task_id, &task_ctx.store)
+                            run_completion_gate(&gate, &task_ctx.cwd, &task_id, &task_ctx.store, &task_ctx.env)
                                 .await;
 
                         let exit_code = if passed { 0 } else { 1 };
@@ -3712,12 +3712,14 @@ async fn run_completion_gate(
     cwd: &Path,
     task_id: &str,
     store: &Arc<dyn Store>,
+    env: &HashMap<String, String>,
 ) -> bool {
     let mut command = tokio::process::Command::new("sh");
     command
         .arg("-c")
         .arg(&gate.command)
         .current_dir(cwd)
+        .envs(env)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -4053,7 +4055,7 @@ mod tests {
             timeout_sec: 1,
         };
 
-        assert!(run_completion_gate(&gate, tmp.path(), "task1", &store).await);
+        assert!(run_completion_gate(&gate, tmp.path(), "task1", &store, &HashMap::new()).await);
 
         let stdout = std::fs::read_to_string(store.log_path("task1", LogStream::Stdout)).unwrap();
         let stderr = std::fs::read_to_string(store.log_path("task1", LogStream::Stderr)).unwrap();
@@ -4072,7 +4074,7 @@ mod tests {
             timeout_sec: 1,
         };
 
-        assert!(!run_completion_gate(&gate, tmp.path(), "task1", &store).await);
+        assert!(!run_completion_gate(&gate, tmp.path(), "task1", &store, &HashMap::new()).await);
 
         let stderr = std::fs::read_to_string(store.log_path("task1", LogStream::Stderr)).unwrap();
         assert!(stderr.contains("timed out"));
