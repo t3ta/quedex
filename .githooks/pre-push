@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "pre-push: cargo build"
+cargo build 2>&1 || {
+    echo ""
+    echo "ERROR: build failed. Fix errors before pushing."
+    exit 1
+}
+
 echo "pre-push: cargo test"
 cargo test 2>&1 || {
     echo ""

@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 pub mod circuit_breaker;
 pub mod config;
 pub mod dry_run;

@@ -276,15 +276,15 @@ impl App {
         self.display_rows = rows;
 
         // Adjust selection if it's now out of bounds
-        if let Some(selected) = self.list_state.selected()
-            && selected >= self.display_rows.len()
-        {
-            let new_selection = self.display_rows.len().saturating_sub(1);
-            self.list_state.select(if self.display_rows.is_empty() {
-                None
-            } else {
-                Some(new_selection)
-            });
+        if let Some(selected) = self.list_state.selected() {
+            if selected >= self.display_rows.len() {
+                let new_selection = self.display_rows.len().saturating_sub(1);
+                self.list_state.select(if self.display_rows.is_empty() {
+                    None
+                } else {
+                    Some(new_selection)
+                });
+            }
         }
     }
 

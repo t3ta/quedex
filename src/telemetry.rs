@@ -128,10 +128,10 @@ fn init_with_otel(config: &TelemetryConfig, env_filter: EnvFilter) -> Result<()>
 /// This should be called before the application exits to ensure
 /// all traces are properly exported.
 pub fn shutdown() {
-    if let Some(provider) = TRACER_PROVIDER.get()
-        && let Err(e) = provider.shutdown()
-    {
-        eprintln!("Failed to shutdown telemetry provider: {e}");
+    if let Some(provider) = TRACER_PROVIDER.get() {
+        if let Err(e) = provider.shutdown() {
+            eprintln!("Failed to shutdown telemetry provider: {e}");
+        }
     }
 }
 
