@@ -67,18 +67,30 @@ impl ChildHandle {
     pub fn kill(&self) -> Result<()> {
         // Use OS-level kill via pid to avoid deadlocking with wait(),
         // which holds the child mutex for the entire blocking wait.
-        let pid = self.pid as i32;
-        let ret = unsafe { libc::kill(pid, libc::SIGKILL) };
-        if ret == 0 {
-            Ok(())
-        } else {
-            let err = std::io::Error::last_os_error();
-            // ESRCH means process already exited — not a real error
-            if err.raw_os_error() == Some(libc::ESRCH) {
-                Err(anyhow!("process {} already exited", pid))
+        #[cfg(unix)]
+        {
+            let pid = self.pid as i32;
+            let ret = unsafe { libc::kill(pid, libc::SIGKILL) };
+            if ret == 0 {
+                Ok(())
             } else {
-                Err(anyhow!("kill process {}: {}", pid, err))
+                let err = std::io::Error::last_os_error();
+                // ESRCH means process already exited — not a real error
+                if err.raw_os_error() == Some(libc::ESRCH) {
+                    Err(anyhow!("process {} already exited", pid))
+                } else {
+                    Err(anyhow!("kill process {}: {}", pid, err))
+                }
             }
+        }
+        #[cfg(not(unix))]
+        {
+            let mut child = self
+                .child
+                .lock()
+                .map_err(|_| anyhow!("child process lock poisoned"))?;
+            child.kill().context("kill child process")?;
+            Ok(())
         }
     }
 
