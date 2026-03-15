@@ -3,6 +3,7 @@
 pub mod circuit_breaker;
 pub mod config;
 pub mod dry_run;
+pub mod hooks;
 pub mod git;
 pub mod notifier;
 pub mod plan;
