@@ -26,7 +26,7 @@ use quedex::hooks::{HookContext, HookPoint, run_run_hook, run_task_hook};
 use quedex::dry_run::{detect_lock_conflicts, generate_execution_waves};
 use quedex::git::{self, GitManager};
 use quedex::notifier::Notifier;
-use quedex::plan::{CompletionGate, Plan, PlanFormat, Task, TaskMode};
+use quedex::plan::{CompletionGate, Plan, PlanFormat, Task, TaskHooksConfig, TaskMode};
 use quedex::runner::claude_code::ClaudeCodeRunner;
 use quedex::runner::codex::CodexRunner;
 use quedex::runner::opencode::OpencodeRunner;
@@ -1117,15 +1117,27 @@ async fn handle_run(
             attempt: None,
             exit_code: None,
         };
-        if let Err(e) = run_run_hook(
+        let _ = store.append_event(Event::HookStarted {
+            hook_type: "before_run".to_string(),
+            task_id: None,
+            timestamp: Utc::now(),
+        });
+        let hook_result = run_run_hook(
             HookPoint::BeforeRun,
             config.hooks.as_ref(),
             &hook_ctx,
             &env,
             &hook_cwd,
         )
-        .await
-        {
+        .await;
+        let exit_code = if hook_result.is_ok() { 0 } else { 1 };
+        let _ = store.append_event(Event::HookFinished {
+            hook_type: "before_run".to_string(),
+            task_id: None,
+            exit_code,
+            timestamp: Utc::now(),
+        });
+        if let Err(e) = hook_result {
             eprintln!("before_run hook failed, aborting: {e}");
             return Ok(1);
         }
@@ -1242,15 +1254,27 @@ async fn handle_run(
             attempt: None,
             exit_code: Some(exit_code),
         };
-        if let Err(e) = run_run_hook(
+        let _ = store.append_event(Event::HookStarted {
+            hook_type: "after_run".to_string(),
+            task_id: None,
+            timestamp: Utc::now(),
+        });
+        let hook_result = run_run_hook(
             HookPoint::AfterRun,
             config.hooks.as_ref(),
             &hook_ctx,
             &env,
             &hook_cwd,
         )
-        .await
-        {
+        .await;
+        let hook_exit = if hook_result.is_ok() { 0 } else { 1 };
+        let _ = store.append_event(Event::HookFinished {
+            hook_type: "after_run".to_string(),
+            task_id: None,
+            exit_code: hook_exit,
+            timestamp: Utc::now(),
+        });
+        if let Err(e) = hook_result {
             eprintln!("after_run hook failed: {e}");
             return Ok(1);
         }
@@ -3234,6 +3258,39 @@ impl CancelHandle {
     }
 }
 
+/// Execute a task-level hook with event recording.
+#[allow(clippy::too_many_arguments)]
+async fn run_task_hook_with_events(
+    hook_point: HookPoint,
+    global_hooks: Option<&HooksConfig>,
+    task_hooks: Option<&TaskHooksConfig>,
+    hook_ctx: &HookContext,
+    env: &HashMap<String, String>,
+    cwd: &std::path::Path,
+    store: &Arc<dyn Store>,
+    task_id: &str,
+) {
+    let hook_type = match hook_point {
+        HookPoint::BeforeTask => "before_task",
+        HookPoint::AfterTask => "after_task",
+        HookPoint::OnFailure => "on_failure",
+        HookPoint::BeforeRun => "before_run",
+        HookPoint::AfterRun => "after_run",
+    };
+    let _ = store.append_event(Event::HookStarted {
+        hook_type: hook_type.to_string(),
+        task_id: Some(task_id.to_string()),
+        timestamp: Utc::now(),
+    });
+    let result = run_task_hook(hook_point, global_hooks, task_hooks, hook_ctx, env, cwd).await;
+    let _ = store.append_event(Event::HookFinished {
+        hook_type: hook_type.to_string(),
+        task_id: Some(task_id.to_string()),
+        exit_code: if result.is_ok() { 0 } else { 1 },
+        timestamp: Utc::now(),
+    });
+}
+
 struct PlanTaskRunner {
     tasks: Arc<HashMap<String, Task>>,
     profiles: Arc<HashMap<String, quedex::plan::AgentProfile>>,
@@ -3554,13 +3611,15 @@ impl TaskRunner for PlanTaskRunner {
                         attempt: Some(attempt),
                         exit_code: None,
                     };
-                    let _ = run_task_hook(
+                    run_task_hook_with_events(
                         HookPoint::BeforeTask,
                         global_hooks.as_ref(),
                         task.hooks.as_ref(),
                         &hook_ctx,
                         &task_ctx.env,
                         &task_ctx.cwd,
+                        &state.store,
+                        &task_id,
                     )
                     .await;
                 }
@@ -3591,8 +3650,8 @@ impl TaskRunner for PlanTaskRunner {
                                 attempt: Some(attempt),
                                 exit_code: Some(1),
                             };
-                            let _ = run_task_hook(HookPoint::OnFailure, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd).await;
-                            let _ = run_task_hook(HookPoint::AfterTask, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd).await;
+                            run_task_hook_with_events(HookPoint::OnFailure, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
+                            run_task_hook_with_events(HookPoint::AfterTask, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
                             break TaskResult::failed(1);
                         }
                         continue;
@@ -3679,8 +3738,8 @@ impl TaskRunner for PlanTaskRunner {
                                 attempt: Some(attempt),
                                 exit_code: Some(1),
                             };
-                            let _ = run_task_hook(HookPoint::OnFailure, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd).await;
-                            let _ = run_task_hook(HookPoint::AfterTask, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd).await;
+                            run_task_hook_with_events(HookPoint::OnFailure, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
+                            run_task_hook_with_events(HookPoint::AfterTask, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
                             break TaskResult::failed(1);
                         }
                         continue;
@@ -3698,8 +3757,8 @@ impl TaskRunner for PlanTaskRunner {
                                 attempt: Some(attempt),
                                 exit_code: Some(1),
                             };
-                            let _ = run_task_hook(HookPoint::OnFailure, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd).await;
-                            let _ = run_task_hook(HookPoint::AfterTask, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd).await;
+                            run_task_hook_with_events(HookPoint::OnFailure, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
+                            run_task_hook_with_events(HookPoint::AfterTask, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
                             break TaskResult::failed(1);
                         }
                         continue;
@@ -3771,15 +3830,7 @@ impl TaskRunner for PlanTaskRunner {
                                         attempt: Some(attempt),
                                         exit_code: result.exit_code,
                                     };
-                                    let _ = run_task_hook(
-                                        HookPoint::OnFailure,
-                                        global_hooks.as_ref(),
-                                        task.hooks.as_ref(),
-                                        &hook_ctx,
-                                        &task_ctx.env,
-                                        &task_ctx.cwd,
-                                    )
-                                    .await;
+                                    run_task_hook_with_events(HookPoint::OnFailure, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
                                 }
 
                                 // Execute after_task hook for permanent failure
@@ -3793,15 +3844,7 @@ impl TaskRunner for PlanTaskRunner {
                                         attempt: Some(attempt),
                                         exit_code: result.exit_code,
                                     };
-                                    let _ = run_task_hook(
-                                        HookPoint::AfterTask,
-                                        global_hooks.as_ref(),
-                                        task.hooks.as_ref(),
-                                        &hook_ctx,
-                                        &task_ctx.env,
-                                        &task_ctx.cwd,
-                                    )
-                                    .await;
+                                    run_task_hook_with_events(HookPoint::AfterTask, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
                                 }
 
                                 break result;
@@ -3829,15 +3872,7 @@ impl TaskRunner for PlanTaskRunner {
                         attempt: Some(attempt),
                         exit_code: result.exit_code,
                     };
-                    let _ = run_task_hook(
-                        HookPoint::OnFailure,
-                        global_hooks.as_ref(),
-                        task.hooks.as_ref(),
-                        &hook_ctx,
-                        &task_ctx.env,
-                        &task_ctx.cwd,
-                    )
-                    .await;
+                    run_task_hook_with_events(HookPoint::OnFailure, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
                 }
 
                 // Execute after_task hook (success or failure)
@@ -3857,15 +3892,7 @@ impl TaskRunner for PlanTaskRunner {
                         attempt: Some(attempt),
                         exit_code: result.exit_code,
                     };
-                    let _ = run_task_hook(
-                        HookPoint::AfterTask,
-                        global_hooks.as_ref(),
-                        task.hooks.as_ref(),
-                        &hook_ctx,
-                        &task_ctx.env,
-                        &task_ctx.cwd,
-                    )
-                    .await;
+                    run_task_hook_with_events(HookPoint::AfterTask, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
                 }
 
                 break result;
@@ -4295,6 +4322,7 @@ mod tests {
             skip_gates: false,
             auto_commit: true,
             squash: false,
+            hooks: None,
         };
         let defaults = vec![CompletionGate {
             name: "default".to_string(),
@@ -4342,6 +4370,7 @@ mod tests {
             skip_gates: false,
             auto_commit: true,
             squash: false,
+            hooks: None,
         };
         let defaults = vec![CompletionGate {
             name: "default".to_string(),

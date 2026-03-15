@@ -37,6 +37,7 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
         skip_gates: false,
         auto_commit: true,
         squash: false,
+        hooks: None,
     }
 }
 
@@ -72,6 +73,7 @@ fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
         skip_gates: false,
         auto_commit: true,
         squash: false,
+        hooks: None,
     }
 }
 
@@ -149,6 +151,7 @@ fn plan_rejects_empty_codex_prompt() {
         skip_gates: false,
         auto_commit: true,
         squash: false,
+        hooks: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -187,6 +190,7 @@ fn plan_rejects_empty_claude_code_prompt() {
         skip_gates: false,
         auto_commit: true,
         squash: false,
+        hooks: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -232,6 +236,7 @@ fn plan_rejects_multiple_runner_configs() {
         skip_gates: false,
         auto_commit: true,
         squash: false,
+        hooks: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -270,6 +275,7 @@ fn plan_accepts_valid_claude_code_task() {
         skip_gates: false,
         auto_commit: true,
         squash: false,
+        hooks: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -311,6 +317,7 @@ fn plan_rejects_kind_mismatch_claude_code() {
         skip_gates: false,
         auto_commit: true,
         squash: false,
+        hooks: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -349,6 +356,7 @@ fn plan_rejects_empty_opencode_prompt() {
         skip_gates: false,
         auto_commit: true,
         squash: false,
+        hooks: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -405,6 +413,7 @@ fn plan_accepts_valid_opencode_task() {
         skip_gates: false,
         auto_commit: true,
         squash: false,
+        hooks: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -446,6 +455,7 @@ fn plan_rejects_kind_mismatch_opencode() {
         skip_gates: false,
         auto_commit: true,
         squash: false,
+        hooks: None,
     };
 
     let plan = plan_with_tasks(vec![task]);
@@ -488,6 +498,7 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
         skip_gates: false,
         auto_commit: true,
         squash: false,
+        hooks: None,
     };
 
     let plan = plan_with_tasks(vec![task]);

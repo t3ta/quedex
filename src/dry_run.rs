@@ -291,6 +291,7 @@ mod tests {
             stall_timeout_sec: None,
             completion_gates: None,
             skip_gates: false,
+            hooks: None,
         }
     }
 

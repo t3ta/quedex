@@ -64,6 +64,7 @@ fn create_task(id: &str, deps: Vec<&str>, locks: Vec<&str>) -> Task {
         skip_gates: false,
         auto_commit: true,
         squash: false,
+        hooks: None,
     }
 }
 
