@@ -240,11 +240,14 @@ mod tests {
                 worktree: None,
                 env: None,
                 max_concurrency: None,
+                max_concurrency_by_mode: None,
                 fail_fast: None,
+                stall_timeout_sec: None,
                 _default_timeout_sec_rejected: None,
                 _timeout_sec_rejected: None,
                 notifications: None,
                 system_prompt: None,
+                default_gates: None,
             },
             profiles: std::collections::HashMap::new(),
             groups: std::collections::HashMap::new(),
@@ -285,6 +288,9 @@ mod tests {
             retry_strategy: None,
             context: None,
             condition: None,
+            stall_timeout_sec: None,
+            completion_gates: None,
+            skip_gates: false,
         }
     }
 

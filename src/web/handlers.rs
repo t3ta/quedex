@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
-    http::{header, StatusCode},
-    response::{Html, IntoResponse},
     Json,
+    extract::{Path, State},
+    http::{StatusCode, header},
+    response::{Html, IntoResponse},
 };
 use serde::Serialize;
 use serde_json::json;
@@ -65,13 +65,13 @@ pub async fn get_state(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let runs_dir = state.store_root.join("runs");
-    
+
     if !runs_dir.exists() {
         return Ok(Json(json!({ "runs": [] })));
     }
 
     let mut runs = Vec::new();
-    
+
     if let Some(ref run_id) = state.run_id {
         // Single run mode
         let state_path = runs_dir.join(run_id).join("state.json");
@@ -90,7 +90,9 @@ pub async fn get_state(
                     let state_path = entry.path().join("state.json");
                     if state_path.exists() {
                         if let Ok(content) = std::fs::read_to_string(&state_path) {
-                            if let Ok(run_state) = serde_json::from_str::<serde_json::Value>(&content) {
+                            if let Ok(run_state) =
+                                serde_json::from_str::<serde_json::Value>(&content)
+                            {
                                 runs.push(run_state);
                             }
                         }
@@ -115,7 +117,7 @@ pub async fn list_runs(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let runs_dir = state.store_root.join("runs");
-    
+
     if !runs_dir.exists() {
         return Ok(Json(json!({ "runs": [] })));
     }
@@ -139,8 +141,13 @@ pub async fn get_logs(
     State(state): State<Arc<AppState>>,
     Path((run_id, task_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let task_dir = state.store_root.join("runs").join(&run_id).join("tasks").join(&task_id);
-    
+    let task_dir = state
+        .store_root
+        .join("runs")
+        .join(&run_id)
+        .join("tasks")
+        .join(&task_id);
+
     let stdout = std::fs::read_to_string(task_dir.join("stdout.log")).unwrap_or_default();
     let stderr = std::fs::read_to_string(task_dir.join("stderr.log")).unwrap_or_default();
 

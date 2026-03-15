@@ -324,11 +324,7 @@ fn stats_handles_various_duration_formats() -> Result<()> {
             .arg("--since")
             .arg(duration)
             .output()?;
-        assert!(
-            output.status.success(),
-            "Failed for duration: {}",
-            duration
-        );
+        assert!(output.status.success(), "Failed for duration: {}", duration);
     }
 
     // Test invalid duration format

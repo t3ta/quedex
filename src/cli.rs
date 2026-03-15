@@ -61,9 +61,7 @@ pub enum Commands {
         json: bool,
     },
     /// Open TUI monitor
-    Tui {
-        run_id: Option<String>,
-    },
+    Tui { run_id: Option<String> },
     /// Show task logs
     Logs {
         run_id: String,

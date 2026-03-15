@@ -51,6 +51,26 @@ pub enum Event {
         #[serde(rename = "ts")]
         timestamp: DateTime<Utc>,
     },
+    GateStarted {
+        task_id: String,
+        gate_name: String,
+        #[serde(rename = "ts")]
+        timestamp: DateTime<Utc>,
+    },
+    GateFinished {
+        task_id: String,
+        gate_name: String,
+        #[serde(rename = "code")]
+        exit_code: i32,
+        #[serde(rename = "ts")]
+        timestamp: DateTime<Utc>,
+    },
+    TaskStalled {
+        task_id: String,
+        stall_timeout_sec: u64,
+        #[serde(rename = "ts")]
+        timestamp: DateTime<Utc>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

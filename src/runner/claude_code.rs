@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result};
 
 use crate::plan::Task;
-use crate::runner::{resolve_command_path, ChildHandle, RunContext, Runner};
+use crate::runner::{ChildHandle, RunContext, Runner, resolve_command_path};
 use crate::store::LogStream;
 
 #[derive(Clone, Copy)]

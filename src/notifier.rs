@@ -111,7 +111,10 @@ impl Notifier {
 
     /// Notifies that a run has started.
     pub fn notify_start(&self) {
-        let message = format!("🚀 **quedex run started**\nRun: `{}`\nID: `{}`", self.run_name, self.run_id);
+        let message = format!(
+            "🚀 **quedex run started**\nRun: `{}`\nID: `{}`",
+            self.run_name, self.run_id
+        );
         self.send(NotificationEvent::OnStart, &message);
     }
 

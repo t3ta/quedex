@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 mod cli;
 
 use std::collections::{HashMap, HashSet};
@@ -22,11 +24,11 @@ use quedex::config::{Config, EffectiveOptions};
 use quedex::dry_run::{detect_lock_conflicts, generate_execution_waves};
 use quedex::git::{self, GitManager};
 use quedex::notifier::Notifier;
-use quedex::plan::{Plan, PlanFormat, Task};
+use quedex::plan::{CompletionGate, Plan, PlanFormat, Task, TaskMode};
 use quedex::runner::claude_code::ClaudeCodeRunner;
 use quedex::runner::codex::CodexRunner;
 use quedex::runner::opencode::OpencodeRunner;
-use quedex::runner::{resolve_command_path, ChildHandle, RunContext, Runner};
+use quedex::runner::{ChildHandle, RunContext, Runner, resolve_command_path};
 use quedex::scheduler::{
     ScheduleReport, Scheduler, SchedulerOptions, TaskRecord, TaskResult, TaskRunner, TaskSpec,
 };
@@ -38,6 +40,24 @@ use quedex::worktree::{
     WorktreeConfig,
     manager::{TaskWorkdir, WorktreeManager},
 };
+
+fn build_mode_concurrency(plan: &Plan) -> HashMap<quedex::plan::TaskMode, usize> {
+    use quedex::plan::TaskMode;
+
+    let mut map = HashMap::new();
+    if let Some(ref by_mode) = plan.run.max_concurrency_by_mode {
+        for (mode_str, &limit) in by_mode {
+            let mode = match mode_str.as_str() {
+                "research" => TaskMode::Research,
+                "implement" => TaskMode::Implement,
+                "verify" => TaskMode::Verify,
+                _ => continue,
+            };
+            map.insert(mode, limit);
+        }
+    }
+    map
+}
 
 #[tokio::main]
 async fn main() {
@@ -91,10 +111,23 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             if dry_run {
                 handle_dry_run(&cli.global, &plan)
             } else {
-                handle_run(&cli.global, &effective, &config, &plan, recovery, run_id, base_dir).await
+                handle_run(
+                    &cli.global,
+                    &effective,
+                    &config,
+                    &plan,
+                    recovery,
+                    run_id,
+                    base_dir,
+                )
+                .await
             }
         }
-        Commands::Status { run_id, group, json } => handle_status(&effective, run_id, group, json),
+        Commands::Status {
+            run_id,
+            group,
+            json,
+        } => handle_status(&effective, run_id, group, json),
         Commands::Tui { run_id } => handle_tui(&effective, run_id),
         Commands::Logs {
             run_id,
@@ -108,8 +141,23 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             task_id,
             group,
             reload_plan,
-        } => handle_retry(&cli.global, &effective, &config, &run_id, task_id, group, reload_plan).await,
-        Commands::Cancel { run_id, task_id, group } => handle_cancel(&effective, &run_id, task_id, group),
+        } => {
+            handle_retry(
+                &cli.global,
+                &effective,
+                &config,
+                &run_id,
+                task_id,
+                group,
+                reload_plan,
+            )
+            .await
+        }
+        Commands::Cancel {
+            run_id,
+            task_id,
+            group,
+        } => handle_cancel(&effective, &run_id, task_id, group),
         Commands::Clean {
             run_id,
             all,
@@ -120,7 +168,9 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             mermaid,
             ascii,
         } => handle_graph(&effective, &target, mermaid, ascii),
-        Commands::History { limit, all, json } => handle_history(&cli.global, &effective, limit, all, json),
+        Commands::History { limit, all, json } => {
+            handle_history(&cli.global, &effective, limit, all, json)
+        }
         Commands::Schema { output } => handle_schema(output),
         Commands::Stats { since, json } => handle_stats(&cli.global, &effective, since, json),
         Commands::DryRun {
@@ -128,7 +178,14 @@ async fn dispatch(cli: Cli) -> Result<i32> {
             show_order,
             check_locks,
             mermaid,
-        } => handle_dry_run_extended(&cli.global, &effective, &plan, show_order, check_locks, mermaid),
+        } => handle_dry_run_extended(
+            &cli.global,
+            &effective,
+            &plan,
+            show_order,
+            check_locks,
+            mermaid,
+        ),
         Commands::Serve { run_id, port, host } => {
             handle_serve(&cli.global, run_id, host, port, &config).await
         }
@@ -146,7 +203,10 @@ fn handle_init(global: &GlobalOptions, output: Option<PathBuf>, force: bool) -> 
     }
 
     if global.verbose {
-        eprintln!("[verbose] Creating plan template at {}", output_path.display());
+        eprintln!(
+            "[verbose] Creating plan template at {}",
+            output_path.display()
+        );
     }
 
     let is_yaml = matches!(
@@ -361,7 +421,10 @@ fn handle_dry_run_extended(
             let all_deps: Vec<String> = wave
                 .iter()
                 .filter_map(|task_id| {
-                    plan.tasks.iter().find(|t| t.id == *task_id).map(|t| t.deps.clone())
+                    plan.tasks
+                        .iter()
+                        .find(|t| t.id == *task_id)
+                        .map(|t| t.deps.clone())
                 })
                 .flatten()
                 .collect::<std::collections::HashSet<_>>()
@@ -385,7 +448,12 @@ fn handle_dry_run_extended(
                 String::new()
             };
 
-            println!("  Wave {}: [{}]{}", wave_idx + 1, task_display.join(", "), annotation);
+            println!(
+                "  Wave {}: [{}]{}",
+                wave_idx + 1,
+                task_display.join(", "),
+                annotation
+            );
 
             // Show dependencies for each task in verbose mode
             if global.verbose {
@@ -401,7 +469,9 @@ fn handle_dry_run_extended(
                         } else {
                             task.locks.join(", ")
                         };
-                        eprintln!("    [verbose] {task_id} - deps: [{deps_str}], locks: [{locks_str}]");
+                        eprintln!(
+                            "    [verbose] {task_id} - deps: [{deps_str}], locks: [{locks_str}]"
+                        );
                     }
                 }
             }
@@ -417,7 +487,11 @@ fn handle_dry_run_extended(
         } else {
             println!("Potential lock conflicts detected:");
             for conflict in &conflicts {
-                println!("  Lock '{}': tasks [{}] may compete", conflict.lock_name, conflict.task_ids.join(", "));
+                println!(
+                    "  Lock '{}': tasks [{}] may compete",
+                    conflict.lock_name,
+                    conflict.task_ids.join(", ")
+                );
                 if !conflict.notes.is_empty() {
                     println!("    Note: {}", conflict.notes);
                 }
@@ -428,7 +502,13 @@ fn handle_dry_run_extended(
     Ok(0)
 }
 
-fn handle_history(global: &GlobalOptions, effective: &EffectiveOptions, limit: usize, all: bool, json: bool) -> Result<i32> {
+fn handle_history(
+    global: &GlobalOptions,
+    effective: &EffectiveOptions,
+    limit: usize,
+    all: bool,
+    json: bool,
+) -> Result<i32> {
     let store_root = resolve_store_path(effective.store.as_ref())?;
 
     if global.verbose {
@@ -436,7 +516,7 @@ fn handle_history(global: &GlobalOptions, effective: &EffectiveOptions, limit: u
     }
 
     let mut states = list_states(&store_root)?;
-    states.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    states.sort_by_key(|state| std::cmp::Reverse(state.started_at));
 
     let display_limit = if all { states.len() } else { limit };
     let states: Vec<_> = states.into_iter().take(display_limit).collect();
@@ -617,10 +697,7 @@ fn handle_stats(
     // Calculate average run duration
     let durations: Vec<i64> = states
         .iter()
-        .filter_map(|s| {
-            s.completed_at
-                .map(|end| (end - s.started_at).num_seconds())
-        })
+        .filter_map(|s| s.completed_at.map(|end| (end - s.started_at).num_seconds()))
         .collect();
     let avg_duration = if !durations.is_empty() {
         Some(durations.iter().sum::<i64>() / durations.len() as i64)
@@ -698,9 +775,7 @@ fn handle_stats(
         println!("Execution Statistics ({period_str})");
         println!("{}", "=".repeat(40));
         println!("Total runs:       {total_runs}");
-        println!(
-            "Success rate:     {success_rate:.1}% ({successful_runs}/{total_runs})"
-        );
+        println!("Success rate:     {success_rate:.1}% ({successful_runs}/{total_runs})");
         if let Some(avg) = avg_duration {
             println!("Avg duration:     {}", format_duration(avg));
         } else {
@@ -1016,15 +1091,12 @@ async fn handle_run(
         .max_concurrency
         .or(effective.max_concurrency)
         .unwrap_or(1);
+    let mode_concurrency = build_mode_concurrency(&plan);
     let fail_fast = plan.run.fail_fast.unwrap_or(effective.fail_fast);
 
     // Create notifier for webhook notifications
     let run_name = plan.run.name.clone().unwrap_or_else(|| run_id.clone());
-    let notifier = Notifier::new(
-        plan.run.notifications.clone(),
-        run_id.clone(),
-        run_name,
-    );
+    let notifier = Notifier::new(plan.run.notifications.clone(), run_id.clone(), run_name);
 
     // Send run started notification
     if let Some(ref n) = notifier {
@@ -1034,6 +1106,8 @@ async fn handle_run(
     let runner = PlanTaskRunner::new(
         Arc::new(tasks_map),
         Arc::new(plan.profiles.clone()),
+        plan.run.stall_timeout_sec,
+        plan.run.default_gates.clone(),
         ctx,
         state_handle.clone(),
         cancel.clone(),
@@ -1052,6 +1126,7 @@ async fn handle_run(
             SchedulerOptions {
                 max_concurrency,
                 fail_fast,
+                mode_concurrency: mode_concurrency.clone(),
             },
             runner,
             initial_states,
@@ -1067,6 +1142,7 @@ async fn handle_run(
             SchedulerOptions {
                 max_concurrency,
                 fail_fast,
+                mode_concurrency: mode_concurrency.clone(),
             },
             runner,
         );
@@ -1161,7 +1237,7 @@ fn handle_status(
     }
 
     let mut states = list_states(&store_root)?;
-    states.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    states.sort_by_key(|state| std::cmp::Reverse(state.started_at));
 
     if json {
         let text = serde_json::to_string_pretty(&states)?;
@@ -1268,12 +1344,7 @@ fn handle_outputs(
             let size = fs::metadata(&path)
                 .with_context(|| format!("stat {}", path.display()))?
                 .len();
-            println!(
-                "{:<16} {:<40} {:>10}",
-                task_id,
-                relative.display(),
-                size
-            );
+            println!("{:<16} {:<40} {:>10}", task_id, relative.display(), size);
             let preview = read_preview_lines(&path, OUTPUT_PREVIEW_LINES)?;
             for line in preview {
                 println!("  {}", line);
@@ -1302,8 +1373,8 @@ fn resolve_output_tasks(
     }
 
     let mut tasks = Vec::new();
-    for entry in fs::read_dir(outputs_root)
-        .with_context(|| format!("read {}", outputs_root.display()))?
+    for entry in
+        fs::read_dir(outputs_root).with_context(|| format!("read {}", outputs_root.display()))?
     {
         let entry = entry?;
         let file_type = entry.file_type()?;
@@ -1324,8 +1395,8 @@ fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
 
     let mut stack = vec![dir.to_path_buf()];
     while let Some(current) = stack.pop() {
-        for entry in fs::read_dir(&current)
-            .with_context(|| format!("read {}", current.display()))?
+        for entry in
+            fs::read_dir(&current).with_context(|| format!("read {}", current.display()))?
         {
             let entry = entry?;
             let path = entry.path();
@@ -1477,9 +1548,10 @@ async fn handle_retry(
         // Check dependencies are satisfied
         let mut deps_satisfied = true;
         for dep in &task.deps {
-            let dep_state = state.tasks.get(dep).ok_or_else(|| {
-                anyhow!("task {tid} dependency {dep} not found in state")
-            })?;
+            let dep_state = state
+                .tasks
+                .get(dep)
+                .ok_or_else(|| anyhow!("task {tid} dependency {dep} not found in state"))?;
             if dep_state.status != TaskStatus::Succeeded {
                 if group.is_some() {
                     deps_satisfied = false;
@@ -1502,11 +1574,8 @@ async fn handle_retry(
     }
 
     if tasks_to_retry.is_empty() {
-        if group.is_some() {
-            println!(
-                "No retryable tasks found in group '{}'",
-                group.as_ref().unwrap()
-            );
+        if let Some(group_name) = group.as_ref() {
+            println!("No retryable tasks found in group '{}'", group_name);
             return Ok(0);
         }
         return Err(anyhow!("no tasks to retry"));
@@ -1712,12 +1781,15 @@ async fn handle_retry(
         .max_concurrency
         .or(effective.max_concurrency)
         .unwrap_or(1);
+    let mode_concurrency = build_mode_concurrency(&plan);
     let fail_fast = plan.run.fail_fast.unwrap_or(effective.fail_fast);
 
     // Notifier for retry (no notifications for retry operations)
     let runner = PlanTaskRunner::new(
         Arc::new(tasks_map),
         Arc::new(plan.profiles.clone()),
+        plan.run.stall_timeout_sec,
+        plan.run.default_gates.clone(),
         ctx,
         state_handle.clone(),
         cancel,
@@ -1729,16 +1801,17 @@ async fn handle_retry(
         Ok(gm) => Some(Arc::new(std::sync::Mutex::new(gm))),
         Err(_) => None, // Not in a git repository, skip auto-commit
     };
-    
+
     let scheduler = Scheduler::new(
         task_specs,
         SchedulerOptions {
             max_concurrency,
             fail_fast,
+            mode_concurrency,
         },
         runner,
     );
-    
+
     let scheduler = if let Some(gm) = git_manager {
         scheduler.with_git_manager(gm)
     } else {
@@ -2025,7 +2098,7 @@ fn run_active_reason(store_root: &Path, run_id: &str) -> Result<Option<String>> 
 /// is no longer alive. This can happen when quedex crashes or is killed without
 /// proper cleanup.
 fn fix_orphaned_runs(store_root: &Path, verbose: bool) -> Result<Vec<String>> {
-    use quedex::store::{fs::FsStore, Store};
+    use quedex::store::{Store, fs::FsStore};
 
     let mut fixed = Vec::new();
     let states = list_states(store_root)?;
@@ -2040,10 +2113,7 @@ fn fix_orphaned_runs(store_root: &Path, verbose: bool) -> Result<Vec<String>> {
         let is_active = match run_active_reason(store_root, &state.run_id) {
             Ok(Some(reason)) => {
                 if verbose {
-                    eprintln!(
-                        "[verbose] Run {} is still active: {}",
-                        state.run_id, reason
-                    );
+                    eprintln!("[verbose] Run {} is still active: {}", state.run_id, reason);
                 }
                 true
             }
@@ -2103,7 +2173,12 @@ fn fix_orphaned_runs(store_root: &Path, verbose: bool) -> Result<Vec<String>> {
     Ok(fixed)
 }
 
-fn handle_graph(effective: &EffectiveOptions, target: &str, mermaid: bool, ascii: bool) -> Result<i32> {
+fn handle_graph(
+    effective: &EffectiveOptions,
+    target: &str,
+    mermaid: bool,
+    ascii: bool,
+) -> Result<i32> {
     let store_root = resolve_store_path(effective.store.as_ref())?;
     let plan = if Path::new(target).exists() {
         load_plan(target)?.0
@@ -2156,10 +2231,15 @@ fn handle_squash_tasks(plan: &Plan, report: &ScheduleReport) -> Result<()> {
         return Ok(());
     }
 
-    let task_title = squash_task.unwrap().title.as_deref().unwrap_or("Integration");
+    let task_title = squash_task
+        .unwrap()
+        .title
+        .as_deref()
+        .unwrap_or("Integration");
 
     // Collect commit information for squash message
-    let task_summaries: Vec<(String, String)> = report.commit_hashes
+    let task_summaries: Vec<(String, String)> = report
+        .commit_hashes
         .iter()
         .map(|(id, _, title)| {
             let title_str = title.clone().unwrap_or_else(|| id.clone());
@@ -2441,11 +2521,10 @@ fn select_run_interactive(runs: &[RunInfo]) -> Result<Option<String>> {
                         KeyCode::Up | KeyCode::Char('k') => {
                             selected = selected.saturating_sub(1);
                         }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            if selected < runs.len() - 1 {
-                                selected += 1;
-                            }
+                        KeyCode::Down | KeyCode::Char('j') if selected < runs.len() - 1 => {
+                            selected += 1;
                         }
+                        KeyCode::Down | KeyCode::Char('j') => {}
                         KeyCode::Enter => {
                             return Ok(Some(runs[selected].state.run_id.clone()));
                         }
@@ -2674,12 +2753,13 @@ fn finalize_run_status(state: &State) -> (RunStatus, i32) {
     for task in state.tasks.values() {
         match task.status {
             TaskStatus::Failed => has_failed = true,
-            TaskStatus::Skipped => {
+            TaskStatus::Skipped
+                if !matches!(task.skip_reason, Some(SkipReason::ConditionNotMet { .. })) =>
+            {
                 // Condition-based skips are intentional and not failures
-                if !matches!(task.skip_reason, Some(SkipReason::ConditionNotMet { .. })) {
-                    has_skipped_not_condition = true;
-                }
+                has_skipped_not_condition = true;
             }
+            TaskStatus::Skipped => {}
             TaskStatus::Canceled => has_canceled = true,
             _ => {}
         }
@@ -2714,7 +2794,13 @@ fn print_mermaid_graph(plan: &Plan) {
             // Sanitize group name for Mermaid ID (replace non-alphanumeric with underscore)
             let sanitized_id: String = group_name
                 .chars()
-                .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
                 .collect();
             println!("  subgraph {sanitized_id} [{group_name}]");
             let mut sorted_ids: Vec<_> = task_ids.iter().collect();
@@ -2728,10 +2814,9 @@ fn print_mermaid_graph(plan: &Plan) {
 
     // Output ungrouped tasks (tasks with no group)
     for task in &plan.tasks {
-        if !grouped_task_ids.contains(task.id.as_str())
-            && task.deps.is_empty() {
-                println!("  {};", task.id);
-            }
+        if !grouped_task_ids.contains(task.id.as_str()) && task.deps.is_empty() {
+            println!("  {};", task.id);
+        }
     }
 
     // Output all dependency edges
@@ -3084,6 +3169,8 @@ impl CancelHandle {
 struct PlanTaskRunner {
     tasks: Arc<HashMap<String, Task>>,
     profiles: Arc<HashMap<String, quedex::plan::AgentProfile>>,
+    default_stall_timeout_sec: Option<u64>,
+    default_gates: Option<Vec<CompletionGate>>,
     ctx: RunContext,
     state: StateHandle,
     cancel: CancelHandle,
@@ -3094,9 +3181,12 @@ struct PlanTaskRunner {
 }
 
 impl PlanTaskRunner {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         tasks: Arc<HashMap<String, Task>>,
         profiles: Arc<HashMap<String, quedex::plan::AgentProfile>>,
+        default_stall_timeout_sec: Option<u64>,
+        default_gates: Option<Vec<CompletionGate>>,
         ctx: RunContext,
         state: StateHandle,
         cancel: CancelHandle,
@@ -3105,6 +3195,8 @@ impl PlanTaskRunner {
         Self {
             tasks,
             profiles,
+            default_stall_timeout_sec,
+            default_gates,
             ctx,
             state,
             cancel,
@@ -3122,6 +3214,8 @@ impl TaskRunner for PlanTaskRunner {
     fn spawn(&self, task_spec: TaskSpec) -> Self::Future {
         let tasks = Arc::clone(&self.tasks);
         let profiles = Arc::clone(&self.profiles);
+        let default_stall_timeout_sec = self.default_stall_timeout_sec;
+        let default_gates = self.default_gates.clone();
         let ctx = self.ctx.clone();
         let state = self.state.clone();
         let cancel = self.cancel.clone();
@@ -3136,10 +3230,7 @@ impl TaskRunner for PlanTaskRunner {
             };
 
             // Resolve agent profile for this task
-            let profile = task
-                .profile
-                .as_ref()
-                .and_then(|name| profiles.get(name));
+            let profile = task.profile.as_ref().and_then(|name| profiles.get(name));
 
             // Clone task for potential profile-based model override
             let mut task = task.clone();
@@ -3204,7 +3295,9 @@ impl TaskRunner for PlanTaskRunner {
                                 let text = String::from_utf8_lossy(&content);
                                 context_prefix.push_str(&format!(
                                     "--- {} ---\n{}\n--- end {} ---\n\n",
-                                    label, text.trim(), label
+                                    label,
+                                    text.trim(),
+                                    label
                                 ));
                             }
                             Err(err) => {
@@ -3348,8 +3441,65 @@ impl TaskRunner for PlanTaskRunner {
                 cancel.register(&task_id, child.clone());
                 let _ = state.task_started(&task_id, child.pid);
 
-                let wait_future = tokio::task::spawn_blocking(move || child.wait());
-                let wait_result = wait_future.await;
+                let stall_timeout = task.stall_timeout_sec.or(default_stall_timeout_sec);
+                let child_for_wait = child.clone();
+                let mut wait_future = tokio::task::spawn_blocking(move || child_for_wait.wait());
+
+                let wait_result = if let Some(stall_timeout_sec) = stall_timeout.filter(|t| *t > 0)
+                {
+                    let child_for_stall = child.clone();
+                    let store = Arc::clone(&task_ctx.store);
+                    let stalled_task_id = task_id.clone();
+                    let mut stall_handle = tokio::spawn(async move {
+                        let mut last_size = get_output_size(&child_for_stall);
+                        let mut idle_seconds = 0u64;
+
+                        loop {
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            let current_size = get_output_size(&child_for_stall);
+                            if current_size != last_size {
+                                last_size = current_size;
+                                idle_seconds = 0;
+                                continue;
+                            }
+
+                            idle_seconds += 1;
+                            if idle_seconds >= stall_timeout_sec {
+                                let killed = child_for_stall.kill().is_ok();
+                                if killed {
+                                    let _ = store.append_event(Event::TaskStalled {
+                                        task_id: stalled_task_id,
+                                        stall_timeout_sec,
+                                        timestamp: Utc::now(),
+                                    });
+                                }
+                                return killed;
+                            }
+                        }
+                    });
+
+                    tokio::select! {
+                        wait_result = &mut wait_future => {
+                            stall_handle.abort();
+                            wait_result
+                        }
+                        stall_result = &mut stall_handle => {
+                            let stalled = stall_result.unwrap_or(false);
+                            let wait_result = wait_future.await;
+                            // If stalled but process already exited naturally (race
+                            // between kill() and natural exit), honor the real result
+                            // regardless of exit code to preserve retry classification.
+                            let exited_naturally = matches!(&wait_result, Ok(Ok(_)));
+                            if stalled && !exited_naturally {
+                                Ok(Err(anyhow!("task stalled after {stall_timeout_sec}s without output")))
+                            } else {
+                                wait_result
+                            }
+                        }
+                    }
+                } else {
+                    wait_future.await
+                };
 
                 cancel.unregister(&task_id);
 
@@ -3373,7 +3523,41 @@ impl TaskRunner for PlanTaskRunner {
                     }
                 };
 
-                let result = map_exit_status(status, cancel.is_canceled());
+                let mut result = map_exit_status(status, cancel.is_canceled());
+
+                if result.status == TaskStatus::Succeeded && !task.skip_gates {
+                    let gates = resolve_completion_gates(&task, default_gates.as_deref());
+                    for gate in gates {
+                        let _ = task_ctx.store.append_event(Event::GateStarted {
+                            task_id: task_id.clone(),
+                            gate_name: gate.name.clone(),
+                            timestamp: Utc::now(),
+                        });
+
+                        let gate_exit_code = run_completion_gate(
+                            &gate,
+                            &task_ctx.cwd,
+                            &task_id,
+                            &task_ctx.store,
+                            &task_ctx.env,
+                        )
+                        .await;
+
+                        let passed = gate_exit_code == Some(0);
+                        let exit_code = gate_exit_code.unwrap_or(1);
+                        let _ = task_ctx.store.append_event(Event::GateFinished {
+                            task_id: task_id.clone(),
+                            gate_name: gate.name.clone(),
+                            exit_code,
+                            timestamp: Utc::now(),
+                        });
+
+                        if !passed {
+                            result = TaskResult::failed(exit_code);
+                            break;
+                        }
+                    }
+                }
 
                 // If failed but have retries remaining, check if we should retry
                 if result.status == TaskStatus::Failed && attempt < max_attempts {
@@ -3381,18 +3565,17 @@ impl TaskRunner for PlanTaskRunner {
                     if let Some(ref strategy) = retry_strategy {
                         if strategy.skip_permanent_failures {
                             let stderr_path = task_ctx.store.log_path(&task_id, LogStream::Stderr);
-                            let stderr_tail = std::fs::read_to_string(&stderr_path)
-                                .unwrap_or_default();
-                            let failure_type = quedex::plan::FailureType::classify(
-                                result.exit_code,
-                                &stderr_tail,
-                            );
+                            let stderr_tail =
+                                std::fs::read_to_string(&stderr_path).unwrap_or_default();
+                            let failure_type =
+                                quedex::plan::FailureType::classify(result.exit_code, &stderr_tail);
                             if !failure_type.should_retry() {
                                 eprintln!(
                                     "task {task_id} failed with permanent failure (exit code {:?}), skipping retry",
                                     result.exit_code
                                 );
-                                let _ = state.task_finished(&task_id, result.status, result.exit_code);
+                                let _ =
+                                    state.task_finished(&task_id, result.status, result.exit_code);
                                 break result;
                             }
                         }
@@ -3483,7 +3666,9 @@ impl TaskRunner for PlanTaskRunner {
                         let source_path = task_ctx.cwd.join(&publish.source);
                         match std::fs::read(&source_path) {
                             Ok(content) => {
-                                if let Err(err) = task_ctx.store.save_context(&publish.key, &content) {
+                                if let Err(err) =
+                                    task_ctx.store.save_context(&publish.key, &content)
+                                {
                                     eprintln!(
                                         "task {task_id} context publish error for key '{}': {err:#}",
                                         publish.key
@@ -3519,6 +3704,103 @@ impl TaskRunner for PlanTaskRunner {
             result
         })
     }
+}
+
+fn get_output_size(child: &ChildHandle) -> u64 {
+    let stdout_size = fs::metadata(&child.stdout_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let stderr_size = fs::metadata(&child.stderr_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    stdout_size + stderr_size
+}
+
+fn resolve_completion_gates(
+    task: &Task,
+    default_gates: Option<&[CompletionGate]>,
+) -> Vec<CompletionGate> {
+    if let Some(gates) = task.completion_gates.as_ref() {
+        return gates.clone();
+    }
+    match task.mode {
+        TaskMode::Implement | TaskMode::Verify => default_gates.unwrap_or_default().to_vec(),
+        TaskMode::Research => Vec::new(),
+    }
+}
+
+/// Run a completion gate command and return its exit code.
+/// Returns `None` if the command failed to spawn or timed out.
+/// Returns `Some(code)` with the actual exit code on completion.
+async fn run_completion_gate(
+    gate: &CompletionGate,
+    cwd: &Path,
+    task_id: &str,
+    store: &Arc<dyn Store>,
+    env: &HashMap<String, String>,
+) -> Option<i32> {
+    let mut command = tokio::process::Command::new("sh");
+    command
+        .arg("-c")
+        .arg(&gate.command)
+        .current_dir(cwd)
+        .envs(env)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
+                let _ = writeln!(
+                    stderr_log,
+                    "\n[completion gate:{}] failed to spawn: {err}",
+                    gate.name
+                );
+            }
+            return None;
+        }
+    };
+
+    let output = match tokio::time::timeout(
+        Duration::from_secs(gate.timeout_sec),
+        child.wait_with_output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => output,
+        Ok(Err(err)) => {
+            if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
+                let _ = writeln!(
+                    stderr_log,
+                    "\n[completion gate:{}] wait failed: {err}",
+                    gate.name
+                );
+            }
+            return None;
+        }
+        Err(_) => {
+            if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
+                let _ = writeln!(
+                    stderr_log,
+                    "\n[completion gate:{}] timed out after {}s",
+                    gate.name, gate.timeout_sec
+                );
+            }
+            return None;
+        }
+    };
+
+    if let Ok(mut stdout_log) = store.open_log(task_id, LogStream::Stdout) {
+        let _ = writeln!(stdout_log, "\n[completion gate:{}]", gate.name);
+        let _ = stdout_log.write_all(&output.stdout);
+    }
+    if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
+        let _ = writeln!(stderr_log, "\n[completion gate:{}]", gate.name);
+        let _ = stderr_log.write_all(&output.stderr);
+    }
+
+    output.status.code()
 }
 
 fn map_exit_status(status: std::process::ExitStatus, canceled: bool) -> TaskResult {
@@ -3580,7 +3862,9 @@ fn has_unsatisfied_external_deps(
             return false;
         }
         // Dependencies outside retry set → must be Succeeded
-        task_statuses.get(dep).is_none_or(|status| *status != TaskStatus::Succeeded)
+        task_statuses
+            .get(dep)
+            .is_none_or(|status| *status != TaskStatus::Succeeded)
     })
 }
 
@@ -3588,6 +3872,7 @@ fn has_unsatisfied_external_deps(
 mod tests {
     use super::*;
     use std::collections::{HashMap, HashSet};
+    use tempdir::TempDir;
 
     #[test]
     fn test_has_unsatisfied_external_deps_all_in_retry_set() {
@@ -3690,5 +3975,144 @@ mod tests {
             &retry_target_ids,
             &task_statuses
         ));
+    }
+
+    #[test]
+    fn test_resolve_completion_gates_prefers_task_specific() {
+        let task = Task {
+            id: "task".to_string(),
+            title: None,
+            mode: TaskMode::Implement,
+            profile: None,
+            group: None,
+            deps: vec![],
+            locks: vec![],
+            _timeout_sec_rejected: None,
+            _default_timeout_sec_rejected: None,
+            no_worktree: false,
+            kind: None,
+            output_files: None,
+            codex: Some(quedex::plan::CodexConfig {
+                prompt: "test".to_string(),
+                output_last_message: None,
+                verify_after: true,
+                sandbox: None,
+                ask_for_approval: None,
+                json: true,
+            }),
+            claude_code: None,
+            opencode: None,
+            retry_count: 0,
+            retry_delay_sec: 0,
+            retry_strategy: None,
+            context: None,
+            condition: None,
+            stall_timeout_sec: None,
+            completion_gates: Some(vec![CompletionGate {
+                name: "task".to_string(),
+                command: "true".to_string(),
+                timeout_sec: 300,
+            }]),
+            skip_gates: false,
+            auto_commit: true,
+            squash: false,
+        };
+        let defaults = vec![CompletionGate {
+            name: "default".to_string(),
+            command: "true".to_string(),
+            timeout_sec: 300,
+        }];
+
+        let gates = resolve_completion_gates(&task, Some(&defaults));
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].name, "task");
+    }
+
+    #[test]
+    fn test_resolve_completion_gates_skips_research_defaults() {
+        let mut task = Task {
+            id: "task".to_string(),
+            title: None,
+            mode: TaskMode::Research,
+            profile: None,
+            group: None,
+            deps: vec![],
+            locks: vec![],
+            _timeout_sec_rejected: None,
+            _default_timeout_sec_rejected: None,
+            no_worktree: false,
+            kind: None,
+            output_files: None,
+            codex: Some(quedex::plan::CodexConfig {
+                prompt: "test".to_string(),
+                output_last_message: None,
+                verify_after: true,
+                sandbox: None,
+                ask_for_approval: None,
+                json: true,
+            }),
+            claude_code: None,
+            opencode: None,
+            retry_count: 0,
+            retry_delay_sec: 0,
+            retry_strategy: None,
+            context: None,
+            condition: None,
+            stall_timeout_sec: None,
+            completion_gates: None,
+            skip_gates: false,
+            auto_commit: true,
+            squash: false,
+        };
+        let defaults = vec![CompletionGate {
+            name: "default".to_string(),
+            command: "true".to_string(),
+            timeout_sec: 300,
+        }];
+        assert!(resolve_completion_gates(&task, Some(&defaults)).is_empty());
+
+        task.completion_gates = Some(defaults.clone());
+        assert_eq!(resolve_completion_gates(&task, Some(&defaults)).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_run_completion_gate_appends_logs_and_succeeds() {
+        let tmp = TempDir::new("gate-test").unwrap();
+        let store: Arc<dyn Store> = Arc::new(FsStore::new(tmp.path(), "run-1").unwrap());
+        let gate = CompletionGate {
+            name: "fmt".to_string(),
+            command: "printf 'ok-out'; printf 'ok-err' >&2".to_string(),
+            timeout_sec: 1,
+        };
+
+        assert_eq!(
+            run_completion_gate(&gate, tmp.path(), "task1", &store, &HashMap::new()).await,
+            Some(0)
+        );
+
+        let stdout = std::fs::read_to_string(store.log_path("task1", LogStream::Stdout)).unwrap();
+        let stderr = std::fs::read_to_string(store.log_path("task1", LogStream::Stderr)).unwrap();
+        assert!(stdout.contains("[completion gate:fmt]"));
+        assert!(stdout.contains("ok-out"));
+        assert!(stderr.contains("ok-err"));
+    }
+
+    #[tokio::test]
+    async fn test_run_completion_gate_times_out() {
+        let tmp = TempDir::new("gate-timeout-test").unwrap();
+        let store: Arc<dyn Store> = Arc::new(FsStore::new(tmp.path(), "run-1").unwrap());
+        let gate = CompletionGate {
+            name: "slow".to_string(),
+            command: "sleep 2".to_string(),
+            timeout_sec: 1,
+        };
+
+        assert_eq!(
+            run_completion_gate(&gate, tmp.path(), "task1", &store, &HashMap::new()).await,
+            None
+        );
+
+        let stderr = std::fs::read_to_string(store.log_path("task1", LogStream::Stderr)).unwrap();
+        assert!(stderr.contains("timed out"));
     }
 }

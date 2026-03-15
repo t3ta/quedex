@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result};
 
 use crate::plan::{Task, TaskMode};
-use crate::runner::{resolve_command_path, ChildHandle, RunContext, Runner};
+use crate::runner::{ChildHandle, RunContext, Runner, resolve_command_path};
 use crate::store::LogStream;
 
 const VERIFY_AFTER_SUFFIX: &str = "実装後 build→lint→test を実行し、エラーがあれば修正して";
@@ -25,10 +25,7 @@ impl Default for CodexRunner {
 
 impl Runner for CodexRunner {
     fn spawn(&self, task: &Task, ctx: &RunContext) -> Result<ChildHandle> {
-        let config = task
-            .codex
-            .as_ref()
-            .context("codex config missing")?;
+        let config = task.codex.as_ref().context("codex config missing")?;
 
         // Build prompt with optional system prompt prefix
         let mut prompt = String::new();
@@ -55,7 +52,7 @@ impl Runner for CodexRunner {
 
         let codex_path = resolve_command_path("codex")?;
         let mut cmd = Command::new(&codex_path);
-        cmd.arg("exec").arg(prompt);
+        cmd.arg("exec");
 
         if config.json {
             cmd.arg("--json");
@@ -76,6 +73,10 @@ impl Runner for CodexRunner {
                 cmd.arg("--dangerously-bypass-approvals-and-sandbox");
             }
         }
+
+        // Use "--" to prevent the prompt from being parsed as flags,
+        // especially when context injection prepends text starting with "---".
+        cmd.arg("--").arg(prompt);
 
         let child = cmd
             .current_dir(&ctx.cwd)

@@ -7,7 +7,7 @@ use chrono::Utc;
 use tempdir::TempDir;
 
 use quedex::store::fs::FsStore;
-use quedex::store::{Event, LogStream, RunStatus, State, TaskState, TaskStatus, Store};
+use quedex::store::{Event, LogStream, RunStatus, State, Store, TaskState, TaskStatus};
 
 #[test]
 fn fs_store_appends_events_and_writes_state() -> Result<()> {
@@ -56,11 +56,7 @@ fn fs_store_appends_events_and_writes_state() -> Result<()> {
     assert_eq!(read_state.run_name, state.run_name);
     assert_eq!(read_state.status, state.status);
     assert_eq!(
-        read_state
-            .tasks
-            .get("task1")
-            .expect("task1 missing")
-            .status,
+        read_state.tasks.get("task1").expect("task1 missing").status,
         TaskStatus::Running
     );
 
@@ -167,7 +163,12 @@ fn fs_store_context_rejects_empty_key() {
 
     let result = store.save_context("", b"data");
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("context key is empty"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("context key is empty")
+    );
 }
 
 #[test]
@@ -177,7 +178,12 @@ fn fs_store_context_rejects_invalid_key() {
 
     let result = store.save_context("key/with/slash", b"data");
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("invalid characters"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("invalid characters")
+    );
 }
 
 #[test]
@@ -355,7 +361,12 @@ fn fs_store_output_rejects_path_traversal() {
 
     let result = store.save_output("task1", "../escape.txt", b"data");
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("must not contain '..'"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("must not contain '..'")
+    );
 }
 
 #[test]

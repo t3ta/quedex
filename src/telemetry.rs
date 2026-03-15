@@ -13,9 +13,9 @@
 use anyhow::Result;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::trace::TracerProvider;
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::EnvFilter;
 
 /// Configuration for telemetry.
 #[derive(Debug, Clone)]
@@ -48,8 +48,7 @@ impl TelemetryConfig {
                 .unwrap_or(false),
             otlp_endpoint: env_reader("OTEL_EXPORTER_OTLP_ENDPOINT")
                 .unwrap_or_else(|_| "http://localhost:4317".to_string()),
-            service_name: env_reader("OTEL_SERVICE_NAME")
-                .unwrap_or_else(|_| "quedex".to_string()),
+            service_name: env_reader("OTEL_SERVICE_NAME").unwrap_or_else(|_| "quedex".to_string()),
         }
     }
 }
@@ -87,8 +86,8 @@ fn init_console_only(env_filter: EnvFilter) -> Result<()> {
 fn init_with_otel(config: &TelemetryConfig, env_filter: EnvFilter) -> Result<()> {
     use opentelemetry::KeyValue;
     use opentelemetry_otlp::WithExportConfig;
-    use opentelemetry_sdk::runtime;
     use opentelemetry_sdk::Resource;
+    use opentelemetry_sdk::runtime;
 
     let resource = Resource::new(vec![KeyValue::new(
         "service.name",

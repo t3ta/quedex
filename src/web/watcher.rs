@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher, Event, EventKind};
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 use super::state::{AppState, StateUpdate};
@@ -22,12 +22,11 @@ pub fn start_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
     let file_tx_clone = file_tx.clone();
     let mut watcher = RecommendedWatcher::new(
         move |res: Result<Event, notify::Error>| {
-            if let Ok(event) = res {
-                if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
-                    for path in event.paths {
-                        if path.file_name().map(|n| n == "state.json").unwrap_or(false) {
-                            let _ = file_tx_clone.blocking_send(path);
-                        }
+            let Ok(event) = res else { return };
+            if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
+                for path in event.paths {
+                    if path.file_name().map(|n| n == "state.json").unwrap_or(false) {
+                        let _ = file_tx_clone.blocking_send(path);
                     }
                 }
             }
@@ -49,10 +48,8 @@ pub fn start_watcher(state: Arc<AppState>) -> anyhow::Result<()> {
             // Extract run_id from path
             if let Some(run_id) = extract_run_id(&path, &store_root) {
                 // Skip if we're filtering for a specific run
-                if let Some(ref filter) = run_id_filter {
-                    if &run_id != filter {
-                        continue;
-                    }
+                if run_id_filter.as_ref().is_some_and(|f| &run_id != f) {
+                    continue;
                 }
 
                 // Read the state file

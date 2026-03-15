@@ -9,19 +9,21 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
-use crossterm::event::{self, Event};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use anyhow::{Context, Result, anyhow};
 use crossterm::ExecutableCommand;
+use crossterm::event::{self, Event};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::Terminal;
+use ratatui::backend::{CrosstermBackend, TestBackend};
 
 use crate::plan::{Plan, PlanFormat};
 use crate::store::State;
 
 use app::App;
-use input::{handle_key, Action};
+use input::{Action, handle_key};
 
 pub fn run(store_root: PathBuf, run_id: Option<String>) -> Result<i32> {
     if headless_enabled() {
@@ -53,10 +55,7 @@ fn headless_enabled() -> bool {
     env::var_os("QUEDX_TUI_HEADLESS").is_some()
 }
 
-fn run_loop(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App,
-) -> Result<()> {
+fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     let tick_rate = Duration::from_millis(200);
     let mut last_tick = Instant::now();
 
@@ -261,7 +260,7 @@ fn resolve_run_id(store_root: &Path, run_id: Option<String>) -> Result<String> {
         return Ok(run_id);
     }
     let mut states = list_states(store_root)?;
-    states.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    states.sort_by_key(|state| std::cmp::Reverse(state.started_at));
     states
         .first()
         .map(|state| state.run_id.clone())

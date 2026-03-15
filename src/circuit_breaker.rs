@@ -11,8 +11,8 @@
 //! - HalfOpen → Closed: On successful request
 //! - HalfOpen → Open: On failed request
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 /// The state of the circuit breaker.
@@ -320,7 +320,11 @@ mod tests {
 
         // Since recovery_timeout is 0, state() will show HalfOpen
         let state = cb.state();
-        assert_eq!(state, CircuitState::HalfOpen, "Expected HalfOpen after recovery timeout");
+        assert_eq!(
+            state,
+            CircuitState::HalfOpen,
+            "Expected HalfOpen after recovery timeout"
+        );
         assert!(cb.allow_request());
 
         // Success should close the circuit
@@ -344,7 +348,11 @@ mod tests {
 
         // Since recovery_timeout is 0, state() will show HalfOpen
         let state = cb.state();
-        assert_eq!(state, CircuitState::HalfOpen, "Expected HalfOpen after recovery timeout");
+        assert_eq!(
+            state,
+            CircuitState::HalfOpen,
+            "Expected HalfOpen after recovery timeout"
+        );
 
         // Failure should reopen the circuit
         cb.record_failure();

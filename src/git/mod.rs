@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use git2::{Repository, StatusOptions};
 
 /// Manager for git operations
@@ -31,7 +31,9 @@ impl GitManager {
         let head = self.repo.head()?;
         if head.shorthand().is_none() {
             // If no shorthand like "main", "develop", it's detached head (pointing to a commit)
-            anyhow::bail!("Git HEAD is detached. Please switch to a branch first (e.g., git checkout -b feature-branch)");
+            anyhow::bail!(
+                "Git HEAD is detached. Please switch to a branch first (e.g., git checkout -b feature-branch)"
+            );
         }
         Ok(())
     }
@@ -51,9 +53,9 @@ impl GitManager {
             if let Some(path) = status.path() {
                 // Add the file to index
                 let s = status.status();
-                if s.intersects(git2::Status::WT_MODIFIED) ||
-                   s.intersects(git2::Status::WT_NEW) ||
-                   s.intersects(git2::Status::WT_RENAMED)
+                if s.intersects(git2::Status::WT_MODIFIED)
+                    || s.intersects(git2::Status::WT_NEW)
+                    || s.intersects(git2::Status::WT_RENAMED)
                 {
                     if let Err(e) = index.add_path(std::path::Path::new(path)) {
                         eprintln!("Warning: Could not stage {:?}: {}", path, e);
@@ -85,15 +87,14 @@ impl GitManager {
         let signature = self.repo.signature()?;
 
         // Create commit
-        let commit_id = self.repo
-            .commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                message,
-                &tree,
-                &[&parent_commit],
-            )?;
+        let commit_id = self.repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            message,
+            &tree,
+            &[&parent_commit],
+        )?;
 
         Ok(commit_id.to_string())
     }
@@ -125,61 +126,68 @@ impl GitManager {
         Ok(commits)
     }
 
-/// Squash multiple commits into one
-/// Takes the last `count` commits and squashes them into a single commit
-pub fn squash_commits(&self, count: usize, message: &str) -> Result<String> {
-    if count == 0 {
-        anyhow::bail!("count must be greater than 0");
-    }
-
-    if count <= 1 {
-        // No need to squash if only 1 commit
-        let mut revwalk = self.repo.revwalk()?;
-        revwalk.push_head()?;
-        let first_commit_id = revwalk.next().ok_or_else(|| anyhow!("no commits in repository"))??;
-        Ok(first_commit_id.to_string())
-    } else {
-        // Get HEAD commit
-        let mut revwalk = self.repo.revwalk()?;
-        revwalk.push_head()?;
-        let head_commit_id = revwalk.next().ok_or_else(|| anyhow!("no commits"))??;
-        let head_commit = self.repo.find_commit(head_commit_id)?;
-
-        // Skip count commits to find the parent of the squash range
-        // If we want to squash 3 commits (HEAD, HEAD~1, HEAD~2), the new parent is HEAD~3
-        let mut skip_count = count;
-        let mut squash_parent_id = head_commit_id;
-        while skip_count > 0 {
-            squash_parent_id = revwalk.next().ok_or_else(|| anyhow::anyhow!("not enough commits to squash"))??;
-            skip_count -= 1;
+    /// Squash multiple commits into one
+    /// Takes the last `count` commits and squashes them into a single commit
+    pub fn squash_commits(&self, count: usize, message: &str) -> Result<String> {
+        if count == 0 {
+            anyhow::bail!("count must be greater than 0");
         }
-        let squash_parent = self.repo.find_commit(squash_parent_id)?;
 
-        // Use the same tree as HEAD
-        let tree = head_commit.tree()?;
+        if count <= 1 {
+            // No need to squash if only 1 commit
+            let mut revwalk = self.repo.revwalk()?;
+            revwalk.push_head()?;
+            let first_commit_id = revwalk
+                .next()
+                .ok_or_else(|| anyhow!("no commits in repository"))??;
+            Ok(first_commit_id.to_string())
+        } else {
+            // Get HEAD commit
+            let mut revwalk = self.repo.revwalk()?;
+            revwalk.push_head()?;
+            let head_commit_id = revwalk.next().ok_or_else(|| anyhow!("no commits"))??;
+            let head_commit = self.repo.find_commit(head_commit_id)?;
 
-        let signature = self.repo.signature()?;
+            // Skip count commits to find the parent of the squash range
+            // If we want to squash 3 commits (HEAD, HEAD~1, HEAD~2), the new parent is HEAD~3
+            let mut skip_count = count;
+            let mut squash_parent_id = head_commit_id;
+            while skip_count > 0 {
+                squash_parent_id = revwalk
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("not enough commits to squash"))??;
+                skip_count -= 1;
+            }
+            let squash_parent = self.repo.find_commit(squash_parent_id)?;
 
-        // Create the squashed commit without updating HEAD first
-        let commit_id = self.repo.commit(
-            None, // Don't update any reference yet
-            &signature,
-            &signature,
-            message,
-            &tree,
-            &[&squash_parent],
-        )?;
+            // Use the same tree as HEAD
+            let tree = head_commit.tree()?;
 
-        // Now update HEAD to point to the new commit
-        let commit = self.repo.find_commit(commit_id)?;
-        self.repo.head()?.set_target(commit_id, &format!("squash: {}", message))?;
-        
-        // Reset the working tree and index to match the new HEAD
-        self.repo.reset(commit.as_object(), git2::ResetType::Hard, None)?;
+            let signature = self.repo.signature()?;
 
-        Ok(commit_id.to_string())
+            // Create the squashed commit without updating HEAD first
+            let commit_id = self.repo.commit(
+                None, // Don't update any reference yet
+                &signature,
+                &signature,
+                message,
+                &tree,
+                &[&squash_parent],
+            )?;
+
+            // Now update HEAD to point to the new commit
+            let commit = self.repo.find_commit(commit_id)?;
+            self.repo
+                .head()?
+                .set_target(commit_id, &format!("squash: {}", message))?;
+
+            // Reset the working tree and index to match the new HEAD
+            self.repo
+                .reset(commit.as_object(), git2::ResetType::Hard, None)?;
+
+            Ok(commit_id.to_string())
+        }
     }
-}
 }
 
 /// Generate commit message for a task
@@ -194,15 +202,15 @@ pub fn generate_commit_message(title: &str, task_id: &str, mode: &str) -> String
 
     format!(
         "{}: {} [{}]\n\nTask ID: {}\nExecuted by quedex",
-        mode_str,
-        title,
-        task_id,
-        task_id
+        mode_str, title, task_id, task_id
     )
 }
 
 /// Generate squash commit message from multiple task commits
-pub fn generate_squash_message(task_summaries: &[(String, String)], integration_task_title: &str) -> String {
+pub fn generate_squash_message(
+    task_summaries: &[(String, String)],
+    integration_task_title: &str,
+) -> String {
     let mut message = format!("feat/integration: {}\n\n", integration_task_title);
     message.push_str("Squashed commits from:\n");
 

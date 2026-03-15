@@ -45,10 +45,14 @@ impl TaskRunner for TestRunner {
     type Future = BoxFuture;
 
     fn spawn(&self, task: TaskSpec) -> Self::Future {
-        let behavior = self.behaviors.get(&task.id).cloned().unwrap_or(TaskBehavior {
-            delay: Duration::from_millis(0),
-            result: TaskResult::succeeded(),
-        });
+        let behavior = self
+            .behaviors
+            .get(&task.id)
+            .cloned()
+            .unwrap_or(TaskBehavior {
+                delay: Duration::from_millis(0),
+                result: TaskResult::succeeded(),
+            });
 
         Box::pin(async move {
             if !behavior.delay.is_zero() {
@@ -65,6 +69,7 @@ fn build_scheduler(tasks: Vec<TaskSpec>, runner: TestRunner) -> Scheduler<TestRu
         SchedulerOptions {
             max_concurrency: 4,
             fail_fast: false,
+            mode_concurrency: HashMap::new(),
         },
         runner,
     )
@@ -292,8 +297,7 @@ async fn env_condition_exists_false() {
 
 #[tokio::test]
 async fn task_condition_succeeded_match() {
-    let runner = TestRunner::new()
-        .with_behavior("check", TaskResult::succeeded());
+    let runner = TestRunner::new().with_behavior("check", TaskResult::succeeded());
 
     let tasks = vec![
         TaskSpec {
@@ -332,8 +336,7 @@ async fn task_condition_succeeded_match() {
 
 #[tokio::test]
 async fn task_condition_failed_match() {
-    let runner = TestRunner::new()
-        .with_behavior("check", TaskResult::failed(1));
+    let runner = TestRunner::new().with_behavior("check", TaskResult::failed(1));
 
     let tasks = vec![
         TaskSpec {
@@ -372,8 +375,7 @@ async fn task_condition_failed_match() {
 
 #[tokio::test]
 async fn task_condition_failed_no_match_when_succeeded() {
-    let runner = TestRunner::new()
-        .with_behavior("check", TaskResult::succeeded());
+    let runner = TestRunner::new().with_behavior("check", TaskResult::succeeded());
 
     let tasks = vec![
         TaskSpec {
@@ -463,8 +465,7 @@ async fn condition_skip_does_not_propagate_as_failure() {
 
 #[tokio::test]
 async fn dependency_failure_skip_does_propagate() {
-    let runner = TestRunner::new()
-        .with_behavior("failing", TaskResult::failed(1));
+    let runner = TestRunner::new().with_behavior("failing", TaskResult::failed(1));
 
     let tasks = vec![
         TaskSpec {
@@ -538,6 +539,9 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
         retry_delay_sec: 0,
         retry_strategy: None,
         context: None,
+        stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
         condition: Some(TaskCondition::TaskResult(TaskResultCondition {
@@ -595,6 +599,9 @@ fn plan_rejects_condition_referencing_self() {
         retry_delay_sec: 0,
         retry_strategy: None,
         context: None,
+        stall_timeout_sec: None,
+        completion_gates: None,
+        skip_gates: false,
         auto_commit: true,
         squash: false,
         condition: Some(TaskCondition::TaskResult(TaskResultCondition {
