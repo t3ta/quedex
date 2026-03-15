@@ -3465,13 +3465,15 @@ impl TaskRunner for PlanTaskRunner {
 
                             idle_seconds += 1;
                             if idle_seconds >= stall_timeout_sec {
-                                let _ = child_for_stall.kill();
-                                let _ = store.append_event(Event::TaskStalled {
-                                    task_id: stalled_task_id,
-                                    stall_timeout_sec,
-                                    timestamp: Utc::now(),
-                                });
-                                return true;
+                                let killed = child_for_stall.kill().is_ok();
+                                if killed {
+                                    let _ = store.append_event(Event::TaskStalled {
+                                        task_id: stalled_task_id,
+                                        stall_timeout_sec,
+                                        timestamp: Utc::now(),
+                                    });
+                                }
+                                return killed;
                             }
                         }
                     });
