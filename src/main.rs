@@ -20,7 +20,8 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use uuid::Uuid;
 
 use cli::{Cli, Commands, GlobalOptions, RecoveryOptions};
-use quedex::config::{Config, EffectiveOptions, HooksConfig};
+use quedex::config::{Config, EffectiveOptions, HooksConfig, TemplatesConfig};
+use quedex::template::TemplateEngine;
 use quedex::hooks::{HookContext, HookPoint, run_run_hook, run_task_hook};
 use quedex::dry_run::{detect_lock_conflicts, generate_execution_waves};
 use quedex::git::{self, GitManager};
@@ -1142,6 +1143,7 @@ async fn handle_run(
         config.hooks.clone(),
         run_id.clone(),
         run_name.clone(),
+        config.templates.as_ref(),
     );
 
     // Create GitManager for auto-commit functionality
@@ -1859,6 +1861,7 @@ async fn handle_retry(
         config.hooks.clone(),
         run_id.to_string(),
         run_name,
+        config.templates.as_ref(),
     );
 
     // Create GitManager for auto-commit functionality
@@ -3246,6 +3249,7 @@ struct PlanTaskRunner {
     global_hooks: Option<HooksConfig>,
     run_id: String,
     run_name: String,
+    template_engine: Option<Arc<TemplateEngine>>,
 }
 
 impl PlanTaskRunner {
@@ -3262,7 +3266,15 @@ impl PlanTaskRunner {
         global_hooks: Option<HooksConfig>,
         run_id: String,
         run_name: String,
+        templates_config: Option<&TemplatesConfig>,
     ) -> Self {
+        let template_engine = match templates_config {
+            Some(tc) if tc.enabled.unwrap_or(true) => {
+                Some(Arc::new(TemplateEngine::new(tc.variables.as_ref())))
+            }
+            None => Some(Arc::new(TemplateEngine::new(None))),
+            _ => None, // explicitly disabled
+        };
         Self {
             tasks,
             profiles,
@@ -3278,6 +3290,7 @@ impl PlanTaskRunner {
             global_hooks,
             run_id,
             run_name,
+            template_engine,
         }
     }
 }
@@ -3300,6 +3313,7 @@ impl TaskRunner for PlanTaskRunner {
         let global_hooks = self.global_hooks.clone();
         let hook_run_id = self.run_id.clone();
         let hook_run_name = self.run_name.clone();
+        let template_engine = self.template_engine.clone();
 
         Box::pin(async move {
             let Some(task) = tasks.get(&task_spec.id) else {
@@ -3489,6 +3503,43 @@ impl TaskRunner for PlanTaskRunner {
                                 oc.model = Some(escalate_model.clone());
                             }
                         }
+                    }
+                }
+
+                // Expand Tera template syntax in prompts
+                if let Some(ref engine) = template_engine {
+                    let task_mode = task.mode.to_string();
+                    let title = task.title.clone();
+                    if let Some(ref mut cc) = task.claude_code {
+                        cc.prompt = engine.render_prompt(
+                            &cc.prompt,
+                            &task_id,
+                            title.as_deref(),
+                            &task_mode,
+                            &hook_run_name,
+                            attempt,
+                            &task_ctx.env,
+                        );
+                    } else if let Some(ref mut cx) = task.codex {
+                        cx.prompt = engine.render_prompt(
+                            &cx.prompt,
+                            &task_id,
+                            title.as_deref(),
+                            &task_mode,
+                            &hook_run_name,
+                            attempt,
+                            &task_ctx.env,
+                        );
+                    } else if let Some(ref mut oc) = task.opencode {
+                        oc.prompt = engine.render_prompt(
+                            &oc.prompt,
+                            &task_id,
+                            title.as_deref(),
+                            &task_mode,
+                            &hook_run_name,
+                            attempt,
+                            &task_ctx.env,
+                        );
                     }
                 }
 

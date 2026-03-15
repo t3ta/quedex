@@ -11,6 +11,7 @@ pub mod runner;
 pub mod scheduler;
 pub mod store;
 pub mod telemetry;
+pub mod template;
 pub mod tui;
 pub mod web;
 pub mod worktree;
