@@ -21,10 +21,9 @@ use uuid::Uuid;
 
 use cli::{Cli, Commands, GlobalOptions, RecoveryOptions};
 use quedex::config::{Config, EffectiveOptions, HooksConfig, TemplatesConfig};
-use quedex::template::TemplateEngine;
-use quedex::hooks::{HookContext, HookPoint, run_run_hook, run_task_hook};
 use quedex::dry_run::{detect_lock_conflicts, generate_execution_waves};
 use quedex::git::{self, GitManager};
+use quedex::hooks::{HookContext, HookPoint, run_run_hook, run_task_hook};
 use quedex::notifier::Notifier;
 use quedex::plan::{CompletionGate, Plan, PlanFormat, Task, TaskHooksConfig, TaskMode};
 use quedex::runner::claude_code::ClaudeCodeRunner;
@@ -37,6 +36,7 @@ use quedex::scheduler::{
 use quedex::store::fs::FsStore;
 use quedex::store::recovery::recover_running_tasks;
 use quedex::store::{Event, LogStream, RunStatus, SkipReason, State, Store, TaskState, TaskStatus};
+use quedex::template::TemplateEngine;
 use quedex::tui;
 use quedex::worktree::{
     WorktreeConfig,
@@ -1099,7 +1099,11 @@ async fn handle_run(
 
     // Create notifier for webhook notifications
     let run_name = plan.run.name.clone().unwrap_or_else(|| run_id.clone());
-    let notifier = Notifier::new(plan.run.notifications.clone(), run_id.clone(), run_name.clone());
+    let notifier = Notifier::new(
+        plan.run.notifications.clone(),
+        run_id.clone(),
+        run_name.clone(),
+    );
 
     // Send run started notification
     if let Some(ref n) = notifier {

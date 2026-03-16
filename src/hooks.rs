@@ -134,13 +134,15 @@ fn resolve_hook_command(
         return Some(cmd.clone());
     }
 
-    global.and_then(|g| match hook_point {
-        HookPoint::BeforeRun => g.before_run.as_ref(),
-        HookPoint::AfterRun => g.after_run.as_ref(),
-        HookPoint::BeforeTask => g.before_task.as_ref(),
-        HookPoint::AfterTask => g.after_task.as_ref(),
-        HookPoint::OnFailure => g.on_failure.as_ref(),
-    }).cloned()
+    global
+        .and_then(|g| match hook_point {
+            HookPoint::BeforeRun => g.before_run.as_ref(),
+            HookPoint::AfterRun => g.after_run.as_ref(),
+            HookPoint::BeforeTask => g.before_task.as_ref(),
+            HookPoint::AfterTask => g.after_task.as_ref(),
+            HookPoint::OnFailure => g.on_failure.as_ref(),
+        })
+        .cloned()
 }
 
 /// Hook insertion points in the lifecycle.
@@ -227,10 +229,7 @@ pub async fn run_task_hook(
         .and_then(|g| g.timeout_sec)
         .unwrap_or(DEFAULT_HOOK_TIMEOUT_SEC);
 
-    let task_label = ctx
-        .task_id
-        .as_deref()
-        .unwrap_or("unknown");
+    let task_label = ctx.task_id.as_deref().unwrap_or("unknown");
     let label = hook_point.label();
     eprintln!("[hook] running {label} for task {task_label}: {command}");
 
