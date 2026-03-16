@@ -3652,8 +3652,28 @@ impl TaskRunner for PlanTaskRunner {
                                 attempt: Some(attempt),
                                 exit_code: Some(1),
                             };
-                            run_task_hook_with_events(HookPoint::OnFailure, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
-                            run_task_hook_with_events(HookPoint::AfterTask, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
+                            run_task_hook_with_events(
+                                HookPoint::OnFailure,
+                                global_hooks.as_ref(),
+                                task.hooks.as_ref(),
+                                &hook_ctx,
+                                &task_ctx.env,
+                                &task_ctx.cwd,
+                                &state.store,
+                                &task_id,
+                            )
+                            .await;
+                            run_task_hook_with_events(
+                                HookPoint::AfterTask,
+                                global_hooks.as_ref(),
+                                task.hooks.as_ref(),
+                                &hook_ctx,
+                                &task_ctx.env,
+                                &task_ctx.cwd,
+                                &state.store,
+                                &task_id,
+                            )
+                            .await;
                             break TaskResult::failed(1);
                         }
                         continue;
@@ -3740,8 +3760,28 @@ impl TaskRunner for PlanTaskRunner {
                                 attempt: Some(attempt),
                                 exit_code: Some(1),
                             };
-                            run_task_hook_with_events(HookPoint::OnFailure, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
-                            run_task_hook_with_events(HookPoint::AfterTask, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
+                            run_task_hook_with_events(
+                                HookPoint::OnFailure,
+                                global_hooks.as_ref(),
+                                task.hooks.as_ref(),
+                                &hook_ctx,
+                                &task_ctx.env,
+                                &task_ctx.cwd,
+                                &state.store,
+                                &task_id,
+                            )
+                            .await;
+                            run_task_hook_with_events(
+                                HookPoint::AfterTask,
+                                global_hooks.as_ref(),
+                                task.hooks.as_ref(),
+                                &hook_ctx,
+                                &task_ctx.env,
+                                &task_ctx.cwd,
+                                &state.store,
+                                &task_id,
+                            )
+                            .await;
                             break TaskResult::failed(1);
                         }
                         continue;
@@ -3759,8 +3799,28 @@ impl TaskRunner for PlanTaskRunner {
                                 attempt: Some(attempt),
                                 exit_code: Some(1),
                             };
-                            run_task_hook_with_events(HookPoint::OnFailure, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
-                            run_task_hook_with_events(HookPoint::AfterTask, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
+                            run_task_hook_with_events(
+                                HookPoint::OnFailure,
+                                global_hooks.as_ref(),
+                                task.hooks.as_ref(),
+                                &hook_ctx,
+                                &task_ctx.env,
+                                &task_ctx.cwd,
+                                &state.store,
+                                &task_id,
+                            )
+                            .await;
+                            run_task_hook_with_events(
+                                HookPoint::AfterTask,
+                                global_hooks.as_ref(),
+                                task.hooks.as_ref(),
+                                &hook_ctx,
+                                &task_ctx.env,
+                                &task_ctx.cwd,
+                                &state.store,
+                                &task_id,
+                            )
+                            .await;
                             break TaskResult::failed(1);
                         }
                         continue;
@@ -3832,7 +3892,17 @@ impl TaskRunner for PlanTaskRunner {
                                         attempt: Some(attempt),
                                         exit_code: result.exit_code,
                                     };
-                                    run_task_hook_with_events(HookPoint::OnFailure, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
+                                    run_task_hook_with_events(
+                                        HookPoint::OnFailure,
+                                        global_hooks.as_ref(),
+                                        task.hooks.as_ref(),
+                                        &hook_ctx,
+                                        &task_ctx.env,
+                                        &task_ctx.cwd,
+                                        &state.store,
+                                        &task_id,
+                                    )
+                                    .await;
                                 }
 
                                 // Execute after_task hook for permanent failure
@@ -3846,7 +3916,17 @@ impl TaskRunner for PlanTaskRunner {
                                         attempt: Some(attempt),
                                         exit_code: result.exit_code,
                                     };
-                                    run_task_hook_with_events(HookPoint::AfterTask, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
+                                    run_task_hook_with_events(
+                                        HookPoint::AfterTask,
+                                        global_hooks.as_ref(),
+                                        task.hooks.as_ref(),
+                                        &hook_ctx,
+                                        &task_ctx.env,
+                                        &task_ctx.cwd,
+                                        &state.store,
+                                        &task_id,
+                                    )
+                                    .await;
                                 }
 
                                 break result;
@@ -3874,7 +3954,17 @@ impl TaskRunner for PlanTaskRunner {
                         attempt: Some(attempt),
                         exit_code: result.exit_code,
                     };
-                    run_task_hook_with_events(HookPoint::OnFailure, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
+                    run_task_hook_with_events(
+                        HookPoint::OnFailure,
+                        global_hooks.as_ref(),
+                        task.hooks.as_ref(),
+                        &hook_ctx,
+                        &task_ctx.env,
+                        &task_ctx.cwd,
+                        &state.store,
+                        &task_id,
+                    )
+                    .await;
                 }
 
                 // Execute after_task hook (success or failure)
@@ -3894,7 +3984,17 @@ impl TaskRunner for PlanTaskRunner {
                         attempt: Some(attempt),
                         exit_code: result.exit_code,
                     };
-                    run_task_hook_with_events(HookPoint::AfterTask, global_hooks.as_ref(), task.hooks.as_ref(), &hook_ctx, &task_ctx.env, &task_ctx.cwd, &state.store, &task_id).await;
+                    run_task_hook_with_events(
+                        HookPoint::AfterTask,
+                        global_hooks.as_ref(),
+                        task.hooks.as_ref(),
+                        &hook_ctx,
+                        &task_ctx.env,
+                        &task_ctx.cwd,
+                        &state.store,
+                        &task_id,
+                    )
+                    .await;
                 }
 
                 break result;
