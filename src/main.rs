@@ -1139,6 +1139,8 @@ async fn handle_run(
         });
         if let Err(e) = hook_result {
             eprintln!("before_run hook failed, aborting: {e}");
+            state_handle.update_run_status(RunStatus::Failed)?;
+            remove_run_pid(&store_root, &run_id);
             return Ok(1);
         }
     }

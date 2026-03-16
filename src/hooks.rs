@@ -97,7 +97,9 @@ pub async fn run_hook(
 
     let timeout_duration = Duration::from_secs(timeout_sec);
 
-    match tokio::time::timeout(timeout_duration, cmd.status()).await {
+    let mut child = cmd.spawn().map_err(HookError::Spawn)?;
+
+    match tokio::time::timeout(timeout_duration, child.wait()).await {
         Ok(Ok(status)) => {
             if status.success() {
                 Ok(())
@@ -106,7 +108,10 @@ pub async fn run_hook(
             }
         }
         Ok(Err(e)) => Err(HookError::Spawn(e)),
-        Err(_) => Err(HookError::Timeout(timeout_sec)),
+        Err(_) => {
+            let _ = child.kill().await;
+            Err(HookError::Timeout(timeout_sec))
+        }
     }
 }
 
@@ -236,7 +241,7 @@ pub async fn run_task_hook(
         }
         Err(e) => {
             eprintln!("[hook] warning: {label} for task {task_label} failed: {e}");
-            Ok(())
+            Err(e)
         }
     }
 }
