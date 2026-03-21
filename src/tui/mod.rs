@@ -19,7 +19,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::Terminal;
 use ratatui::backend::{CrosstermBackend, TestBackend};
 
-use crate::plan::{Plan, PlanFormat};
+use crate::plan::Plan;
 use crate::store::State;
 
 use app::App;
@@ -271,7 +271,7 @@ fn load_plan_snapshot(store_root: &Path, run_id: &str) -> Result<Plan> {
     let path = run_dir(store_root, run_id).join("plan.json");
     let contents = fs::read_to_string(&path)
         .with_context(|| format!("read plan snapshot {}", path.display()))?;
-    Plan::parse_str(&contents, PlanFormat::Json)
+    Plan::parse_json(&contents)
 }
 
 fn list_states(store_root: &Path) -> Result<Vec<State>> {

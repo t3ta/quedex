@@ -29,9 +29,9 @@ pub struct GlobalOptions {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Initialize a new plan template (JSON or YAML)
+    /// Initialize a new plan template (YAML)
     Init {
-        /// Output file path (default: plan.json, use .yaml/.yml for YAML format)
+        /// Output file path (default: plan.yaml)
         #[arg(short = 'o', long, value_name = "path")]
         output: Option<PathBuf>,
         /// Overwrite existing file

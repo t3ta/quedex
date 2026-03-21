@@ -553,8 +553,6 @@ fn plan_rejects_empty_task_gate_command() {
 
 #[test]
 fn plan_accepts_system_prompt_in_run_config() {
-    use quedex::plan::PlanFormat;
-
     let yaml = r#"
 version: 1
 run:
@@ -567,7 +565,7 @@ tasks:
     codex:
       prompt: "implement feature"
 "#;
-    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let plan = Plan::parse_str(yaml).unwrap();
     assert!(plan.validate().is_ok());
     assert!(plan.run.system_prompt.is_some());
     let sys_prompt = plan.run.system_prompt.unwrap();
@@ -577,21 +575,15 @@ tasks:
 
 #[test]
 fn plan_accepts_empty_run_config_system_prompt() {
-    use quedex::plan::PlanFormat;
-
-    let json = r#"{
-        "version": 1,
-        "tasks": [
-            {
-                "id": "test",
-                "mode": "implement",
-                "codex": {
-                    "prompt": "implement feature"
-                }
-            }
-        ]
-    }"#;
-    let plan = Plan::parse_str(json, PlanFormat::Json).unwrap();
+    let yaml = r#"
+version: 1
+tasks:
+  - id: test
+    mode: implement
+    codex:
+      prompt: implement feature
+"#;
+    let plan = Plan::parse_str(yaml).unwrap();
     assert!(plan.validate().is_ok());
     assert!(plan.run.system_prompt.is_none());
 }
@@ -600,8 +592,6 @@ fn plan_accepts_empty_run_config_system_prompt() {
 
 #[test]
 fn plan_accepts_valid_profile_reference() {
-    use quedex::plan::PlanFormat;
-
     let yaml = r#"
 version: 1
 profiles:
@@ -615,7 +605,7 @@ tasks:
     codex:
       prompt: "Design the API"
 "#;
-    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let plan = Plan::parse_str(yaml).unwrap();
     assert!(plan.validate().is_ok());
     assert_eq!(plan.profiles.len(), 1);
     let profile = plan.profiles.get("architect").unwrap();
@@ -645,8 +635,6 @@ fn plan_accepts_tasks_without_profile() {
 
 #[test]
 fn plan_accepts_profiles_section_without_references() {
-    use quedex::plan::PlanFormat;
-
     let yaml = r#"
 version: 1
 profiles:
@@ -658,7 +646,7 @@ tasks:
     codex:
       prompt: "Implement feature"
 "#;
-    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let plan = Plan::parse_str(yaml).unwrap();
     assert!(plan.validate().is_ok());
     assert_eq!(plan.profiles.len(), 1);
 }
@@ -667,8 +655,6 @@ tasks:
 
 #[test]
 fn plan_accepts_retry_strategy() {
-    use quedex::plan::PlanFormat;
-
     let yaml = r#"
 version: 1
 tasks:
@@ -683,7 +669,7 @@ tasks:
       prompt: "Implement feature"
       model: "sonnet"
 "#;
-    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let plan = Plan::parse_str(yaml).unwrap();
     assert!(plan.validate().is_ok());
     let strategy = plan.tasks[0].retry_strategy.as_ref().unwrap();
     assert!(strategy.inject_error_context);
@@ -693,8 +679,6 @@ tasks:
 
 #[test]
 fn plan_accepts_retry_strategy_with_defaults() {
-    use quedex::plan::PlanFormat;
-
     let yaml = r#"
 version: 1
 tasks:
@@ -706,7 +690,7 @@ tasks:
     claude_code:
       prompt: "Implement feature"
 "#;
-    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let plan = Plan::parse_str(yaml).unwrap();
     assert!(plan.validate().is_ok());
     let strategy = plan.tasks[0].retry_strategy.as_ref().unwrap();
     assert!(strategy.inject_error_context);
@@ -718,8 +702,6 @@ tasks:
 
 #[test]
 fn plan_accepts_context_config() {
-    use quedex::plan::PlanFormat;
-
     let yaml = r#"
 version: 1
 tasks:
@@ -741,7 +723,7 @@ tasks:
     codex:
       prompt: "Implement authentication"
 "#;
-    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let plan = Plan::parse_str(yaml).unwrap();
     assert!(plan.validate().is_ok());
 
     let research = &plan.tasks[0];
@@ -763,8 +745,6 @@ tasks:
 
 #[test]
 fn plan_rejects_absolute_path_in_publish_source() {
-    use quedex::plan::PlanFormat;
-
     let yaml = r#"
 version: 1
 tasks:
@@ -777,7 +757,7 @@ tasks:
     codex:
       prompt: "analyze"
 "#;
-    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let plan = Plan::parse_str(yaml).unwrap();
     let err = plan.validate().expect_err("expected validation error");
     assert!(
         err.to_string().contains("absolute path"),
@@ -787,8 +767,6 @@ tasks:
 
 #[test]
 fn plan_rejects_parent_dir_in_publish_source() {
-    use quedex::plan::PlanFormat;
-
     let yaml = r#"
 version: 1
 tasks:
@@ -801,15 +779,13 @@ tasks:
     codex:
       prompt: "analyze"
 "#;
-    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let plan = Plan::parse_str(yaml).unwrap();
     let err = plan.validate().expect_err("expected validation error");
     assert!(err.to_string().contains("'..'"), "unexpected: {err}");
 }
 
 #[test]
 fn plan_rejects_invalid_publish_key() {
-    use quedex::plan::PlanFormat;
-
     let yaml = r#"
 version: 1
 tasks:
@@ -822,7 +798,7 @@ tasks:
     codex:
       prompt: "analyze"
 "#;
-    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let plan = Plan::parse_str(yaml).unwrap();
     let err = plan.validate().expect_err("expected validation error");
     assert!(
         err.to_string().contains("invalid characters"),
@@ -832,8 +808,6 @@ tasks:
 
 #[test]
 fn plan_rejects_invalid_inject_from_key() {
-    use quedex::plan::PlanFormat;
-
     let yaml = r#"
 version: 1
 tasks:
@@ -845,7 +819,7 @@ tasks:
     codex:
       prompt: "implement"
 "#;
-    let plan = Plan::parse_str(yaml, PlanFormat::Yaml).unwrap();
+    let plan = Plan::parse_str(yaml).unwrap();
     let err = plan.validate().expect_err("expected validation error");
     assert!(
         err.to_string().contains("invalid characters"),
