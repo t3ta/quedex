@@ -71,6 +71,19 @@ pub enum Event {
         #[serde(rename = "ts")]
         timestamp: DateTime<Utc>,
     },
+    HookStarted {
+        hook_type: String,
+        task_id: Option<String>,
+        #[serde(rename = "ts")]
+        timestamp: DateTime<Utc>,
+    },
+    HookFinished {
+        hook_type: String,
+        task_id: Option<String>,
+        exit_code: i32,
+        #[serde(rename = "ts")]
+        timestamp: DateTime<Utc>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

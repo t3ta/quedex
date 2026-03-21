@@ -20,11 +20,12 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use uuid::Uuid;
 
 use cli::{Cli, Commands, GlobalOptions, RecoveryOptions};
-use quedex::config::{Config, EffectiveOptions};
+use quedex::config::{Config, EffectiveOptions, HooksConfig, TemplatesConfig};
 use quedex::dry_run::{detect_lock_conflicts, generate_execution_waves};
 use quedex::git::{self, GitManager};
+use quedex::hooks::{HookContext, HookPoint, run_run_hook, run_task_hook};
 use quedex::notifier::Notifier;
-use quedex::plan::{CompletionGate, Plan, PlanFormat, Task, TaskMode};
+use quedex::plan::{CompletionGate, Plan, PlanFormat, Task, TaskHooksConfig, TaskMode};
 use quedex::runner::claude_code::ClaudeCodeRunner;
 use quedex::runner::codex::CodexRunner;
 use quedex::runner::opencode::OpencodeRunner;
@@ -35,6 +36,7 @@ use quedex::scheduler::{
 use quedex::store::fs::FsStore;
 use quedex::store::recovery::recover_running_tasks;
 use quedex::store::{Event, LogStream, RunStatus, SkipReason, State, Store, TaskState, TaskStatus};
+use quedex::template::TemplateEngine;
 use quedex::tui;
 use quedex::worktree::{
     WorktreeConfig,
@@ -961,7 +963,8 @@ async fn handle_run(
     }
 
     let store = Arc::new(FsStore::new(&store_root, &run_id)?);
-    let cwd = resolve_run_cwd(&plan, plan_base_dir)?;
+    let cwd = resolve_run_cwd(&plan, plan_base_dir.clone())?;
+    let hook_cwd = cwd.clone();
     #[allow(deprecated)]
     let worktree_manager = plan.run.worktree.as_ref().and_then(|wt_config| {
         if wt_config.enabled {
@@ -1096,11 +1099,54 @@ async fn handle_run(
 
     // Create notifier for webhook notifications
     let run_name = plan.run.name.clone().unwrap_or_else(|| run_id.clone());
-    let notifier = Notifier::new(plan.run.notifications.clone(), run_id.clone(), run_name);
+    let notifier = Notifier::new(
+        plan.run.notifications.clone(),
+        run_id.clone(),
+        run_name.clone(),
+    );
 
     // Send run started notification
     if let Some(ref n) = notifier {
         n.notify_start();
+    }
+
+    // Execute before_run hook
+    {
+        let hook_ctx = HookContext {
+            run_id: run_id.clone(),
+            run_name: run_name.clone(),
+            task_id: None,
+            task_title: None,
+            status: None,
+            attempt: None,
+            exit_code: None,
+        };
+        let _ = store.append_event(Event::HookStarted {
+            hook_type: "before_run".to_string(),
+            task_id: None,
+            timestamp: Utc::now(),
+        });
+        let hook_result = run_run_hook(
+            HookPoint::BeforeRun,
+            config.hooks.as_ref(),
+            &hook_ctx,
+            &env,
+            &hook_cwd,
+        )
+        .await;
+        let exit_code = if hook_result.is_ok() { 0 } else { 1 };
+        let _ = store.append_event(Event::HookFinished {
+            hook_type: "before_run".to_string(),
+            task_id: None,
+            exit_code,
+            timestamp: Utc::now(),
+        });
+        if let Err(e) = hook_result {
+            eprintln!("before_run hook failed, aborting: {e}");
+            state_handle.update_run_status(RunStatus::Failed)?;
+            remove_run_pid(&store_root, &run_id);
+            return Ok(1);
+        }
     }
 
     let runner = PlanTaskRunner::new(
@@ -1112,6 +1158,10 @@ async fn handle_run(
         state_handle.clone(),
         cancel.clone(),
         notifier.clone(),
+        config.hooks.clone(),
+        run_id.clone(),
+        run_name.clone(),
+        config.templates.as_ref(),
     );
 
     // Create GitManager for auto-commit functionality
@@ -1190,6 +1240,49 @@ async fn handle_run(
             n.notify_complete(total, succeeded);
         } else if run_status == RunStatus::Failed {
             n.notify_failure(total, failed, succeeded);
+        }
+    }
+
+    // Execute after_run hook
+    {
+        let status_str = match run_status {
+            RunStatus::Completed => "succeeded",
+            RunStatus::Failed => "failed",
+            RunStatus::Canceled => "canceled",
+            RunStatus::Running => "running",
+        };
+        let hook_ctx = HookContext {
+            run_id: run_id.clone(),
+            run_name,
+            task_id: None,
+            task_title: None,
+            status: Some(status_str.to_string()),
+            attempt: None,
+            exit_code: Some(exit_code),
+        };
+        let _ = store.append_event(Event::HookStarted {
+            hook_type: "after_run".to_string(),
+            task_id: None,
+            timestamp: Utc::now(),
+        });
+        let hook_result = run_run_hook(
+            HookPoint::AfterRun,
+            config.hooks.as_ref(),
+            &hook_ctx,
+            &env,
+            &hook_cwd,
+        )
+        .await;
+        let hook_exit = if hook_result.is_ok() { 0 } else { 1 };
+        let _ = store.append_event(Event::HookFinished {
+            hook_type: "after_run".to_string(),
+            task_id: None,
+            exit_code: hook_exit,
+            timestamp: Utc::now(),
+        });
+        if let Err(e) = hook_result {
+            eprintln!("after_run hook failed: {e}");
+            return Ok(1);
         }
     }
 
@@ -1784,6 +1877,7 @@ async fn handle_retry(
     let mode_concurrency = build_mode_concurrency(&plan);
     let fail_fast = plan.run.fail_fast.unwrap_or(effective.fail_fast);
 
+    let run_name = plan.run.name.clone().unwrap_or_else(|| run_id.to_string());
     // Notifier for retry (no notifications for retry operations)
     let runner = PlanTaskRunner::new(
         Arc::new(tasks_map),
@@ -1794,6 +1888,10 @@ async fn handle_retry(
         state_handle.clone(),
         cancel,
         None,
+        config.hooks.clone(),
+        run_id.to_string(),
+        run_name,
+        config.templates.as_ref(),
     );
 
     // Create GitManager for auto-commit functionality
@@ -3166,6 +3264,39 @@ impl CancelHandle {
     }
 }
 
+/// Execute a task-level hook with event recording.
+#[allow(clippy::too_many_arguments)]
+async fn run_task_hook_with_events(
+    hook_point: HookPoint,
+    global_hooks: Option<&HooksConfig>,
+    task_hooks: Option<&TaskHooksConfig>,
+    hook_ctx: &HookContext,
+    env: &HashMap<String, String>,
+    cwd: &std::path::Path,
+    store: &Arc<dyn Store>,
+    task_id: &str,
+) {
+    let hook_type = match hook_point {
+        HookPoint::BeforeTask => "before_task",
+        HookPoint::AfterTask => "after_task",
+        HookPoint::OnFailure => "on_failure",
+        HookPoint::BeforeRun => "before_run",
+        HookPoint::AfterRun => "after_run",
+    };
+    let _ = store.append_event(Event::HookStarted {
+        hook_type: hook_type.to_string(),
+        task_id: Some(task_id.to_string()),
+        timestamp: Utc::now(),
+    });
+    let result = run_task_hook(hook_point, global_hooks, task_hooks, hook_ctx, env, cwd).await;
+    let _ = store.append_event(Event::HookFinished {
+        hook_type: hook_type.to_string(),
+        task_id: Some(task_id.to_string()),
+        exit_code: if result.is_ok() { 0 } else { 1 },
+        timestamp: Utc::now(),
+    });
+}
+
 struct PlanTaskRunner {
     tasks: Arc<HashMap<String, Task>>,
     profiles: Arc<HashMap<String, quedex::plan::AgentProfile>>,
@@ -3178,6 +3309,10 @@ struct PlanTaskRunner {
     claude_code: ClaudeCodeRunner,
     opencode: OpencodeRunner,
     notifier: Option<Notifier>,
+    global_hooks: Option<HooksConfig>,
+    run_id: String,
+    run_name: String,
+    template_engine: Option<Arc<TemplateEngine>>,
 }
 
 impl PlanTaskRunner {
@@ -3191,7 +3326,18 @@ impl PlanTaskRunner {
         state: StateHandle,
         cancel: CancelHandle,
         notifier: Option<Notifier>,
+        global_hooks: Option<HooksConfig>,
+        run_id: String,
+        run_name: String,
+        templates_config: Option<&TemplatesConfig>,
     ) -> Self {
+        let template_engine = match templates_config {
+            Some(tc) if tc.enabled.unwrap_or(true) => {
+                Some(Arc::new(TemplateEngine::new(tc.variables.as_ref())))
+            }
+            None => Some(Arc::new(TemplateEngine::new(None))),
+            _ => None, // explicitly disabled
+        };
         Self {
             tasks,
             profiles,
@@ -3204,6 +3350,10 @@ impl PlanTaskRunner {
             claude_code: ClaudeCodeRunner::new(),
             opencode: OpencodeRunner::new(),
             notifier,
+            global_hooks,
+            run_id,
+            run_name,
+            template_engine,
         }
     }
 }
@@ -3223,6 +3373,10 @@ impl TaskRunner for PlanTaskRunner {
         let claude_code = self.claude_code;
         let opencode = self.opencode;
         let notifier = self.notifier.clone();
+        let global_hooks = self.global_hooks.clone();
+        let hook_run_id = self.run_id.clone();
+        let hook_run_name = self.run_name.clone();
+        let template_engine = self.template_engine.clone();
 
         Box::pin(async move {
             let Some(task) = tasks.get(&task_spec.id) else {
@@ -3415,6 +3569,67 @@ impl TaskRunner for PlanTaskRunner {
                     }
                 }
 
+                // Expand Tera template syntax in prompts
+                if let Some(ref engine) = template_engine {
+                    let task_mode = task.mode.to_string();
+                    let title = task.title.clone();
+                    if let Some(ref mut cc) = task.claude_code {
+                        cc.prompt = engine.render_prompt(
+                            &cc.prompt,
+                            &task_id,
+                            title.as_deref(),
+                            &task_mode,
+                            &hook_run_name,
+                            attempt,
+                            &task_ctx.env,
+                        );
+                    } else if let Some(ref mut cx) = task.codex {
+                        cx.prompt = engine.render_prompt(
+                            &cx.prompt,
+                            &task_id,
+                            title.as_deref(),
+                            &task_mode,
+                            &hook_run_name,
+                            attempt,
+                            &task_ctx.env,
+                        );
+                    } else if let Some(ref mut oc) = task.opencode {
+                        oc.prompt = engine.render_prompt(
+                            &oc.prompt,
+                            &task_id,
+                            title.as_deref(),
+                            &task_mode,
+                            &hook_run_name,
+                            attempt,
+                            &task_ctx.env,
+                        );
+                    }
+                }
+
+                // Execute before_task hook
+                {
+                    let hook_ctx = HookContext {
+                        run_id: hook_run_id.clone(),
+                        run_name: hook_run_name.clone(),
+                        task_id: Some(task_id.clone()),
+                        task_title: task.title.clone(),
+                        status: None,
+                        attempt: Some(attempt),
+                        exit_code: None,
+                    };
+                    run_task_hook_with_events(
+                        HookPoint::BeforeTask,
+                        global_hooks.as_ref(),
+                        task.hooks.as_ref(),
+                        &hook_ctx,
+                        &task_ctx.env,
+                        &task_ctx.cwd,
+                        &state.store,
+                        &task_id,
+                    )
+                    .await;
+                }
+
                 // Select runner and spawn child process
                 let child = if task.codex.is_some() {
                     codex.spawn(&task, &task_ctx)
@@ -3432,6 +3647,37 @@ impl TaskRunner for PlanTaskRunner {
                         eprintln!("task {task_id} spawn error: {err:#}");
                         if attempt >= max_attempts {
                             let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
+                            let hook_ctx = HookContext {
+                                run_id: hook_run_id.clone(),
+                                run_name: hook_run_name.clone(),
+                                task_id: Some(task_id.clone()),
+                                task_title: task.title.clone(),
+                                status: Some("failed".to_string()),
+                                attempt: Some(attempt),
+                                exit_code: Some(1),
+                            };
+                            run_task_hook_with_events(
+                                HookPoint::OnFailure,
+                                global_hooks.as_ref(),
+                                task.hooks.as_ref(),
+                                &hook_ctx,
+                                &task_ctx.env,
+                                &task_ctx.cwd,
+                                &state.store,
+                                &task_id,
+                            )
+                            .await;
+                            run_task_hook_with_events(
+                                HookPoint::AfterTask,
+                                global_hooks.as_ref(),
+                                task.hooks.as_ref(),
+                                &hook_ctx,
+                                &task_ctx.env,
+                                &task_ctx.cwd,
+                                &state.store,
+                                &task_id,
+                            )
+                            .await;
                             break TaskResult::failed(1);
                         }
                         continue;
@@ -3509,6 +3755,37 @@ impl TaskRunner for PlanTaskRunner {
                         eprintln!("task {task_id} wait error: {err}");
                         if attempt >= max_attempts {
                             let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
+                            let hook_ctx = HookContext {
+                                run_id: hook_run_id.clone(),
+                                run_name: hook_run_name.clone(),
+                                task_id: Some(task_id.clone()),
+                                task_title: task.title.clone(),
+                                status: Some("failed".to_string()),
+                                attempt: Some(attempt),
+                                exit_code: Some(1),
+                            };
+                            run_task_hook_with_events(
+                                HookPoint::OnFailure,
+                                global_hooks.as_ref(),
+                                task.hooks.as_ref(),
+                                &hook_ctx,
+                                &task_ctx.env,
+                                &task_ctx.cwd,
+                                &state.store,
+                                &task_id,
+                            )
+                            .await;
+                            run_task_hook_with_events(
+                                HookPoint::AfterTask,
+                                global_hooks.as_ref(),
+                                task.hooks.as_ref(),
+                                &hook_ctx,
+                                &task_ctx.env,
+                                &task_ctx.cwd,
+                                &state.store,
+                                &task_id,
+                            )
+                            .await;
                             break TaskResult::failed(1);
                         }
                         continue;
@@ -3517,6 +3794,37 @@ impl TaskRunner for PlanTaskRunner {
                         eprintln!("task {task_id} join error: {err}");
                         if attempt >= max_attempts {
                             let _ = state.task_finished(&task_id, TaskStatus::Failed, Some(1));
+                            let hook_ctx = HookContext {
+                                run_id: hook_run_id.clone(),
+                                run_name: hook_run_name.clone(),
+                                task_id: Some(task_id.clone()),
+                                task_title: task.title.clone(),
+                                status: Some("failed".to_string()),
+                                attempt: Some(attempt),
+                                exit_code: Some(1),
+                            };
+                            run_task_hook_with_events(
+                                HookPoint::OnFailure,
+                                global_hooks.as_ref(),
+                                task.hooks.as_ref(),
+                                &hook_ctx,
+                                &task_ctx.env,
+                                &task_ctx.cwd,
+                                &state.store,
+                                &task_id,
+                            )
+                            .await;
+                            run_task_hook_with_events(
+                                HookPoint::AfterTask,
+                                global_hooks.as_ref(),
+                                task.hooks.as_ref(),
+                                &hook_ctx,
+                                &task_ctx.env,
+                                &task_ctx.cwd,
+                                &state.store,
+                                &task_id,
+                            )
+                            .await;
                             break TaskResult::failed(1);
                         }
                         continue;
@@ -3576,6 +3884,55 @@ impl TaskRunner for PlanTaskRunner {
                                 );
                                 let _ =
                                     state.task_finished(&task_id, result.status, result.exit_code);
+
+                                // Execute on_failure hook for permanent failure
+                                {
+                                    let hook_ctx = HookContext {
+                                        run_id: hook_run_id.clone(),
+                                        run_name: hook_run_name.clone(),
+                                        task_id: Some(task_id.clone()),
+                                        task_title: task.title.clone(),
+                                        status: Some("failed".to_string()),
+                                        attempt: Some(attempt),
+                                        exit_code: result.exit_code,
+                                    };
+                                    run_task_hook_with_events(
+                                        HookPoint::OnFailure,
+                                        global_hooks.as_ref(),
+                                        task.hooks.as_ref(),
+                                        &hook_ctx,
+                                        &task_ctx.env,
+                                        &task_ctx.cwd,
+                                        &state.store,
+                                        &task_id,
+                                    )
+                                    .await;
+                                }
+
+                                // Execute after_task hook for permanent failure
+                                {
+                                    let hook_ctx = HookContext {
+                                        run_id: hook_run_id.clone(),
+                                        run_name: hook_run_name.clone(),
+                                        task_id: Some(task_id.clone()),
+                                        task_title: task.title.clone(),
+                                        status: Some("failed".to_string()),
+                                        attempt: Some(attempt),
+                                        exit_code: result.exit_code,
+                                    };
+                                    run_task_hook_with_events(
+                                        HookPoint::AfterTask,
+                                        global_hooks.as_ref(),
+                                        task.hooks.as_ref(),
+                                        &hook_ctx,
+                                        &task_ctx.env,
+                                        &task_ctx.cwd,
+                                        &state.store,
+                                        &task_id,
+                                    )
+                                    .await;
+                                }
+
                                 break result;
                             }
                         }
@@ -3589,6 +3946,61 @@ impl TaskRunner for PlanTaskRunner {
                 }
 
                 let _ = state.task_finished(&task_id, result.status, result.exit_code);
+
+                // Execute on_failure hook if task failed
+                if result.status == TaskStatus::Failed {
+                    let hook_ctx = HookContext {
+                        run_id: hook_run_id.clone(),
+                        run_name: hook_run_name.clone(),
+                        task_id: Some(task_id.clone()),
+                        task_title: task.title.clone(),
+                        status: Some("failed".to_string()),
+                        attempt: Some(attempt),
+                        exit_code: result.exit_code,
+                    };
+                    run_task_hook_with_events(
+                        HookPoint::OnFailure,
+                        global_hooks.as_ref(),
+                        task.hooks.as_ref(),
+                        &hook_ctx,
+                        &task_ctx.env,
+                        &task_ctx.cwd,
+                        &state.store,
+                        &task_id,
+                    )
+                    .await;
+                }
+
+                // Execute after_task hook (success or failure)
+                {
+                    let status_str = match result.status {
+                        TaskStatus::Succeeded => "succeeded",
+                        TaskStatus::Failed => "failed",
+                        TaskStatus::Canceled => "canceled",
+                        _ => "unknown",
+                    };
+                    let hook_ctx = HookContext {
+                        run_id: hook_run_id.clone(),
+                        run_name: hook_run_name.clone(),
+                        task_id: Some(task_id.clone()),
+                        task_title: task.title.clone(),
+                        status: Some(status_str.to_string()),
+                        attempt: Some(attempt),
+                        exit_code: result.exit_code,
+                    };
+                    run_task_hook_with_events(
+                        HookPoint::AfterTask,
+                        global_hooks.as_ref(),
+                        task.hooks.as_ref(),
+                        &hook_ctx,
+                        &task_ctx.env,
+                        &task_ctx.cwd,
+                        &state.store,
+                        &task_id,
+                    )
+                    .await;
+                }
+
                 break result;
             };
 
@@ -4016,6 +4428,7 @@ mod tests {
             skip_gates: false,
             auto_commit: true,
             squash: false,
+            hooks: None,
         };
         let defaults = vec![CompletionGate {
             name: "default".to_string(),
@@ -4063,6 +4476,7 @@ mod tests {
             skip_gates: false,
             auto_commit: true,
             squash: false,
+            hooks: None,
         };
         let defaults = vec![CompletionGate {
             name: "default".to_string(),

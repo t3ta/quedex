@@ -555,6 +555,18 @@ pub struct OpencodeConfig {
     pub json: bool,
 }
 
+/// Per-task lifecycle hooks configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TaskHooksConfig {
+    /// Command to run before this task starts
+    pub before_task: Option<String>,
+    /// Command to run after this task completes
+    pub after_task: Option<String>,
+    /// Command to run when this task fails
+    pub on_failure: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Task {
     pub id: String,
@@ -637,6 +649,9 @@ pub struct Task {
     /// Used for final integration/review tasks
     #[serde(default)]
     pub squash: bool,
+    /// Per-task lifecycle hooks (overrides run-level hooks)
+    #[serde(default)]
+    pub hooks: Option<TaskHooksConfig>,
 }
 
 fn default_auto_commit() -> bool {
@@ -1333,6 +1348,7 @@ mod tests {
                 skip_gates: false,
                 auto_commit: true,
                 squash: false,
+                hooks: None,
             }],
             _timeout_sec_rejected: None,
             _default_timeout_sec_rejected: None,
@@ -1388,6 +1404,7 @@ mod tests {
                 skip_gates: false,
                 auto_commit: true,
                 squash: false,
+                hooks: None,
             }],
             _timeout_sec_rejected: None,
             _default_timeout_sec_rejected: None,

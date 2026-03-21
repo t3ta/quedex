@@ -548,6 +548,7 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
             task: "nonexistent".to_string(),
             status: ConditionStatus::Failed,
         })),
+        hooks: None,
     };
 
     let plan = Plan {
@@ -608,6 +609,7 @@ fn plan_rejects_condition_referencing_self() {
             task: "main".to_string(),
             status: ConditionStatus::Failed,
         })),
+        hooks: None,
     };
 
     let plan = Plan {

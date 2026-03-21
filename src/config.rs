@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Configuration file name
 const CONFIG_FILE_NAME: &str = "quedex.toml";
@@ -33,6 +34,40 @@ pub struct Config {
     pub _default_timeout_sec_rejected: Option<serde::de::IgnoredAny>,
     /// System prompt to prepend to all task prompts
     pub system_prompt: Option<String>,
+    /// Lifecycle hooks configuration
+    pub hooks: Option<HooksConfig>,
+    /// Template variables configuration
+    pub templates: Option<TemplatesConfig>,
+}
+
+/// Lifecycle hooks for run and task events.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HooksConfig {
+    /// Command to run before the entire run starts
+    pub before_run: Option<String>,
+    /// Command to run after the entire run completes
+    pub after_run: Option<String>,
+    /// Command to run before each task starts
+    pub before_task: Option<String>,
+    /// Command to run after each task completes
+    pub after_task: Option<String>,
+    /// Command to run when a task fails
+    pub on_failure: Option<String>,
+    /// Timeout in seconds for hook commands. Default: 30
+    pub timeout_sec: Option<u64>,
+    /// Whether to abort the run if before_run/after_run hooks fail. Default: false
+    pub fail_on_error: Option<bool>,
+}
+
+/// Template variable configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TemplatesConfig {
+    /// Whether template expansion is enabled
+    pub enabled: Option<bool>,
+    /// Key-value pairs for template variable substitution
+    pub variables: Option<HashMap<String, String>>,
 }
 
 fn reject_timeout_sec<'de, D>(deserializer: D) -> Result<Option<serde::de::IgnoredAny>, D::Error>

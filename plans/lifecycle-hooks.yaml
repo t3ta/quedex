@@ -1,0 +1,380 @@
+version: 1
+
+groups:
+  config: [research-config, impl-config]
+  hooks: [research-hooks, impl-hooks]
+  templates: [research-templates, impl-templates]
+  integration: [impl-integration]
+
+run:
+  name: "lifecycle-hooks-and-templates"
+  max_concurrency: 3
+  fail_fast: true
+  default_gates:
+    - name: "compile check"
+      command: "cargo check"
+    - name: "lint"
+      command: "cargo clippy -- -D warnings"
+
+tasks:
+  # ── Research Phase (parallel) ──────────────────────────────
+
+  - id: research-config
+    title: "調査: Config/Plan構造体とTOML/YAMLパース"
+    mode: research
+    claude_code:
+      prompt: |
+        quedexのConfig構造体(src/config.rs)とPlan/Task構造体(src/plan.rs)を調査してください。
+
+        調査項目:
+        1. Config structの全フィールドとTOMLパース方法（serde_derive, Default trait等）
+        2. Plan/RunConfig/Task structの全フィールドとバリデーション(Plan::validate())
+        3. EffectiveOptionsでCLIオプションとConfigのマージ方法
+        4. 既存のCompletionGate structの構造（参考パターンとして）
+        5. JSONスキーマ生成（schemars/JsonSchema derive）の有無と方法
+
+        結果を artifacts/research-config.md に保存してください。
+      model: sonnet
+
+  - id: research-hooks
+    title: "調査: タスク実行ライフサイクルとフック挿入ポイント"
+    mode: research
+    claude_code:
+      prompt: |
+        quedexのタスク実行ライフサイクルを調査し、フック挿入ポイントを特定してください。
+
+        調査項目:
+        1. src/main.rs の handle_run() 関数: run開始前・完了後のポイント
+        2. src/main.rs の PlanTaskRunner::spawn() 関数:
+           - タスク実行前のポイント（before_task）
+           - リトライループ内の構造（attempt変数の管理）
+           - タスク完了後のポイント（after_task）
+           - 失敗時の処理ポイント（on_failure）
+        3. 環境変数の構築方法: build_run_env()関数
+        4. 既存の通知システム（src/notifier.rs）の設計パターン
+        5. src/store/mod.rs の Event enum（フック実行イベント追加用）
+
+        各ポイントの行番号と、フック呼び出しを挿入する具体的な位置を示してください。
+        結果を artifacts/research-hooks.md に保存してください。
+      model: sonnet
+
+  - id: research-templates
+    title: "調査: Teraテンプレートエンジンの統合方針"
+    mode: research
+    claude_code:
+      prompt: |
+        quedexにTeraテンプレートエンジンを統合するための調査を行ってください。
+
+        調査項目:
+        1. Cargo.tomlの現在の依存関係を確認し、Teraの追加方針を検討
+        2. src/main.rs でプロンプト文字列がどのように構築されるか（コンテキスト注入、retry時のプロンプト変更）
+        3. Tera 1.x のAPIドキュメントを調べ、以下の使い方を確認:
+           - Tera::one_off() による単発テンプレート展開
+           - Context への変数追加方法
+           - エラーハンドリング（テンプレート構文エラー時のフォールバック）
+        4. テンプレート変数として利用可能な情報:
+           - attempt (u32), task.id, task.title, task.mode
+           - run.name, env.* (環境変数)
+        5. 後方互換性: テンプレート構文を含まないプロンプトへの影響がないことの確認方針
+
+        結果を artifacts/research-templates.md に保存してください。
+      model: sonnet
+
+  # ── Implementation Phase ───────────────────────────────────
+
+  - id: impl-config
+    title: "実装: HooksConfig/TemplatesConfig構造体とスキーマ拡張"
+    mode: implement
+    deps: [research-config]
+    locks: [workspace]
+    retry_count: 2
+    retry_strategy:
+      inject_error_context: true
+    claude_code:
+      prompt: |
+        artifacts/research-config.md を参考に、ライフサイクルフックとテンプレートの設定構造体を実装してください。
+
+        ## 実装内容
+
+        ### 1. src/config.rs に追加
+
+        ```rust
+        #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+        #[serde(default)]
+        pub struct HooksConfig {
+            pub before_run: Option<String>,
+            pub after_run: Option<String>,
+            pub before_task: Option<String>,
+            pub after_task: Option<String>,
+            pub on_failure: Option<String>,
+            /// フックコマンドのタイムアウト（秒）。デフォルト: 30
+            pub timeout_sec: Option<u64>,
+            /// before_run/after_run失敗時にrunを中断するか。デフォルト: false
+            pub fail_on_error: Option<bool>,
+        }
+
+        #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+        #[serde(default)]
+        pub struct TemplatesConfig {
+            pub enabled: Option<bool>,
+            pub variables: Option<HashMap<String, String>>,
+        }
+        ```
+
+        Config structに以下を追加:
+        - `pub hooks: Option<HooksConfig>`
+        - `pub templates: Option<TemplatesConfig>`
+
+        ### 2. src/plan.rs に追加
+
+        ```rust
+        #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+        #[serde(default)]
+        pub struct TaskHooksConfig {
+            pub before_task: Option<String>,
+            pub after_task: Option<String>,
+            pub on_failure: Option<String>,
+        }
+        ```
+
+        Task structに以下を追加:
+        - `pub hooks: Option<TaskHooksConfig>` (serde(default))
+
+        ### 注意事項
+        - 既存フィールドを壊さない（後方互換性）
+        - すべて Option + serde(default) で未指定時はNone
+        - JsonSchema deriveを必要に応じて追加
+        - `cargo check` と `cargo clippy -- -D warnings` が通ることを確認
+      model: opus
+
+  - id: impl-hooks
+    title: "実装: フック実行エンジン (src/hooks.rs)"
+    mode: implement
+    deps: [research-hooks, impl-config]
+    locks: [workspace]
+    retry_count: 2
+    retry_strategy:
+      inject_error_context: true
+    claude_code:
+      prompt: |
+        artifacts/research-hooks.md を参考に、フック実行エンジンを実装してください。
+
+        ## 実装内容
+
+        ### 1. src/hooks.rs（新規作成）
+
+        フック実行のコアロジック:
+
+        ```rust
+        use std::collections::HashMap;
+        use std::time::Duration;
+        use tokio::process::Command;
+
+        pub struct HookContext {
+            pub run_id: String,
+            pub run_name: String,
+            pub task_id: Option<String>,
+            pub task_title: Option<String>,
+            pub status: Option<String>,      // "succeeded" / "failed"
+            pub attempt: Option<u32>,         // 1-indexed
+            pub exit_code: Option<i32>,
+        }
+
+        impl HookContext {
+            pub fn to_env_vars(&self) -> HashMap<String, String> { ... }
+        }
+
+        /// フックコマンドをシェル経由で実行する
+        /// タイムアウト（デフォルト30秒）付き
+        /// 失敗時はwarning出力のみ（タスク実行を中断しない）
+        pub async fn run_hook(
+            command: &str,
+            ctx: &HookContext,
+            base_env: &HashMap<String, String>,
+            cwd: &Path,
+            timeout_sec: u64,
+        ) -> Result<(), HookError> { ... }
+        ```
+
+        環境変数マッピング:
+        - QUEDEX_RUN_ID, QUEDEX_RUN_NAME
+        - QUEDEX_TASK_ID, QUEDEX_TASK_TITLE（タスクフック時のみ）
+        - QUEDEX_STATUS（after_task, on_failure時のみ）
+        - QUEDEX_ATTEMPT（タスクフック時のみ）
+        - QUEDEX_EXIT_CODE（after_task, on_failure時のみ）
+
+        ### 2. src/main.rs にフック呼び出しを統合
+
+        グローバルフック（quedex.toml）とタスクフック（plan.yaml）をマージして実行:
+        - before_run: handle_run()内、スケジューラ起動前
+        - after_run: handle_run()内、スケジューラ完了後
+        - before_task: PlanTaskRunner::spawn()内、タスク実行前（リトライごと）
+        - on_failure: タスク失敗時、after_taskの前
+        - after_task: タスク完了後（成功・失敗問わず）
+
+        グローバルフック → タスクフックの順で実行。
+
+        ### 3. src/main.rs を `mod hooks;` で接続
+
+        ### 注意事項
+        - フック失敗はwarning出力のみ、タスク実行を中断しない
+        - ただし before_run/after_run で fail_on_error: true の場合は中断する
+        - フックコマンドは `sh -c "command"` で実行
+        - タイムアウトは `tokio::time::timeout` を使用
+        - `cargo check` と `cargo clippy -- -D warnings` が通ることを確認
+      model: opus
+
+  - id: impl-templates
+    title: "実装: Teraテンプレートエンジン統合"
+    mode: implement
+    deps: [research-templates, impl-config]
+    locks: [workspace]
+    retry_count: 2
+    retry_strategy:
+      inject_error_context: true
+    claude_code:
+      prompt: |
+        artifacts/research-templates.md を参考に、Teraテンプレートエンジンを統合してください。
+
+        ## 実装内容
+
+        ### 1. Cargo.toml に tera 依存追加
+
+        ```toml
+        [dependencies]
+        tera = "1"
+        ```
+
+        ### 2. src/template.rs（新規作成）
+
+        ```rust
+        use tera::{Tera, Context};
+
+        pub struct TemplateEngine {
+            variables: HashMap<String, String>,
+        }
+
+        impl TemplateEngine {
+            pub fn new(config_vars: Option<&HashMap<String, String>>) -> Self { ... }
+
+            /// プロンプト文字列をテンプレート展開する
+            /// テンプレート構文エラー時は元のプロンプトをそのまま返す（warning出力）
+            pub fn render_prompt(
+                &self,
+                prompt: &str,
+                task_id: &str,
+                task_title: Option<&str>,
+                task_mode: &str,
+                run_name: &str,
+                attempt: u32,
+                env: &HashMap<String, String>,
+            ) -> String { ... }
+        }
+        ```
+
+        テンプレート変数:
+        - `attempt`: u32 (1-indexed)
+        - `task.id`: String
+        - `task.title`: String
+        - `task.mode`: String ("research"/"implement"/"verify")
+        - `run.name`: String
+        - `env.*`: 環境変数マップ（`{{ env.HOME }}` 等）
+        - quedex.toml [templates.variables] で定義したカスタム変数
+
+        ### 3. src/main.rs でテンプレート展開を統合
+
+        PlanTaskRunner::spawn() 内のプロンプト構築時にテンプレート展開を適用:
+        - タスク実行直前（リトライのたびに展開）
+        - `templates.enabled` が false の場合はスキップ
+        - テンプレート構文を含まないプロンプトは影響なし（後方互換性）
+
+        ### 4. src/main.rs を `mod template;` で接続
+
+        ### 注意事項
+        - テンプレート構文エラーでもパニックしない（warning出力でフォールバック）
+        - `Tera::one_off()` を使用（グローバルTeraインスタンス不要）
+        - `cargo check` と `cargo clippy -- -D warnings` が通ることを確認
+      model: opus
+
+  - id: impl-integration
+    title: "実装: フック・テンプレートの統合とEvent拡張"
+    mode: implement
+    deps: [impl-hooks, impl-templates]
+    locks: [workspace]
+    retry_count: 2
+    retry_strategy:
+      inject_error_context: true
+    claude_code:
+      prompt: |
+        フック実行エンジンとテンプレートエンジンが統合された状態で、最終的な調整を行ってください。
+
+        ## 実装内容
+
+        ### 1. src/store/mod.rs - Event拡張（必要に応じて）
+
+        フック実行イベントをEvent enumに追加:
+        ```rust
+        HookStarted {
+            hook_type: String,  // "before_run", "before_task", etc.
+            task_id: Option<String>,
+            #[serde(rename = "ts")]
+            timestamp: DateTime<Utc>,
+        },
+        HookFinished {
+            hook_type: String,
+            task_id: Option<String>,
+            exit_code: i32,
+            #[serde(rename = "ts")]
+            timestamp: DateTime<Utc>,
+        },
+        ```
+
+        ### 2. 統合テスト確認
+
+        以下のシナリオが正しく動作するか確認:
+        - quedex.toml にフック未設定 → 既存動作に影響なし
+        - quedex.toml にフック設定 → 適切なタイミングで実行
+        - plan.yaml にタスクフック設定 → グローバル→タスクの順で実行
+        - プロンプトにTeraテンプレート構文 → 正しく展開
+        - プロンプトにテンプレート構文なし → そのまま使用
+        - テンプレート構文エラー → warning出力、元のプロンプト使用
+
+        ### 3. フック・テンプレートのE2E動作確認
+
+        実際の動作フローを確認:
+        1. before_run フック実行
+        2. タスクごとに before_task フック実行
+        3. テンプレート展開されたプロンプトでタスク実行
+        4. 失敗時 on_failure フック実行
+        5. after_task フック実行
+        6. 全タスク完了後 after_run フック実行
+
+        ### 注意事項
+        - 既存のテストが壊れていないこと
+        - `cargo test` が全パスすること
+        - `cargo check` と `cargo clippy -- -D warnings` が通ること
+      model: opus
+
+  # ── Verification Phase ─────────────────────────────────────
+
+  - id: verify-all
+    title: "検証: 全テスト・ビルド・lint実行"
+    mode: verify
+    deps: [impl-integration]
+    claude_code:
+      prompt: |
+        ライフサイクルフック・テンプレート機能の実装を検証してください。
+
+        1. `cargo check` でビルド確認
+        2. `cargo clippy -- -D warnings` でlintチェック
+        3. `cargo test` で全テスト実行
+        4. `cargo build` でリリースビルド確認
+
+        問題があれば修正してください。
+
+        特に確認すべき点:
+        - 既存テストの破損がないこと
+        - 新規追加したHooksConfig/TemplatesConfig/TaskHooksConfigのserde互換性
+        - テンプレート構文エラー時のフォールバック
+        - フック未設定時の後方互換性
+      model: opus
