@@ -2378,11 +2378,15 @@ fn load_plan(plan_arg: &str) -> Result<(Plan, PathBuf)> {
     let path = PathBuf::from(plan_arg);
 
     // Reject .json plans with a helpful migration message.
-    // Internal plan snapshots (runs/<id>/plan.json) are allowed regardless of store location.
+    // Internal plan snapshots are identified by having a sibling state.json file,
+    // which is only present in actual quedex run directories.
     let is_json = path.extension().and_then(|ext| ext.to_str()) == Some("json");
     let is_snapshot = is_json
         && path.file_name().and_then(|f| f.to_str()) == Some("plan.json")
-        && path.components().any(|c| c.as_os_str() == "runs");
+        && path
+            .parent()
+            .map(|dir| dir.join("state.json").exists())
+            .unwrap_or(false);
     if is_json && !is_snapshot {
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("plan");
         return Err(anyhow!(
