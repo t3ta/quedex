@@ -2402,17 +2402,24 @@ fn load_plan(plan_arg: &str) -> Result<(Plan, PathBuf)> {
     } else {
         Plan::parse_str(&contents)?
     };
-    let abs_path = if path.is_absolute() {
-        path
+
+    // For snapshots, use cwd as base_dir (snapshot lives in store, not project root).
+    // For regular plan files, use the plan file's parent directory.
+    let base_dir = if is_snapshot {
+        env::current_dir().context("resolve current dir")?
     } else {
-        env::current_dir()
-            .context("resolve current dir")?
-            .join(&path)
+        let abs_path = if path.is_absolute() {
+            path
+        } else {
+            env::current_dir()
+                .context("resolve current dir")?
+                .join(&path)
+        };
+        abs_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
     };
-    let base_dir = abs_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
     Ok((plan, base_dir))
 }
 
