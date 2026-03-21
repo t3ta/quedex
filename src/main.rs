@@ -197,6 +197,19 @@ async fn dispatch(cli: Cli) -> Result<i32> {
 fn handle_init(global: &GlobalOptions, output: Option<PathBuf>, force: bool) -> Result<i32> {
     let output_path = output.unwrap_or_else(|| PathBuf::from("plan.yaml"));
 
+    // Reject .json output — JSON plan format is no longer supported
+    if output_path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+        let stem = output_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("plan");
+        return Err(anyhow!(
+            "JSON plan format is no longer supported. Use YAML instead.\n  \
+             Hint: quedex init -o {}.yaml",
+            stem
+        ));
+    }
+
     if output_path.exists() && !force {
         return Err(anyhow!(
             "file {} already exists (use --force to overwrite)",
