@@ -2378,19 +2378,30 @@ fn load_plan(plan_arg: &str) -> Result<(Plan, PathBuf)> {
     let path = PathBuf::from(plan_arg);
 
     // Reject .json plans with a helpful migration message
+    // (internal snapshots under .quedex/runs/ are still JSON and parsed separately)
     if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
-        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("plan");
-        return Err(anyhow!(
-            "JSON plan format is no longer supported. Please convert to YAML format.\n  \
-             Hint: rename '{}' to '{}.yaml'",
-            path.display(),
-            stem
-        ));
+        // Allow internal plan snapshots (e.g. .quedex/runs/<id>/plan.json)
+        let is_snapshot = path.components().any(|c| c.as_os_str() == ".quedex");
+        if !is_snapshot {
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("plan");
+            return Err(anyhow!(
+                "JSON plan format is no longer supported. Please convert to YAML format.\n  \
+                 Hint: rename '{}' to '{}.yaml'",
+                path.display(),
+                stem
+            ));
+        }
     }
 
     let contents =
         fs::read_to_string(&path).with_context(|| format!("read plan file {}", path.display()))?;
-    let plan = Plan::parse_str(&contents)?;
+
+    // Use JSON parser for internal snapshots, YAML for user plan files
+    let plan = if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+        Plan::parse_json(&contents)?
+    } else {
+        Plan::parse_str(&contents)?
+    };
     let abs_path = if path.is_absolute() {
         path
     } else {
