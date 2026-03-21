@@ -658,18 +658,14 @@ fn default_auto_commit() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum PlanFormat {
-    Json,
-    Yaml,
-}
-
 impl Plan {
-    pub fn parse_str(input: &str, format: PlanFormat) -> Result<Self> {
-        match format {
-            PlanFormat::Json => serde_json::from_str(input).context("parse plan json"),
-            PlanFormat::Yaml => serde_yaml::from_str(input).context("parse plan yaml"),
-        }
+    pub fn parse_str(input: &str) -> Result<Self> {
+        serde_yaml::from_str(input).context("parse plan yaml")
+    }
+
+    /// Parse a plan from JSON (used internally for plan snapshots)
+    pub fn parse_json(input: &str) -> Result<Self> {
+        serde_json::from_str(input).context("parse plan json snapshot")
     }
 
     pub fn validate(&self) -> Result<()> {

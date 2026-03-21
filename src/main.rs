@@ -25,7 +25,7 @@ use quedex::dry_run::{detect_lock_conflicts, generate_execution_waves};
 use quedex::git::{self, GitManager};
 use quedex::hooks::{HookContext, HookPoint, run_run_hook, run_task_hook};
 use quedex::notifier::Notifier;
-use quedex::plan::{CompletionGate, Plan, PlanFormat, Task, TaskHooksConfig, TaskMode};
+use quedex::plan::{CompletionGate, Plan, Task, TaskHooksConfig, TaskMode};
 use quedex::runner::claude_code::ClaudeCodeRunner;
 use quedex::runner::codex::CodexRunner;
 use quedex::runner::opencode::OpencodeRunner;
@@ -195,7 +195,20 @@ async fn dispatch(cli: Cli) -> Result<i32> {
 }
 
 fn handle_init(global: &GlobalOptions, output: Option<PathBuf>, force: bool) -> Result<i32> {
-    let output_path = output.unwrap_or_else(|| PathBuf::from("plan.json"));
+    let output_path = output.unwrap_or_else(|| PathBuf::from("plan.yaml"));
+
+    // Reject .json output — JSON plan format is no longer supported
+    if output_path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+        let stem = output_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("plan");
+        return Err(anyhow!(
+            "JSON plan format is no longer supported. Use YAML instead.\n  \
+             Hint: quedex init -o {}.yaml",
+            stem
+        ));
+    }
 
     if output_path.exists() && !force {
         return Err(anyhow!(
@@ -211,13 +224,7 @@ fn handle_init(global: &GlobalOptions, output: Option<PathBuf>, force: bool) -> 
         );
     }
 
-    let is_yaml = matches!(
-        output_path.extension().and_then(|ext| ext.to_str()),
-        Some("yaml") | Some("yml")
-    );
-
-    let template = if is_yaml {
-        r#"version: 1
+    let template = r#"version: 1
 run:
   name: my-plan
   max_concurrency: 2
@@ -231,28 +238,7 @@ tasks:
       prompt: |
         Describe what this task should do.
         You can use multi-line strings in YAML.
-"#
-    } else {
-        r#"{
-  "version": 1,
-  "run": {
-    "name": "my-plan",
-    "max_concurrency": 2,
-    "fail_fast": true
-  },
-  "tasks": [
-    {
-      "id": "task-1",
-      "mode": "implement",
-      "deps": [],
-      "codex": {
-        "prompt": "Describe what this task should do"
-      }
-    }
-  ]
-}
-"#
-    };
+"#;
 
     fs::write(&output_path, template)
         .with_context(|| format!("write plan template to {}", output_path.display()))?;
@@ -2289,7 +2275,7 @@ fn handle_graph(
                 plan_path.display()
             )
         })?;
-        Plan::parse_str(&contents, PlanFormat::Json)?
+        Plan::parse_json(&contents)?
     };
 
     let output_mermaid = mermaid && !ascii;
@@ -2384,46 +2370,61 @@ fn load_plan(plan_arg: &str) -> Result<(Plan, PathBuf)> {
         io::stdin()
             .read_to_string(&mut buf)
             .context("read plan from stdin")?;
-        let plan = parse_plan_with_fallback(&buf, None)?;
+        let plan = Plan::parse_str(&buf)?;
         let cwd = env::current_dir().context("resolve current dir")?;
         return Ok((plan, cwd));
     }
 
     let path = PathBuf::from(plan_arg);
+
+    // Reject .json plans with a helpful migration message.
+    // Internal plan snapshots are identified by having a sibling state.json file,
+    // which is only present in actual quedex run directories.
+    let is_json = path.extension().and_then(|ext| ext.to_str()) == Some("json");
+    let is_snapshot = is_json
+        && path.file_name().and_then(|f| f.to_str()) == Some("plan.json")
+        && path
+            .parent()
+            .map(|dir| dir.join("state.json").exists())
+            .unwrap_or(false);
+    if is_json && !is_snapshot {
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("plan");
+        return Err(anyhow!(
+            "JSON plan format is no longer supported. Please convert to YAML format.\n  \
+             Hint: rename '{}' to '{}.yaml'",
+            path.display(),
+            stem
+        ));
+    }
+
     let contents =
         fs::read_to_string(&path).with_context(|| format!("read plan file {}", path.display()))?;
-    let format = plan_format_from_path(&path);
-    let plan = parse_plan_with_fallback(&contents, format)?;
-    let abs_path = if path.is_absolute() {
-        path
+
+    // Use JSON parser for internal snapshots, YAML for user plan files
+    let plan = if is_snapshot {
+        Plan::parse_json(&contents)?
     } else {
-        env::current_dir()
-            .context("resolve current dir")?
-            .join(&path)
+        Plan::parse_str(&contents)?
     };
-    let base_dir = abs_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
+
+    // For snapshots, use cwd as base_dir (snapshot lives in store, not project root).
+    // For regular plan files, use the plan file's parent directory.
+    let base_dir = if is_snapshot {
+        env::current_dir().context("resolve current dir")?
+    } else {
+        let abs_path = if path.is_absolute() {
+            path
+        } else {
+            env::current_dir()
+                .context("resolve current dir")?
+                .join(&path)
+        };
+        abs_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
+    };
     Ok((plan, base_dir))
-}
-
-fn parse_plan_with_fallback(input: &str, format: Option<PlanFormat>) -> Result<Plan> {
-    if let Some(format) = format {
-        return Plan::parse_str(input, format);
-    }
-    if let Ok(plan) = Plan::parse_str(input, PlanFormat::Json) {
-        return Ok(plan);
-    }
-    Plan::parse_str(input, PlanFormat::Yaml)
-}
-
-fn plan_format_from_path(path: &Path) -> Option<PlanFormat> {
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("json") => Some(PlanFormat::Json),
-        Some("yaml") | Some("yml") => Some(PlanFormat::Yaml),
-        _ => None,
-    }
 }
 
 fn resolve_run_cwd(plan: &Plan, base_dir: PathBuf) -> Result<PathBuf> {
@@ -2840,7 +2841,7 @@ fn load_plan_snapshot(store_root: &Path, run_id: &str) -> Result<Plan> {
     let plan_path = plan_snapshot_path(store_root, run_id);
     let contents = fs::read_to_string(&plan_path)
         .with_context(|| format!("read plan snapshot {}", plan_path.display()))?;
-    Plan::parse_str(&contents, PlanFormat::Json)
+    Plan::parse_json(&contents)
 }
 
 fn finalize_run_status(state: &State) -> (RunStatus, i32) {

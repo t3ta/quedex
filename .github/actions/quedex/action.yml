@@ -8,9 +8,9 @@ branding:
 
 inputs:
   plan:
-    description: 'Path to the plan file (plan.json or plan.yaml)'
+    description: 'Path to the plan file (YAML format)'
     required: true
-    default: 'plan.json'
+    default: 'plan.yaml'
   fail-fast:
     description: 'Stop execution on first failure'
     required: false
