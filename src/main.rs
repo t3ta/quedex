@@ -3837,6 +3837,11 @@ impl TaskRunner for PlanTaskRunner {
                 if result.status == TaskStatus::Succeeded && !task.skip_gates {
                     let gates = resolve_completion_gates(&task, default_gates.as_deref());
                     for gate in gates {
+                        if cancel.is_canceled() {
+                            result = TaskResult::canceled();
+                            break;
+                        }
+
                         let _ = task_ctx.store.append_event(Event::GateStarted {
                             task_id: task_id.clone(),
                             gate_name: gate.name.clone(),
@@ -3849,6 +3854,7 @@ impl TaskRunner for PlanTaskRunner {
                             &task_id,
                             &task_ctx.store,
                             &task_ctx.env,
+                            &cancel,
                         )
                         .await;
 
@@ -3862,7 +3868,11 @@ impl TaskRunner for PlanTaskRunner {
                         });
 
                         if !passed {
-                            result = TaskResult::failed(exit_code);
+                            if cancel.is_canceled() {
+                                result = TaskResult::canceled();
+                            } else {
+                                result = TaskResult::failed(exit_code);
+                            }
                             break;
                         }
                     }
@@ -4151,6 +4161,7 @@ async fn run_completion_gate(
     task_id: &str,
     store: &Arc<dyn Store>,
     env: &HashMap<String, String>,
+    cancel: &CancelHandle,
 ) -> Option<i32> {
     use tokio::io::AsyncReadExt;
 
@@ -4236,7 +4247,26 @@ async fn run_completion_gate(
     // processes that inherited pipe fds cannot hang the gate forever.
     let deadline = Duration::from_secs(gate.timeout_sec);
     let start = std::time::Instant::now();
-    match tokio::time::timeout(deadline, child.wait()).await {
+    let cancel_signal = {
+        let cancel = cancel.clone();
+        async move {
+            while !cancel.is_canceled() {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    };
+    match tokio::time::timeout(deadline, async {
+        tokio::select! {
+            result = child.wait() => result,
+            _ = cancel_signal => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "canceled"))
+            }
+        }
+    })
+    .await
+    {
         Ok(Ok(status)) => {
             // Child exited within budget.  Drain remaining pipe data
             // using whatever time is left so bg fd holders cannot block
@@ -4581,7 +4611,15 @@ mod tests {
         };
 
         assert_eq!(
-            run_completion_gate(&gate, tmp.path(), "task1", &store, &HashMap::new()).await,
+            run_completion_gate(
+                &gate,
+                tmp.path(),
+                "task1",
+                &store,
+                &HashMap::new(),
+                &CancelHandle::new()
+            )
+            .await,
             Some(0)
         );
 
@@ -4603,7 +4641,15 @@ mod tests {
         };
 
         assert_eq!(
-            run_completion_gate(&gate, tmp.path(), "task1", &store, &HashMap::new()).await,
+            run_completion_gate(
+                &gate,
+                tmp.path(),
+                "task1",
+                &store,
+                &HashMap::new(),
+                &CancelHandle::new()
+            )
+            .await,
             None
         );
 
