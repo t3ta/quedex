@@ -4152,8 +4152,9 @@ async fn run_completion_gate(
     store: &Arc<dyn Store>,
     env: &HashMap<String, String>,
 ) -> Option<i32> {
-    // Open log files and write header before spawning so output streams
-    // directly to disk instead of being buffered in memory.
+    use tokio::io::AsyncReadExt;
+
+    // Open log files and write header before spawning.
     let mut stdout_file = match store.open_log(task_id, LogStream::Stdout) {
         Ok(f) => f,
         Err(_) => return None,
@@ -4166,14 +4167,17 @@ async fn run_completion_gate(
     };
     let _ = writeln!(stderr_file, "\n[completion gate:{}]", gate.name);
 
+    // Use piped stdout/stderr so we wait for pipe EOF from all fd holders
+    // (including backgrounded children), while streaming output to log files
+    // incrementally to avoid buffering everything in memory.
     let mut command = tokio::process::Command::new("sh");
     command
         .arg("-c")
         .arg(&gate.command)
         .current_dir(cwd)
         .envs(env)
-        .stdout(Stdio::from(stdout_file))
-        .stderr(Stdio::from(stderr_file))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
     let mut child = match command.spawn() {
         Ok(child) => child,
@@ -4189,7 +4193,50 @@ async fn run_completion_gate(
         }
     };
 
-    match tokio::time::timeout(Duration::from_secs(gate.timeout_sec), child.wait()).await {
+    let child_stdout = child.stdout.take();
+    let child_stderr = child.stderr.take();
+
+    // Spawn tasks that stream pipe output to log files in 8 KiB chunks.
+    let stdout_task = tokio::spawn(async move {
+        if let Some(mut reader) = child_stdout {
+            let mut buf = [0u8; 8192];
+            loop {
+                match reader.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let _ = stdout_file.write_all(&buf[..n]);
+                    }
+                }
+            }
+        }
+    });
+    let stderr_task = tokio::spawn(async move {
+        if let Some(mut reader) = child_stderr {
+            let mut buf = [0u8; 8192];
+            loop {
+                match reader.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let _ = stderr_file.write_all(&buf[..n]);
+                    }
+                }
+            }
+        }
+    });
+
+    // Wait for child exit AND pipe EOF (covers backgrounded subprocesses
+    // that inherit the pipe fds).
+    let result = tokio::time::timeout(Duration::from_secs(gate.timeout_sec), async {
+        let status = child.wait().await;
+        // Pipes may still carry data from background children after the
+        // shell exits; wait for EOF on both streams.
+        let _ = stdout_task.await;
+        let _ = stderr_task.await;
+        status
+    })
+    .await;
+
+    match result {
         Ok(Ok(status)) => status.code(),
         Ok(Err(err)) => {
             if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
