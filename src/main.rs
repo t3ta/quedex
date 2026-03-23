@@ -4251,6 +4251,18 @@ async fn run_completion_gate(
             {
                 stdout_abort.abort();
                 stderr_abort.abort();
+                // A descendant still holds pipe fds open after the
+                // timeout budget is exhausted — treat the gate as failed
+                // so it behaves the same as the old wait_with_output()
+                // path.
+                if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
+                    let _ = writeln!(
+                        stderr_log,
+                        "\n[completion gate:{}] timed out after {}s (pipe drain exceeded budget)",
+                        gate.name, gate.timeout_sec
+                    );
+                }
+                return None;
             }
             status.code()
         }
