@@ -4230,15 +4230,28 @@ async fn run_completion_gate(
     let stdout_abort = stdout_task.abort_handle();
     let stderr_abort = stderr_task.abort_handle();
 
-    // Timeout applies only to the child process itself.  Pipe draining
-    // runs outside the timeout window so that slow disk I/O does not
-    // penalise a gate that exited in time.
-    match tokio::time::timeout(Duration::from_secs(gate.timeout_sec), child.wait()).await {
+    // Timeout applies to the child process; pipe draining gets the
+    // remaining budget so that (a) slow disk I/O during normal operation
+    // does not penalise a gate that exited in time, and (b) backgrounded
+    // processes that inherited pipe fds cannot hang the gate forever.
+    let deadline = Duration::from_secs(gate.timeout_sec);
+    let start = std::time::Instant::now();
+    match tokio::time::timeout(deadline, child.wait()).await {
         Ok(Ok(status)) => {
             // Child exited within budget.  Drain remaining pipe data
-            // outside the timeout so log-file writes are not penalised.
-            let _ = stdout_task.await;
-            let _ = stderr_task.await;
+            // using whatever time is left so bg fd holders cannot block
+            // indefinitely.
+            let remaining = deadline.saturating_sub(start.elapsed());
+            if tokio::time::timeout(remaining, async {
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+            })
+            .await
+            .is_err()
+            {
+                stdout_abort.abort();
+                stderr_abort.abort();
+            }
             status.code()
         }
         Ok(Err(err)) => {
