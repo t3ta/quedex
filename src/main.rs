@@ -4224,21 +4224,26 @@ async fn run_completion_gate(
         }
     });
 
-    // Wait for child exit AND pipe EOF (covers backgrounded subprocesses
-    // that inherit the pipe fds).
-    let result = tokio::time::timeout(Duration::from_secs(gate.timeout_sec), async {
-        let status = child.wait().await;
-        // Pipes may still carry data from background children after the
-        // shell exits; wait for EOF on both streams.
-        let _ = stdout_task.await;
-        let _ = stderr_task.await;
-        status
-    })
-    .await;
+    // Grab abort handles so we can stop the drain tasks from outside the
+    // timeout future if needed (they are moved into the future on the
+    // success path but may outlive it on timeout).
+    let stdout_abort = stdout_task.abort_handle();
+    let stderr_abort = stderr_task.abort_handle();
 
-    match result {
-        Ok(Ok(status)) => status.code(),
+    // Timeout applies only to the child process itself.  Pipe draining
+    // runs outside the timeout window so that slow disk I/O does not
+    // penalise a gate that exited in time.
+    match tokio::time::timeout(Duration::from_secs(gate.timeout_sec), child.wait()).await {
+        Ok(Ok(status)) => {
+            // Child exited within budget.  Drain remaining pipe data
+            // outside the timeout so log-file writes are not penalised.
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
+            status.code()
+        }
         Ok(Err(err)) => {
+            stdout_abort.abort();
+            stderr_abort.abort();
             if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
                 let _ = writeln!(
                     stderr_log,
@@ -4250,6 +4255,8 @@ async fn run_completion_gate(
         }
         Err(_) => {
             let _ = child.kill().await;
+            stdout_abort.abort();
+            stderr_abort.abort();
             if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
                 let _ = writeln!(
                     stderr_log,
