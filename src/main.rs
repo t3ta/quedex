@@ -4152,6 +4152,24 @@ async fn run_completion_gate(
     store: &Arc<dyn Store>,
     env: &HashMap<String, String>,
 ) -> Option<i32> {
+    use tokio::io::AsyncReadExt;
+
+    // Open log files and write header before spawning.
+    let mut stdout_file = match store.open_log(task_id, LogStream::Stdout) {
+        Ok(f) => f,
+        Err(_) => return None,
+    };
+    let _ = writeln!(stdout_file, "\n[completion gate:{}]", gate.name);
+
+    let mut stderr_file = match store.open_log(task_id, LogStream::Stderr) {
+        Ok(f) => f,
+        Err(_) => return None,
+    };
+    let _ = writeln!(stderr_file, "\n[completion gate:{}]", gate.name);
+
+    // Use piped stdout/stderr so we wait for pipe EOF from all fd holders
+    // (including backgrounded children), while streaming output to log files
+    // incrementally to avoid buffering everything in memory.
     let mut command = tokio::process::Command::new("sh");
     command
         .arg("-c")
@@ -4161,7 +4179,7 @@ async fn run_completion_gate(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let child = match command.spawn() {
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(err) => {
             if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
@@ -4175,14 +4193,82 @@ async fn run_completion_gate(
         }
     };
 
-    let output = match tokio::time::timeout(
-        Duration::from_secs(gate.timeout_sec),
-        child.wait_with_output(),
-    )
-    .await
-    {
-        Ok(Ok(output)) => output,
+    let child_stdout = child.stdout.take();
+    let child_stderr = child.stderr.take();
+
+    // Spawn tasks that stream pipe output to log files in 8 KiB chunks.
+    let stdout_task = tokio::spawn(async move {
+        if let Some(mut reader) = child_stdout {
+            let mut buf = [0u8; 8192];
+            loop {
+                match reader.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let _ = stdout_file.write_all(&buf[..n]);
+                    }
+                }
+            }
+        }
+    });
+    let stderr_task = tokio::spawn(async move {
+        if let Some(mut reader) = child_stderr {
+            let mut buf = [0u8; 8192];
+            loop {
+                match reader.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let _ = stderr_file.write_all(&buf[..n]);
+                    }
+                }
+            }
+        }
+    });
+
+    // Grab abort handles so we can stop the drain tasks from outside the
+    // timeout future if needed (they are moved into the future on the
+    // success path but may outlive it on timeout).
+    let stdout_abort = stdout_task.abort_handle();
+    let stderr_abort = stderr_task.abort_handle();
+
+    // Timeout applies to the child process; pipe draining gets the
+    // remaining budget so that (a) slow disk I/O during normal operation
+    // does not penalise a gate that exited in time, and (b) backgrounded
+    // processes that inherited pipe fds cannot hang the gate forever.
+    let deadline = Duration::from_secs(gate.timeout_sec);
+    let start = std::time::Instant::now();
+    match tokio::time::timeout(deadline, child.wait()).await {
+        Ok(Ok(status)) => {
+            // Child exited within budget.  Drain remaining pipe data
+            // using whatever time is left so bg fd holders cannot block
+            // indefinitely.
+            let remaining = deadline.saturating_sub(start.elapsed());
+            if tokio::time::timeout(remaining, async {
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+            })
+            .await
+            .is_err()
+            {
+                stdout_abort.abort();
+                stderr_abort.abort();
+                // A descendant still holds pipe fds open after the
+                // timeout budget is exhausted — treat the gate as failed
+                // so it behaves the same as the old wait_with_output()
+                // path.
+                if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
+                    let _ = writeln!(
+                        stderr_log,
+                        "\n[completion gate:{}] timed out after {}s (pipe drain exceeded budget)",
+                        gate.name, gate.timeout_sec
+                    );
+                }
+                return None;
+            }
+            status.code()
+        }
         Ok(Err(err)) => {
+            stdout_abort.abort();
+            stderr_abort.abort();
             if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
                 let _ = writeln!(
                     stderr_log,
@@ -4190,9 +4276,14 @@ async fn run_completion_gate(
                     gate.name
                 );
             }
-            return None;
+            None
         }
         Err(_) => {
+            let _ = child.kill().await;
+            // Reap the child to avoid leaving a zombie on Unix.
+            let _ = child.wait().await;
+            stdout_abort.abort();
+            stderr_abort.abort();
             if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
                 let _ = writeln!(
                     stderr_log,
@@ -4200,20 +4291,9 @@ async fn run_completion_gate(
                     gate.name, gate.timeout_sec
                 );
             }
-            return None;
+            None
         }
-    };
-
-    if let Ok(mut stdout_log) = store.open_log(task_id, LogStream::Stdout) {
-        let _ = writeln!(stdout_log, "\n[completion gate:{}]", gate.name);
-        let _ = stdout_log.write_all(&output.stdout);
     }
-    if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
-        let _ = writeln!(stderr_log, "\n[completion gate:{}]", gate.name);
-        let _ = stderr_log.write_all(&output.stderr);
-    }
-
-    output.status.code()
 }
 
 fn map_exit_status(status: std::process::ExitStatus, canceled: bool) -> TaskResult {
