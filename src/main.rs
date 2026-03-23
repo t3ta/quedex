@@ -4152,16 +4152,30 @@ async fn run_completion_gate(
     store: &Arc<dyn Store>,
     env: &HashMap<String, String>,
 ) -> Option<i32> {
+    // Open log files and write header before spawning so output streams
+    // directly to disk instead of being buffered in memory.
+    let mut stdout_file = match store.open_log(task_id, LogStream::Stdout) {
+        Ok(f) => f,
+        Err(_) => return None,
+    };
+    let _ = writeln!(stdout_file, "\n[completion gate:{}]", gate.name);
+
+    let mut stderr_file = match store.open_log(task_id, LogStream::Stderr) {
+        Ok(f) => f,
+        Err(_) => return None,
+    };
+    let _ = writeln!(stderr_file, "\n[completion gate:{}]", gate.name);
+
     let mut command = tokio::process::Command::new("sh");
     command
         .arg("-c")
         .arg(&gate.command)
         .current_dir(cwd)
         .envs(env)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file))
         .kill_on_drop(true);
-    let child = match command.spawn() {
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(err) => {
             if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
@@ -4175,13 +4189,8 @@ async fn run_completion_gate(
         }
     };
 
-    let output = match tokio::time::timeout(
-        Duration::from_secs(gate.timeout_sec),
-        child.wait_with_output(),
-    )
-    .await
-    {
-        Ok(Ok(output)) => output,
+    match tokio::time::timeout(Duration::from_secs(gate.timeout_sec), child.wait()).await {
+        Ok(Ok(status)) => status.code(),
         Ok(Err(err)) => {
             if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
                 let _ = writeln!(
@@ -4190,9 +4199,10 @@ async fn run_completion_gate(
                     gate.name
                 );
             }
-            return None;
+            None
         }
         Err(_) => {
+            let _ = child.kill().await;
             if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
                 let _ = writeln!(
                     stderr_log,
@@ -4200,20 +4210,9 @@ async fn run_completion_gate(
                     gate.name, gate.timeout_sec
                 );
             }
-            return None;
+            None
         }
-    };
-
-    if let Ok(mut stdout_log) = store.open_log(task_id, LogStream::Stdout) {
-        let _ = writeln!(stdout_log, "\n[completion gate:{}]", gate.name);
-        let _ = stdout_log.write_all(&output.stdout);
     }
-    if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
-        let _ = writeln!(stderr_log, "\n[completion gate:{}]", gate.name);
-        let _ = stderr_log.write_all(&output.stderr);
-    }
-
-    output.status.code()
 }
 
 fn map_exit_status(status: std::process::ExitStatus, canceled: bool) -> TaskResult {
