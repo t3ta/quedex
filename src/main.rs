@@ -4280,6 +4280,8 @@ async fn run_completion_gate(
         }
         Err(_) => {
             let _ = child.kill().await;
+            // Reap the child to avoid leaving a zombie on Unix.
+            let _ = child.wait().await;
             stdout_abort.abort();
             stderr_abort.abort();
             if let Ok(mut stderr_log) = store.open_log(task_id, LogStream::Stderr) {
