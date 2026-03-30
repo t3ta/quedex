@@ -3875,6 +3875,12 @@ impl TaskRunner for PlanTaskRunner {
                             }
                             break;
                         }
+                        // A fast gate may finish before the 100ms cancel poll
+                        // fires inside run_completion_gate, so re-check here.
+                        if cancel.is_canceled() {
+                            result = TaskResult::canceled();
+                            break;
+                        }
                     }
                 }
 
