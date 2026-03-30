@@ -3858,7 +3858,12 @@ impl TaskRunner for PlanTaskRunner {
                                         eprintln!(
                                             "task {task_id} commit_before_gates: committed {hash}"
                                         );
-                                        result.pre_gate_commit_hash = Some(hash);
+                                        // Only track hash for squash when using shared cwd;
+                                        // worktree commits are on detached HEAD and not on the
+                                        // main branch, so they must not inflate squash counts.
+                                        if matches!(workdir, TaskWorkdir::Shared(_)) {
+                                            result.pre_gate_commit_hash = Some(hash);
+                                        }
                                         true
                                     }
                                     Ok(_) => true, // no changes to commit
