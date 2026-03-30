@@ -3854,6 +3854,7 @@ impl TaskRunner for PlanTaskRunner {
                                         eprintln!(
                                             "task {task_id} commit_before_gates: committed {hash}"
                                         );
+                                        result.pre_gate_commit_hash = Some(hash);
                                     }
                                     Ok(_) => {}
                                     Err(err) => {

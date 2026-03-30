@@ -53,6 +53,8 @@ pub struct SchedulerOptions {
 pub struct TaskResult {
     pub status: TaskStatus,
     pub exit_code: Option<i32>,
+    /// Commit hash created by commit_before_gates (if any)
+    pub pre_gate_commit_hash: Option<String>,
 }
 
 impl TaskResult {
@@ -60,6 +62,7 @@ impl TaskResult {
         Self {
             status: TaskStatus::Succeeded,
             exit_code: Some(0),
+            pre_gate_commit_hash: None,
         }
     }
 
@@ -67,6 +70,7 @@ impl TaskResult {
         Self {
             status: TaskStatus::Failed,
             exit_code: Some(exit_code),
+            pre_gate_commit_hash: None,
         }
     }
 
@@ -74,6 +78,7 @@ impl TaskResult {
         Self {
             status: TaskStatus::Canceled,
             exit_code: None,
+            pre_gate_commit_hash: None,
         }
     }
 }
@@ -654,7 +659,7 @@ fn handle_event(
                                             commit_hashes.push((
                                                 task_spec.id.clone(),
                                                 commit_hash,
-                                                task_spec.title,
+                                                task_spec.title.clone(),
                                             ));
                                         }
                                     }
@@ -680,6 +685,11 @@ fn handle_event(
                         );
                     }
                 }
+            }
+
+            // Record commit hash from commit_before_gates
+            if let Some(hash) = &result.pre_gate_commit_hash {
+                commit_hashes.push((task_spec.id.clone(), hash.clone(), task_spec.title.clone()));
             }
 
             if let Some(record) = states.get_mut(&task_id) {
