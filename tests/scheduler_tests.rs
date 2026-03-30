@@ -193,6 +193,7 @@ async fn scheduler_resolves_deps_in_order() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -204,6 +205,7 @@ async fn scheduler_resolves_deps_in_order() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -215,6 +217,7 @@ async fn scheduler_resolves_deps_in_order() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
     ];
@@ -277,6 +280,7 @@ async fn scheduler_enforces_lock_exclusion() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -288,6 +292,7 @@ async fn scheduler_enforces_lock_exclusion() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -299,6 +304,7 @@ async fn scheduler_enforces_lock_exclusion() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
     ];
@@ -359,6 +365,7 @@ async fn scheduler_skips_pending_tasks_on_fail_fast() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -370,6 +377,7 @@ async fn scheduler_skips_pending_tasks_on_fail_fast() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -381,6 +389,7 @@ async fn scheduler_skips_pending_tasks_on_fail_fast() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
     ];
@@ -456,6 +465,7 @@ async fn scheduler_respects_max_concurrency() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -467,6 +477,7 @@ async fn scheduler_respects_max_concurrency() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -478,6 +489,7 @@ async fn scheduler_respects_max_concurrency() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -489,6 +501,7 @@ async fn scheduler_respects_max_concurrency() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
     ];

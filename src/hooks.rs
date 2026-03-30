@@ -127,6 +127,7 @@ fn resolve_hook_command(
         HookPoint::BeforeTask => t.before_task.as_ref(),
         HookPoint::AfterTask => t.after_task.as_ref(),
         HookPoint::OnFailure => t.on_failure.as_ref(),
+        HookPoint::PreGate => t.pre_gate.as_ref(),
         _ => None,
     });
 
@@ -141,6 +142,7 @@ fn resolve_hook_command(
             HookPoint::BeforeTask => g.before_task.as_ref(),
             HookPoint::AfterTask => g.after_task.as_ref(),
             HookPoint::OnFailure => g.on_failure.as_ref(),
+            HookPoint::PreGate => None,
         })
         .cloned()
 }
@@ -153,6 +155,7 @@ pub enum HookPoint {
     BeforeTask,
     AfterTask,
     OnFailure,
+    PreGate,
 }
 
 impl HookPoint {
@@ -163,6 +166,7 @@ impl HookPoint {
             HookPoint::BeforeTask => "before_task",
             HookPoint::AfterTask => "after_task",
             HookPoint::OnFailure => "on_failure",
+            HookPoint::PreGate => "pre_gate",
         }
     }
 }

@@ -81,6 +81,85 @@ fn test_task_json_parsing() {
     assert!(!task.squash);
 }
 
+#[test]
+fn test_commit_before_gates_defaults_to_false() {
+    let task_json = r#"{
+        "id": "task-1",
+        "mode": "implement",
+        "codex": { "prompt": "test" }
+    }"#;
+
+    let task: quedex::plan::Task = serde_json::from_str(task_json).unwrap();
+    assert!(!task.commit_before_gates);
+}
+
+#[test]
+fn test_commit_before_gates_can_be_enabled() {
+    let task_json = r#"{
+        "id": "task-1",
+        "mode": "implement",
+        "commit_before_gates": true,
+        "codex": { "prompt": "test" }
+    }"#;
+
+    let task: quedex::plan::Task = serde_json::from_str(task_json).unwrap();
+    assert!(task.commit_before_gates);
+}
+
+#[test]
+fn test_pre_gate_hook_parsing() {
+    let task_json = r#"{
+        "id": "task-1",
+        "mode": "implement",
+        "commit_before_gates": true,
+        "hooks": {
+            "pre_gate": "git push -u origin HEAD"
+        },
+        "codex": { "prompt": "test" }
+    }"#;
+
+    let task: quedex::plan::Task = serde_json::from_str(task_json).unwrap();
+    assert!(task.commit_before_gates);
+    assert_eq!(
+        task.hooks.as_ref().unwrap().pre_gate.as_deref(),
+        Some("git push -u origin HEAD")
+    );
+}
+
+#[test]
+fn test_commit_before_gates_full_plan_yaml() {
+    let yaml = r#"
+version: 1
+run:
+  name: pr-review-test
+tasks:
+  - id: impl
+    mode: implement
+    commit_before_gates: true
+    retry_count: 2
+    retry_strategy:
+      inject_error_context: true
+    hooks:
+      pre_gate: "git push -u origin HEAD"
+    completion_gates:
+      - name: pr-approval
+        command: "exit 0"
+        timeout_sec: 60
+    codex:
+      prompt: "implement feature"
+"#;
+
+    let plan: quedex::plan::Plan = serde_yaml::from_str(yaml).unwrap();
+    let task = &plan.tasks[0];
+    assert!(task.commit_before_gates);
+    assert_eq!(
+        task.hooks.as_ref().unwrap().pre_gate.as_deref(),
+        Some("git push -u origin HEAD")
+    );
+    assert!(task.completion_gates.is_some());
+    assert_eq!(task.retry_count, 2);
+}
+
 // Integration tests for GitManager operations
 // These tests create temporary git repositories to test actual git operations
 
@@ -208,5 +287,19 @@ mod git_integration_tests {
             .expect("Failed to list commits");
         assert_eq!(commits.len(), 2, "Should have 2 commits after squash");
         assert_eq!(commits[0].summary, "Squashed commit");
+    }
+
+    #[test]
+    fn test_git_manager_open_at() {
+        let (_temp_dir, repo_path) = create_temp_git_repo();
+
+        let manager = quedex::git::GitManager::open_at(&repo_path).expect("Failed to open_at repo");
+        assert!(manager.ensure_on_branch().is_ok());
+    }
+
+    #[test]
+    fn test_git_manager_open_at_nonexistent() {
+        let result = quedex::git::GitManager::open_at(std::path::Path::new("/nonexistent/path"));
+        assert!(result.is_err());
     }
 }

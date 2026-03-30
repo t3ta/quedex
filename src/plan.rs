@@ -565,6 +565,9 @@ pub struct TaskHooksConfig {
     pub after_task: Option<String>,
     /// Command to run when this task fails
     pub on_failure: Option<String>,
+    /// Command to run after commit but before completion gates.
+    /// Typically used for: git push + gh pr create.
+    pub pre_gate: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -645,6 +648,11 @@ pub struct Task {
     #[serde(default = "default_auto_commit")]
     #[schemars(default = "default_auto_commit")]
     pub auto_commit: bool,
+    /// Whether to create a git commit before running completion gates (default: false).
+    /// When true, the scheduler's post-task auto_commit is skipped to avoid double-commit.
+    /// Useful for PR-based review workflows where gates need committed code.
+    #[serde(default)]
+    pub commit_before_gates: bool,
     /// Whether this task should squash all previous commits into one
     /// Used for final integration/review tasks
     #[serde(default)]
@@ -1343,6 +1351,7 @@ mod tests {
                 completion_gates: None,
                 skip_gates: false,
                 auto_commit: true,
+                commit_before_gates: false,
                 squash: false,
                 hooks: None,
             }],
@@ -1399,6 +1408,7 @@ mod tests {
                 completion_gates: None,
                 skip_gates: false,
                 auto_commit: true,
+                commit_before_gates: false,
                 squash: false,
                 hooks: None,
             }],
