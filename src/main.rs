@@ -1071,6 +1071,7 @@ async fn handle_run(
             title: task.title.clone(),
             mode: task.mode,
             auto_commit: task.auto_commit,
+            commit_before_gates: task.commit_before_gates,
             squash: task.squash,
         })
         .collect();
@@ -1813,6 +1814,7 @@ async fn handle_retry(
             title: task.title.clone(),
             mode: task.mode,
             auto_commit: task.auto_commit,
+            commit_before_gates: task.commit_before_gates,
             squash: task.squash,
         });
     }
@@ -1839,6 +1841,7 @@ async fn handle_retry(
             title: task.title.clone(),
             mode: task.mode,
             auto_commit: task.auto_commit,
+            commit_before_gates: task.commit_before_gates,
             squash: task.squash,
         });
     }
@@ -3283,6 +3286,7 @@ async fn run_task_hook_with_events(
         HookPoint::OnFailure => "on_failure",
         HookPoint::BeforeRun => "before_run",
         HookPoint::AfterRun => "after_run",
+        HookPoint::PreGate => "pre_gate",
     };
     let _ = store.append_event(Event::HookStarted {
         hook_type: hook_type.to_string(),
@@ -3833,6 +3837,67 @@ impl TaskRunner for PlanTaskRunner {
                 };
 
                 let mut result = map_exit_status(status, cancel.is_canceled());
+
+                // commit_before_gates: commit changes and run pre_gate hook before gates
+                if result.status == TaskStatus::Succeeded && task.commit_before_gates {
+                    match crate::git::GitManager::open_at(&task_ctx.cwd) {
+                        Ok(gm) => {
+                            if gm.ensure_on_branch().is_ok() {
+                                let title = task.title.clone().unwrap_or_else(|| task_id.clone());
+                                let message = crate::git::generate_commit_message(
+                                    &title,
+                                    &task_id,
+                                    &format!("{:?}", task.mode),
+                                );
+                                match gm.create_commit(&message) {
+                                    Ok(hash) if !hash.is_empty() => {
+                                        eprintln!(
+                                            "task {task_id} commit_before_gates: committed {hash}"
+                                        );
+                                    }
+                                    Ok(_) => {}
+                                    Err(err) => {
+                                        eprintln!(
+                                            "task {task_id} commit_before_gates: commit failed: {err:#}"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!(
+                                "task {task_id} commit_before_gates: git open failed: {err:#}"
+                            );
+                        }
+                    }
+
+                    if !cancel.is_canceled() {
+                        let hook_ctx = HookContext {
+                            run_id: hook_run_id.clone(),
+                            run_name: hook_run_name.clone(),
+                            task_id: Some(task_id.clone()),
+                            task_title: task.title.clone(),
+                            status: Some("succeeded".to_string()),
+                            attempt: Some(attempt),
+                            exit_code: Some(0),
+                        };
+                        let hook_result = run_task_hook(
+                            HookPoint::PreGate,
+                            global_hooks.as_ref(),
+                            task.hooks.as_ref(),
+                            &hook_ctx,
+                            &task_ctx.env,
+                            &task_ctx.cwd,
+                        )
+                        .await;
+                        if hook_result.is_err() {
+                            eprintln!(
+                                "task {task_id} pre_gate hook failed, marking task as failed"
+                            );
+                            result = TaskResult::failed(1);
+                        }
+                    }
+                }
 
                 if result.status == TaskStatus::Succeeded && !task.skip_gates {
                     let gates = resolve_completion_gates(&task, default_gates.as_deref());
@@ -4544,6 +4609,7 @@ mod tests {
             }]),
             skip_gates: false,
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
             hooks: None,
         };
@@ -4592,6 +4658,7 @@ mod tests {
             completion_gates: None,
             skip_gates: false,
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
             hooks: None,
         };

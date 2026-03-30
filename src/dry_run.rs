@@ -272,6 +272,7 @@ mod tests {
             kind: None,
             output_files: None,
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
             codex: Some(crate::plan::CodexConfig {
                 prompt: "test prompt".to_string(),

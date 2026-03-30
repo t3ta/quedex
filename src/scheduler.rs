@@ -21,6 +21,7 @@ pub struct TaskSpec {
     pub title: Option<String>,
     pub mode: crate::plan::TaskMode,
     pub auto_commit: bool,
+    pub commit_before_gates: bool,
     pub squash: bool,
 }
 
@@ -35,6 +36,7 @@ impl Default for TaskSpec {
             title: None,
             mode: crate::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         }
     }
@@ -624,6 +626,7 @@ fn handle_event(
             // Handle git commit if task succeeded and auto_commit is enabled
             if result.status == TaskStatus::Succeeded
                 && task_spec.auto_commit
+                && !task_spec.commit_before_gates
                 && matches!(
                     task_spec.mode,
                     crate::plan::TaskMode::Implement | crate::plan::TaskMode::Verify
@@ -741,6 +744,7 @@ mod tests {
             title: None,
             mode: TaskMode::Implement,
             auto_commit: false,
+            commit_before_gates: false,
             squash: false,
         }
     }
@@ -1083,6 +1087,7 @@ mod tests {
                 title: None,
                 mode: TaskMode::Implement,
                 auto_commit: false,
+                commit_before_gates: false,
                 squash: false,
             },
         );
@@ -1097,6 +1102,7 @@ mod tests {
                 title: None,
                 mode: TaskMode::Implement,
                 auto_commit: false,
+                commit_before_gates: false,
                 squash: false,
             },
         );

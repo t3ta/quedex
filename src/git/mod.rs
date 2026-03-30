@@ -21,6 +21,13 @@ impl GitManager {
         Ok(Self { repo })
     }
 
+    /// Open git repository at the given path (useful for worktree directories)
+    pub fn open_at(path: &std::path::Path) -> Result<Self> {
+        let repo = Repository::discover(path)
+            .with_context(|| format!("failed to open git repository at {}", path.display()))?;
+        Ok(Self { repo })
+    }
+
     /// Create a GitManager from an existing Repository (for testing)
     pub fn from_repo(repo: Repository) -> Self {
         Self { repo }

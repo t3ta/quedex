@@ -36,6 +36,7 @@ fn codex_task(id: &str, deps: Vec<&str>) -> Task {
         completion_gates: None,
         skip_gates: false,
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
         hooks: None,
     }
@@ -72,6 +73,7 @@ fn opencode_task(id: &str, deps: Vec<&str>) -> Task {
         completion_gates: None,
         skip_gates: false,
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
         hooks: None,
     }
@@ -150,6 +152,7 @@ fn plan_rejects_empty_codex_prompt() {
         completion_gates: None,
         skip_gates: false,
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
         hooks: None,
     };
@@ -189,6 +192,7 @@ fn plan_rejects_empty_claude_code_prompt() {
         completion_gates: None,
         skip_gates: false,
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
         hooks: None,
     };
@@ -235,6 +239,7 @@ fn plan_rejects_multiple_runner_configs() {
         completion_gates: None,
         skip_gates: false,
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
         hooks: None,
     };
@@ -274,6 +279,7 @@ fn plan_accepts_valid_claude_code_task() {
         completion_gates: None,
         skip_gates: false,
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
         hooks: None,
     };
@@ -316,6 +322,7 @@ fn plan_rejects_kind_mismatch_claude_code() {
         completion_gates: None,
         skip_gates: false,
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
         hooks: None,
     };
@@ -355,6 +362,7 @@ fn plan_rejects_empty_opencode_prompt() {
         completion_gates: None,
         skip_gates: false,
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
         hooks: None,
     };
@@ -412,6 +420,7 @@ fn plan_accepts_valid_opencode_task() {
         completion_gates: None,
         skip_gates: false,
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
         hooks: None,
     };
@@ -454,6 +463,7 @@ fn plan_rejects_kind_mismatch_opencode() {
         completion_gates: None,
         skip_gates: false,
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
         hooks: None,
     };
@@ -497,6 +507,7 @@ fn plan_rejects_multiple_runner_configs_with_opencode() {
         completion_gates: None,
         skip_gates: false,
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
         hooks: None,
     };

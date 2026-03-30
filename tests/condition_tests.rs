@@ -114,6 +114,7 @@ async fn env_condition_equals_match() {
         title: None,
         mode: quedex::plan::TaskMode::default(),
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
     }];
 
@@ -142,6 +143,7 @@ async fn env_condition_equals_no_match() {
         title: None,
         mode: quedex::plan::TaskMode::default(),
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
     }];
 
@@ -171,6 +173,7 @@ async fn env_condition_equals_missing_var() {
         title: None,
         mode: quedex::plan::TaskMode::default(),
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
     }];
 
@@ -199,6 +202,7 @@ async fn env_condition_not_equals_match() {
         title: None,
         mode: quedex::plan::TaskMode::default(),
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
     }];
 
@@ -227,6 +231,7 @@ async fn env_condition_not_equals_no_match() {
         title: None,
         mode: quedex::plan::TaskMode::default(),
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
     }];
 
@@ -255,6 +260,7 @@ async fn env_condition_exists_true() {
         title: None,
         mode: quedex::plan::TaskMode::default(),
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
     }];
 
@@ -283,6 +289,7 @@ async fn env_condition_exists_false() {
         title: None,
         mode: quedex::plan::TaskMode::default(),
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
     }];
 
@@ -309,6 +316,7 @@ async fn task_condition_succeeded_match() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -323,6 +331,7 @@ async fn task_condition_succeeded_match() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
     ];
@@ -348,6 +357,7 @@ async fn task_condition_failed_match() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -362,6 +372,7 @@ async fn task_condition_failed_match() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
     ];
@@ -387,6 +398,7 @@ async fn task_condition_failed_no_match_when_succeeded() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -401,6 +413,7 @@ async fn task_condition_failed_no_match_when_succeeded() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
     ];
@@ -434,6 +447,7 @@ async fn condition_skip_does_not_propagate_as_failure() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -445,6 +459,7 @@ async fn condition_skip_does_not_propagate_as_failure() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
     ];
@@ -477,6 +492,7 @@ async fn dependency_failure_skip_does_propagate() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
         TaskSpec {
@@ -488,6 +504,7 @@ async fn dependency_failure_skip_does_propagate() {
             title: None,
             mode: quedex::plan::TaskMode::default(),
             auto_commit: true,
+            commit_before_gates: false,
             squash: false,
         },
     ];
@@ -543,6 +560,7 @@ fn plan_rejects_condition_referencing_nonexistent_task() {
         completion_gates: None,
         skip_gates: false,
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
         condition: Some(TaskCondition::TaskResult(TaskResultCondition {
             task: "nonexistent".to_string(),
@@ -604,6 +622,7 @@ fn plan_rejects_condition_referencing_self() {
         completion_gates: None,
         skip_gates: false,
         auto_commit: true,
+        commit_before_gates: false,
         squash: false,
         condition: Some(TaskCondition::TaskResult(TaskResultCondition {
             task: "main".to_string(),
