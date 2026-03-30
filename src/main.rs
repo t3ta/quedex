@@ -3840,9 +3840,9 @@ impl TaskRunner for PlanTaskRunner {
 
                 // commit_before_gates: commit changes and run pre_gate hook before gates
                 if result.status == TaskStatus::Succeeded && task.commit_before_gates {
-                    match crate::git::GitManager::open_at(&task_ctx.cwd) {
-                        Ok(gm) => {
-                            if gm.ensure_on_branch().is_ok() {
+                    let commit_ok = match crate::git::GitManager::open_at(&task_ctx.cwd) {
+                        Ok(gm) => match gm.ensure_on_branch() {
+                            Ok(_) => {
                                 let title = task.title.clone().unwrap_or_else(|| task_id.clone());
                                 let message = crate::git::generate_commit_message(
                                     &title,
@@ -3855,24 +3855,37 @@ impl TaskRunner for PlanTaskRunner {
                                             "task {task_id} commit_before_gates: committed {hash}"
                                         );
                                         result.pre_gate_commit_hash = Some(hash);
+                                        true
                                     }
-                                    Ok(_) => {}
+                                    Ok(_) => true, // no changes to commit
                                     Err(err) => {
                                         eprintln!(
                                             "task {task_id} commit_before_gates: commit failed: {err:#}"
                                         );
+                                        false
                                     }
                                 }
                             }
-                        }
+                            Err(err) => {
+                                eprintln!(
+                                    "task {task_id} commit_before_gates: not on branch: {err:#}"
+                                );
+                                false
+                            }
+                        },
                         Err(err) => {
                             eprintln!(
                                 "task {task_id} commit_before_gates: git open failed: {err:#}"
                             );
+                            false
                         }
+                    };
+
+                    if !commit_ok {
+                        result = TaskResult::failed(1);
                     }
 
-                    if !cancel.is_canceled() {
+                    if commit_ok && !cancel.is_canceled() {
                         let hook_ctx = HookContext {
                             run_id: hook_run_id.clone(),
                             run_name: hook_run_name.clone(),
