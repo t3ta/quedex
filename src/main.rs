@@ -3318,6 +3318,7 @@ struct PlanTaskRunner {
     run_id: String,
     run_name: String,
     template_engine: Option<Arc<TemplateEngine>>,
+    git_commit_mutex: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl PlanTaskRunner {
@@ -3359,6 +3360,7 @@ impl PlanTaskRunner {
             run_id,
             run_name,
             template_engine,
+            git_commit_mutex: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 }
@@ -3382,6 +3384,7 @@ impl TaskRunner for PlanTaskRunner {
         let hook_run_id = self.run_id.clone();
         let hook_run_name = self.run_name.clone();
         let template_engine = self.template_engine.clone();
+        let git_commit_mutex = Arc::clone(&self.git_commit_mutex);
 
         Box::pin(async move {
             let Some(task) = tasks.get(&task_spec.id) else {
@@ -3840,9 +3843,10 @@ impl TaskRunner for PlanTaskRunner {
 
                 // commit_before_gates: commit changes and run pre_gate hook before gates
                 if result.status == TaskStatus::Succeeded && task.commit_before_gates {
-                    let commit_ok = match crate::git::GitManager::open_at(&task_ctx.cwd) {
-                        Ok(gm) => match gm.ensure_on_branch() {
-                            Ok(_) => {
+                    let commit_ok = {
+                        let _guard = git_commit_mutex.lock().await;
+                        match crate::git::GitManager::open_at(&task_ctx.cwd) {
+                            Ok(gm) => {
                                 let title = task.title.clone().unwrap_or_else(|| task_id.clone());
                                 let message = crate::git::generate_commit_message(
                                     &title,
@@ -3868,16 +3872,10 @@ impl TaskRunner for PlanTaskRunner {
                             }
                             Err(err) => {
                                 eprintln!(
-                                    "task {task_id} commit_before_gates: not on branch: {err:#}"
+                                    "task {task_id} commit_before_gates: git open failed: {err:#}"
                                 );
                                 false
                             }
-                        },
-                        Err(err) => {
-                            eprintln!(
-                                "task {task_id} commit_before_gates: git open failed: {err:#}"
-                            );
-                            false
                         }
                     };
 
@@ -3908,7 +3906,9 @@ impl TaskRunner for PlanTaskRunner {
                             eprintln!(
                                 "task {task_id} pre_gate hook failed, marking task as failed"
                             );
+                            let commit_hash = result.pre_gate_commit_hash.take();
                             result = TaskResult::failed(1);
+                            result.pre_gate_commit_hash = commit_hash;
                         }
                     }
                 }
